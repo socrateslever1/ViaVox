@@ -29,11 +29,11 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK platform
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - name: Verify preinstalled Android SDK
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          test -d "$ANDROID_HOME/platforms/android-35" || (echo 'Android 35 platform not found' && exit 1)
+          test -d "$ANDROID_HOME/build-tools/35.0.0" || (echo 'Android build tools 35 not found' && exit 1)
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
