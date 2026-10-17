@@ -1,23 +1,44 @@
-# ViaVox (Android)
+# ViaVox (Android & Web)
 
-> **Sua localização ganha voz.** Aplicativo nativo Android desenvolvido em Kotlin e Jetpack Compose com suporte a rastreamento GPS em tempo real, geocodificação reversa OpenStreetMap e sintetização de voz (TTS em português do Brasil).
+> **Sua localização ganha voz.** Aplicativo funcional em Kotlin e Jetpack Compose que narra automaticamente ao motorista o nome da rua, o bairro e pontos de referência relevantes durante o deslocamento em tempo real, sem necessidade de definir destino, com suporte a operação contínua com tela bloqueada.
 
 ---
 
-## 📱 Recursos e Funcionalidades
+## 📱 Recursos e Arquitetura Android Nativa
 
-- **Rastreamento GPS em tempo real**: Monitoramento de latitude, longitude e precisão do sinal com detecção de precisão fraca (> 80 m).
-- **Geocodificação Reversa (OpenStreetMap / Nominatim)**: Identificação automática de vias, bairros, cidades e pontos de referência próximos via API do Nominatim com cache inteligente e filtragem de distância (>= 18 m e intervalo mínimo de 11s).
-- **Narração por Voz Inteligente (Text-to-Speech)**:
-  - Sistema de confirmação dupla da via para evitar falsos anúncios de cruzamentos.
-  - Intervalo de respiro de 12 segundos entre narrações automáticas.
-  - Botão de repetição manual ("Ouvir localização atual").
-  - Interruptor liga/desliga de narração com preferência persistida no dispositivo.
-- **Interface Moderna (Material Design 3)**:
-  - Layout responsivo para smartphones e tablets (painel lado a lado no modo expandido).
-  - Componente de mapa interativo com animação de pulso no marcador GPS.
-  - Ícone adaptativo customizado (Material You / Adaptive Icon) com paleta `#12283F` e `#54D6B1`.
-  - Suporte total a Edge-to-Edge no Android 15+.
+1. **Foreground Service de Localização Contínua (`ViaVoxTrackingService`)**:
+   - Serviço em primeiro plano com tipo `location` (`android:foregroundServiceType="location"`).
+   - Notificação persistente contendo a via/bairro atual e ação direta de **Parar**.
+   - Aquisição de `WakeLock` parcial (`PARTIAL_WAKE_LOCK`) para garantir o ciclo de rastreamento e narração mesmo com a tela bloqueada ou alternando entre aplicativos.
+   - Encerramento completo de recursos e liberação de memória ao selecionar **Parar**.
+
+2. **Identificação Inteligente de Ruas (`RoadDetectionEngine`)**:
+   - Anúncio imediato da primeira rua identificada sem exigência de contagens adicionais.
+   - Detecção de mudanças reais de rua baseada em velocidade, deslocamento e confirmação temporal.
+   - Normalização de abreviações ("Av.", "R.", "Trav.", "Rod.") e remoção de acentos/pontuação para comparação precisa.
+   - Prevenção de falsos anúncios em cruzamentos e oscilações momentâneas de sinal de GPS.
+   - Cancelamento automático de requisições obsoletas quando novas coordenadas são obtidas.
+
+3. **Módulo de Pontos de Referência Reais (`PoiDiscoveryService`)**:
+   - Descoberta espacial de pontos de interesse relevantes no OpenStreetMap via API Overpass.
+   - Categorias prioritárias: Hospitais e Unidades de Saúde, Escolas e Faculdades, Praças e Parques, Postos de Combustível e Prédios Públicos / Monumentos.
+   - Sistema de cache espacial local por células de 250m com intervalo mínimo de 90s para respeitar as políticas públicas dos servidores OSM.
+   - Determinação de posição relativa em tempo real quando o veículo está em movimento:
+     - **"À sua direita, encontra-se..."**
+     - **"À sua esquerda, encontra-se..."**
+     - **"Próximo daqui, encontra-se..."** (quando em baixa velocidade ou sem vetor de direção).
+   - Memória de locais recentes para nunca repetir o mesmo ponto durante o trajeto.
+
+4. **Síntese de Voz Natural & Gerenciamento de Foco de Áudio (`TextToSpeechManager`)**:
+   - Voz em Português Brasileiro (`pt-BR`).
+   - Gerenciamento de foco de áudio (`AudioFocusRequest` com `AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK` no Android 8.0+), reduzindo o volume de músicas/rádio durante os anúncios.
+   - Velocidade da fala ajustável (0.8x a 1.3x) e intervalo configurável entre anúncios não urgentes.
+   - Cancelamento imediato de fala ao pausar ou parar o serviço.
+
+5. **Interface e Configurações (Material Design 3)**:
+   - Identidade visual ViaVox mantida: Azul-escuro `#12283F` e Verde-turquesa `#54D6B1`.
+   - Diálogo de configurações para ajuste de velocidade de voz, frequência de anúncios e ativação/desativação de categorias de pontos de interesse.
+   - Compatibilidade total com layout responsivo (smartphone e tablet).
 
 ---
 
@@ -25,18 +46,18 @@
 
 - **Linguagem**: Kotlin 2.1.0
 - **UI Toolkit**: Jetpack Compose com Material Design 3
-- **Arquitetura**: MVVM (Model-View-ViewModel) com StateFlow e Coroutines
-- **Rede**: OkHttp 4.12
-- **Áudio**: Android TextToSpeech nativo (`Locale("pt", "BR")`)
-- **Localização**: Android Location API com permissões finas e grosseiras (`ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION`)
-- **Compilador / Build**: Gradle Kotlin DSL (`build.gradle.kts`) com Version Catalog (`gradle/libs.versions.toml`)
+- **Arquitetura**: MVVM com `TrackingRepository` (StateFlow reativo compartilhado entre Foreground Service e ViewModel)
+- **Rede & APIs**: OkHttp 4.12, OpenStreetMap Nominatim e Overpass API
+- **Áudio**: Android TextToSpeech nativo + AudioManager AudioFocus
+- **Localização**: Android Location API + Foreground Service de localização
+- **Testes Unitários**: JUnit 4 (`PlaceTest`, `PointOfInterestTest`, `RoadDetectionEngineTest`)
 
 ---
 
-## 🚀 Como Executar
+## 🧪 Validação e Testes
 
-### No Android Studio:
-1. Abra a pasta do projeto no Android Studio.
-2. Aguarde a sincronização do Gradle.
-3. Conecte um dispositivo físico ou inicie um emulador Android com suporte a GPS.
-4. Execute o app (`Run 'app'`).
+- Testes unitários para cálculo de direção relativa (Esquerda/Direita/Próximo) e distância espacial.
+- Testes de normalização e comparação de nomes de vias.
+- **Validações que dependem de dispositivo físico**:
+  - Continuidade de narração por voz com a tela apagada (tela bloqueada).
+  - Comportamento das políticas de economia de bateria agressivas de fabricantes (Doze mode / Battery Saver).

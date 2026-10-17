@@ -32,8 +32,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.viavox.R
+import com.example.viavox.model.RelativeDirection
 import com.example.viavox.model.TrackingState
 import com.example.viavox.ui.theme.ViaVoxBtnRepeat
+import com.example.viavox.ui.theme.ViaVoxCard
 import com.example.viavox.ui.theme.ViaVoxCoralDarkText
 import com.example.viavox.ui.theme.ViaVoxCoralStop
 import com.example.viavox.ui.theme.ViaVoxDarkBg
@@ -60,7 +62,7 @@ fun StatusPanel(
             .padding(horizontal = 20.dp, vertical = 22.dp)
             .testTag("status_panel")
     ) {
-        // Eyebrow tracking indicator
+        // Eyebrow tracking indicator + Accuracy + Speed
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.padding(bottom = 12.dp)
@@ -90,6 +92,16 @@ fun StatusPanel(
                     text = stringResource(R.string.accuracy_format, acc),
                     color = Color(0xFFB5D0E0),
                     fontSize = 11.sp
+                )
+            }
+
+            if (state.isActive && state.speedKmh > 2f) {
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "· ${state.speedKmh.toInt()} km/h",
+                    color = ViaVoxTeal,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold
                 )
             }
         }
@@ -129,12 +141,57 @@ fun StatusPanel(
                     color = ViaVoxReference,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Medium,
-                    modifier = Modifier.padding(bottom = 10.dp)
+                    modifier = Modifier.padding(bottom = 8.dp)
                 )
             }
         }
 
-        // Status pill
+        // Nearby landmark POI card if discovered
+        AnimatedVisibility(
+            visible = state.currentPoi != null,
+            enter = fadeIn(),
+            exit = fadeOut()
+        ) {
+            state.currentPoi?.let { poi ->
+                val dirLabel = when (state.poiDirection) {
+                    RelativeDirection.RIGHT -> "👉 À sua direita"
+                    RelativeDirection.LEFT -> "👈 À sua esquerda"
+                    else -> "📍 Próximo daqui"
+                }
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 12.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(ViaVoxCard)
+                        .padding(horizontal = 14.dp, vertical = 10.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = dirLabel,
+                                color = ViaVoxTeal,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = poi.name,
+                                color = ViaVoxTextWhite,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Status message
         Text(
             text = state.statusMessage,
             color = Color(0xFFA7BDCE),

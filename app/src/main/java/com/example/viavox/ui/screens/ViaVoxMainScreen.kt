@@ -1,6 +1,5 @@
 package com.example.viavox.ui.screens
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -17,15 +16,23 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import com.example.viavox.model.PoiCategory
 import com.example.viavox.model.TrackingState
 import com.example.viavox.ui.components.HeaderBar
 import com.example.viavox.ui.components.OpenStreetMapComponent
+import com.example.viavox.ui.components.SettingsDialog
 import com.example.viavox.ui.components.StatusPanel
 import com.example.viavox.ui.theme.ViaVoxDarkBg
 
 @Composable
 fun ViaVoxMainScreen(
     state: TrackingState,
+    isSettingsDialogOpen: Boolean,
+    onOpenSettings: () -> Unit,
+    onCloseSettings: () -> Unit,
+    onSpeedChanged: (Float) -> Unit,
+    onIntervalChanged: (Int) -> Unit,
+    onPoiCategoryToggled: (PoiCategory, Boolean) -> Unit,
     onStartTracking: () -> Unit,
     onStopTracking: () -> Unit,
     onToggleVoice: (Boolean) -> Unit,
@@ -34,7 +41,7 @@ fun ViaVoxMainScreen(
 ) {
     Scaffold(
         topBar = {
-            HeaderBar()
+            HeaderBar(onOpenSettings = onOpenSettings)
         },
         containerColor = ViaVoxDarkBg,
         modifier = modifier.fillMaxSize()
@@ -107,6 +114,16 @@ fun ViaVoxMainScreen(
                         )
                     }
                 }
+            }
+
+            if (isSettingsDialogOpen) {
+                SettingsDialog(
+                    config = state.config,
+                    onSpeedChanged = onSpeedChanged,
+                    onIntervalChanged = onIntervalChanged,
+                    onPoiCategoryToggled = onPoiCategoryToggled,
+                    onDismiss = onCloseSettings
+                )
             }
         }
     }

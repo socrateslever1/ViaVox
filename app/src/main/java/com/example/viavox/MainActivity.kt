@@ -2,6 +2,7 @@ package com.example.viavox
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -27,6 +28,7 @@ class MainActivity : ComponentActivity() {
             ViaVoxTheme {
                 val viewModel: ViaVoxViewModel = viewModel()
                 val state by viewModel.state.collectAsState()
+                val isSettingsOpen by viewModel.isSettingsDialogOpen.collectAsState()
 
                 val permissionLauncher = rememberLauncherForActivityResult(
                     contract = ActivityResultContracts.RequestMultiplePermissions()
@@ -34,6 +36,10 @@ class MainActivity : ComponentActivity() {
                     val fineGranted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true
                     val coarseGranted = permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
                     viewModel.onPermissionResult(fineGranted || coarseGranted)
+
+                    if (fineGranted || coarseGranted) {
+                        viewModel.startTracking()
+                    }
                 }
 
                 // Check initial permission status
@@ -53,6 +59,12 @@ class MainActivity : ComponentActivity() {
 
                 ViaVoxMainScreen(
                     state = state,
+                    isSettingsDialogOpen = isSettingsOpen,
+                    onOpenSettings = { viewModel.openSettings() },
+                    onCloseSettings = { viewModel.closeSettings() },
+                    onSpeedChanged = { viewModel.updateSpeechRate(it) },
+                    onIntervalChanged = { viewModel.updateInterval(it) },
+                    onPoiCategoryToggled = { cat, enabled -> viewModel.togglePoiCategory(cat, enabled) },
                     onStartTracking = {
                         val fine = ContextCompat.checkSelfPermission(
                             this@MainActivity,
@@ -63,15 +75,25 @@ class MainActivity : ComponentActivity() {
                             Manifest.permission.ACCESS_COARSE_LOCATION
                         ) == PackageManager.PERMISSION_GRANTED
 
+                        val permissionsToRequest = mutableListOf(
+                            Manifest.permission.ACCESS_FINE_LOCATION,
+                            Manifest.permission.ACCESS_COARSE_LOCATION
+                        )
+
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            val notif = ContextCompat.checkSelfPermission(
+                                this@MainActivity,
+                                Manifest.permission.POST_NOTIFICATIONS
+                            ) == PackageManager.PERMISSION_GRANTED
+                            if (!notif) {
+                                permissionsToRequest.add(Manifest.permission.POST_NOTIFICATIONS)
+                            }
+                        }
+
                         if (fine || coarse) {
                             viewModel.startTracking()
                         } else {
-                            permissionLauncher.launch(
-                                arrayOf(
-                                    Manifest.permission.ACCESS_FINE_LOCATION,
-                                    Manifest.permission.ACCESS_COARSE_LOCATION
-                                )
-                            )
+                            permissionLauncher.launch(permissionsToRequest.toTypedArray())
                         }
                     },
                     onStopTracking = {

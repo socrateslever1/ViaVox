@@ -10,6 +10,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -29,7 +33,10 @@ import com.example.viavox.ui.theme.ViaVoxTextMuted
 import com.example.viavox.ui.theme.ViaVoxTextWhite
 
 @Composable
-fun HeaderBar(modifier: Modifier = Modifier) {
+fun HeaderBar(
+    onOpenSettings: () -> Unit = {},
+    modifier: Modifier = Modifier
+) {
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -76,19 +83,35 @@ fun HeaderBar(modifier: Modifier = Modifier) {
             }
         }
 
-        Box(
-            modifier = Modifier
-                .clip(RoundedCornerShape(6.dp))
-                .background(ViaVoxBrandIconBg.copy(alpha = 0.6f))
-                .padding(horizontal = 8.dp, vertical = 4.dp)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Text(
-                text = stringResource(R.string.version_badge),
-                color = ViaVoxTeal,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = 1.sp
-            )
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(ViaVoxBrandIconBg.copy(alpha = 0.6f))
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            ) {
+                Text(
+                    text = stringResource(R.string.version_badge),
+                    color = ViaVoxTeal,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp
+                )
+            }
+
+            IconButton(
+                onClick = onOpenSettings,
+                modifier = Modifier.testTag("settings_button")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Settings,
+                    contentDescription = stringResource(R.string.settings_title),
+                    tint = ViaVoxTeal
+                )
+            }
         }
     }
 }

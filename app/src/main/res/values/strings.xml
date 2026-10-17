@@ -12,7 +12,7 @@
     <string name="reference_format">📍 Referência: %1$s</string>
 
     <string name="status_ready">Pronto para localizar</string>
-    <string name="status_waiting_gps">Aguardando permissão de localização...</string>
+    <string name="status_waiting_gps">Aguardando sinal de GPS...</string>
     <string name="status_location_updated">Localização atualizada</string>
     <string name="status_location_paused">Localização pausada</string>
     <string name="status_inaccurate_gps">Sinal GPS impreciso (±%1$d m)</string>
@@ -24,8 +24,33 @@
     <string name="toggle_voice">Narração por voz</string>
     <string name="btn_repeat">🔊 Ouvir localização atual</string>
 
-    <string name="info_note">Versão Android: funciona em tempo real com GPS de alta precisão e sintetizador de voz (TTS em português do Brasil). Os nomes de vias e pontos de referência utilizam os dados colaborativos do OpenStreetMap.</string>
+    <string name="info_note">Versão Android: funciona em primeiro e segundo plano com Foreground Service persistente, GPS de alta precisão e narração TTS em português.</string>
 
-    <string name="tts_speech_template">Você está na %1$s, bairro %2$s%3$s.</string>
-    <string name="tts_near_reference">, próximo a %1$s</string>
+    <!-- TTS Templates -->
+    <string name="tts_initial_street">Você está na %1$s, bairro %2$s.</string>
+    <string name="tts_street_change">Agora você está na %1$s, bairro %2$s.</string>
+    <string name="tts_poi_right">À sua direita, encontra-se %1$s.</string>
+    <string name="tts_poi_left">À sua esquerda, encontra-se %1$s.</string>
+    <string name="tts_poi_nearby">Próximo daqui, encontra-se %1$s.</string>
+
+    <!-- Foreground Service Notification -->
+    <string name="notification_channel_name">Rastreamento de Trajeto ViaVox</string>
+    <string name="notification_channel_desc">Notificação contínua enquanto o ViaVox acompanha seu trajeto por voz</string>
+    <string name="notification_title">ViaVox — Rastreamento Ativo</string>
+    <string name="notification_stop_action">Parar</string>
+
+    <!-- Settings Dialog -->
+    <string name="settings_title">Configurações de Narração</string>
+    <string name="settings_voice_rate">Velocidade da Voz: %1$.1fx</string>
+    <string name="settings_interval">Intervalo entre anúncios não urgentes</string>
+    <string name="interval_dynamic">Dinâmico (12s)</string>
+    <string name="interval_standard">Padrão (20s)</string>
+    <string name="interval_calm">Tranquilo (35s)</string>
+    <string name="settings_poi_categories">Categorias de Pontos de Referência</string>
+    <string name="category_health">Hospitais e Saúde</string>
+    <string name="category_education">Escolas e Faculdades</string>
+    <string name="category_parks">Praças e Parques</string>
+    <string name="category_fuel">Postos de Combustível</string>
+    <string name="category_public">Prédios Públicos e Monumentos</string>
+    <string name="btn_close">Fechar</string>
 </resources>
