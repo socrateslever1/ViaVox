@@ -16,6 +16,10 @@ class TextToSpeechManager(
 ) : TextToSpeech.OnInitListener {
 
     private var tts: TextToSpeech? = TextToSpeech(context.applicationContext, this)
+    private val francisca = AzureFranciscaSpeech(context.applicationContext, onSpeakingStateChanged)
+    var franciscaEndpoint: String?
+        get() = francisca.endpoint
+        set(value) { francisca.endpoint = value }
     private var isInitialized = false
     private var currentSpeechRate = 0.95f
 
@@ -115,7 +119,17 @@ class TextToSpeechManager(
     }
 
     fun speak(text: String) {
-        if (!isInitialized || text.isBlank()) return
+        if (text.isBlank()) return
+        if (!franciscaEndpoint.isNullOrBlank()) {
+            tts?.stop()
+            francisca.speak(text) { speakLocally(text) }
+            return
+        }
+        speakLocally(text)
+    }
+
+    private fun speakLocally(text: String) {
+        if (!isInitialized) return
         tts?.stop()
         requestAudioFocus()
         val utteranceId = "viavox_${System.currentTimeMillis()}"
@@ -123,6 +137,7 @@ class TextToSpeechManager(
     }
 
     fun stop() {
+        francisca.stop()
         tts?.stop()
         releaseAudioFocus()
         onSpeakingStateChanged(false)
@@ -131,6 +146,7 @@ class TextToSpeechManager(
     fun shutdown() {
         stop()
         tts?.shutdown()
+        francisca.shutdown()
         tts = null
         isInitialized = false
     }
