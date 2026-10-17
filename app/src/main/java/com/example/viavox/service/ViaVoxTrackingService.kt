@@ -54,6 +54,7 @@ class ViaVoxTrackingService : Service() {
             TrackingRepository.updateSpeaking(isSpeaking)
         }
         ttsManager.setSpeechRate(currentConfig.speechRate)
+        ttsManager.franciscaEndpoint = prefs.getString("francisca_broker_url", null)
 
         nominatimService = NominatimService()
         poiService = PoiDiscoveryService()
