@@ -1,0 +1,10 @@
+{
+  "name": "ViaVox",
+  "description": "Sua localização ganha voz - Aplicativo Android nativo com Jetpack Compose, GPS em tempo real, geocodificação reversa OpenStreetMap e narração por voz (TTS em português).",
+  "requestFramePermissions": [
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

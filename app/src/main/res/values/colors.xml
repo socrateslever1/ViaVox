@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="viavox_bg">#0E1E31</color>
+    <color name="viavox_header">#12283F</color>
+    <color name="viavox_panel">#0E1E31</color>
+    <color name="viavox_primary_teal">#54D6B1</color>
+    <color name="viavox_teal_glow">#26B993</color>
+    <color name="viavox_coral_stop">#E5B0A8</color>
+    <color name="viavox_coral_text">#44201C</color>
+    <color name="viavox_teal_text">#082639</color>
+    <color name="viavox_btn_repeat">#264057</color>
+    <color name="viavox_text_title">#EAF3FA</color>
+    <color name="viavox_text_sub">#BDCCDA</color>
+    <color name="viavox_text_muted">#A9BCCB</color>
+    <color name="viavox_reference">#83EAD3</color>
+</resources>

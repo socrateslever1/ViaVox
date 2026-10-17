@@ -1,0 +1,31 @@
+<resources>
+    <string name="app_name">ViaVox</string>
+    <string name="brand_subtitle">Sua localização ganha voz</string>
+    <string name="version_badge">BETA 0.2</string>
+
+    <string name="eyebrow_tracking">ACOMPANHANDO TRAJETO</string>
+    <string name="eyebrow_paused">LOCALIZAÇÃO PAUSADA</string>
+    <string name="accuracy_format">GPS ±%1$d m</string>
+
+    <string name="where_are_you">Onde você está?</string>
+    <string name="empty_address_hint">Ative a localização para começar a identificar as ruas.</string>
+    <string name="reference_format">📍 Referência: %1$s</string>
+
+    <string name="status_ready">Pronto para localizar</string>
+    <string name="status_waiting_gps">Aguardando permissão de localização...</string>
+    <string name="status_location_updated">Localização atualizada</string>
+    <string name="status_location_paused">Localização pausada</string>
+    <string name="status_inaccurate_gps">Sinal GPS impreciso (±%1$d m)</string>
+    <string name="status_permission_denied">Permissão de localização negada</string>
+    <string name="status_gps_unavailable">GPS indisponível no dispositivo</string>
+
+    <string name="btn_start">▶ Iniciar localização</string>
+    <string name="btn_stop">■ Parar narração</string>
+    <string name="toggle_voice">Narração por voz</string>
+    <string name="btn_repeat">🔊 Ouvir localização atual</string>
+
+    <string name="info_note">Versão Android: funciona em tempo real com GPS de alta precisão e sintetizador de voz (TTS em português do Brasil). Os nomes de vias e pontos de referência utilizam os dados colaborativos do OpenStreetMap.</string>
+
+    <string name="tts_speech_template">Você está na %1$s, bairro %2$s%3$s.</string>
+    <string name="tts_near_reference">, próximo a %1$s</string>
+</resources>
