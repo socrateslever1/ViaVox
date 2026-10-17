@@ -60,7 +60,7 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.okhttp)
     implementation(libs.okhttp.logging)
-    implementation(libs.osmdroid.android)
+    implementation(libs.maplibre.android)
     implementation(libs.play.services.location)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
