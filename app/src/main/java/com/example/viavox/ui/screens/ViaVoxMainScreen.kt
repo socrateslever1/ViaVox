@@ -49,6 +49,8 @@ fun ViaVoxMainScreen(
 
         // Full-bleed GPU vector map occupying the entire screen
         OpenStreetMapComponent(
+            hasLocationFix = state.hasLocationFix,
+            speedKmh = state.speedKmh,
             latitude = state.latitude,
             longitude = state.longitude,
             bearing = state.bearing,
