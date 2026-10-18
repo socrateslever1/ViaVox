@@ -8,6 +8,7 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.SystemClock
 import android.view.Surface
+import android.view.WindowManager
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -63,7 +64,9 @@ fun rememberDeviceCompassHeading(
                     SensorManager.getRotationMatrixFromVector(matrix, event.values)
                     val adjusted = FloatArray(9)
                     // Screen rotation changes the heading of the visual top of the app.
-                    val rotation = context.display?.rotation ?: Surface.ROTATION_0
+                    @Suppress("DEPRECATION")
+                    val rotation = (context.getSystemService(Context.WINDOW_SERVICE) as? WindowManager)
+                        ?.defaultDisplay?.rotation ?: Surface.ROTATION_0
                     when (rotation) {
                         Surface.ROTATION_90 -> SensorManager.remapCoordinateSystem(
                             matrix, SensorManager.AXIS_Y, SensorManager.AXIS_MINUS_X, adjusted
