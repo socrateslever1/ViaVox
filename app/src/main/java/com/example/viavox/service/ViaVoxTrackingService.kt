@@ -13,7 +13,6 @@ import android.content.pm.ServiceInfo
 import android.location.Location
 import android.os.Build
 import android.os.IBinder
-import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -29,11 +28,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
 
 class ViaVoxTrackingService : Service() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-    private var wakeLock: PowerManager.WakeLock? = null
+    private var poiJob: Job? = null
+    private var lastPoiCheckTimestamp = 0L
 
     private lateinit var ttsManager: TextToSpeechManager
     private lateinit var locationTracker: LocationTrackingManager
@@ -158,12 +159,13 @@ class ViaVoxTrackingService : Service() {
             return
         }
 
-        acquireWakeLock()
+        // Fused Location delivers callbacks without holding a persistent CPU wake lock.
         isTrackingRunning = true
         TrackingRepository.updateActive(true)
         TrackingRepository.updateStatus(getString(R.string.status_waiting_gps))
 
         roadEngine.reset()
+        lastPoiCheckTimestamp = 0L
         locationTracker.startTracking()
     }
 
@@ -173,7 +175,8 @@ class ViaVoxTrackingService : Service() {
         locationTracker.stopTracking()
         ttsManager.stop()
         roadEngine.reset()
-        releaseWakeLock()
+        poiJob?.cancel()
+        poiJob = null
 
         TrackingRepository.updateActive(false)
         TrackingRepository.updateStatus(getString(R.string.status_location_paused))
@@ -208,8 +211,16 @@ class ViaVoxTrackingService : Service() {
         // Check for nearby landmark POIs if speech cooldown allows
         val now = System.currentTimeMillis()
         val speechIntervalMs = currentConfig.minIntervalSeconds * 1000L
-        if (now - lastSpeechTimestamp >= speechIntervalMs && !TrackingRepository.state.value.isSpeaking) {
-            serviceScope.launch {
+        // Nearby-place lookup is lower priority than street announcements.
+        // Never start a new network operation on every GPS fix.
+        val poiIntervalMs = if (speedKmh >= 5f) 25_000L else 90_000L
+        if (now - lastPoiCheckTimestamp >= poiIntervalMs &&
+            now - lastSpeechTimestamp >= speechIntervalMs &&
+            !TrackingRepository.state.value.isSpeaking &&
+            poiJob?.isActive != true
+        ) {
+            lastPoiCheckTimestamp = now
+            poiJob = serviceScope.launch {
                 val poi = poiService.findNearbyPoi(lat, lon, currentConfig)
                 if (poi != null) {
                     val relativeDir = poi.calculateRelativeDirection(
@@ -246,36 +257,6 @@ class ViaVoxTrackingService : Service() {
         if (currentPlace != null && currentPlace.hasValidRoad()) {
             val message = currentPlace.toSpeechMessage(isTransition = false)
             speakIfAllowed(message, forceRepeat = true)
-        }
-    }
-
-    private fun acquireWakeLock() {
-        try {
-            if (wakeLock == null) {
-                val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-                wakeLock = powerManager.newWakeLock(
-                    PowerManager.PARTIAL_WAKE_LOCK,
-                    "ViaVox:LocationTrackingWakeLock"
-                ).apply {
-                    setReferenceCounted(false)
-                    acquire(30 * 60 * 1000L) // 30 minutes safety timeout
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to acquire wake lock: ${e.message}")
-        }
-    }
-
-    private fun releaseWakeLock() {
-        try {
-            wakeLock?.let {
-                if (it.isHeld) {
-                    it.release()
-                }
-            }
-            wakeLock = null
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to release wake lock: ${e.message}")
         }
     }
 
