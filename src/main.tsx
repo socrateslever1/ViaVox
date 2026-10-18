@@ -65,8 +65,7 @@ function MapCanvas({
       style: MAP_STYLE,
       center: [-60.0235, -3.1025],
       zoom: 12,
-      pitch: 45,
-      attributionControl: true
+      pitch: 45
     });
     map.current = instance;
     instance.addControl(new NavigationControl({ showZoom: false, showCompass: true }), 'top-right');
