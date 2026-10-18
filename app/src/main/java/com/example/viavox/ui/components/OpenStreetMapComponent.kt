@@ -108,6 +108,7 @@ fun OpenStreetMapComponent(
     hasBearing: Boolean = false,
     isActive: Boolean,
     route: NavigationRoute? = null,
+    navigating: Boolean = false,
     destination: MapPlace? = null,
     favorites: List<MapPlace> = emptyList(),
     savedTrack: List<TripPoint> = emptyList(),
@@ -137,8 +138,10 @@ fun OpenStreetMapComponent(
     val compassHeading = rememberDeviceCompassHeading(isActive, latitude, longitude)
 
     // Resume following user whenever tracking starts
-    LaunchedEffect(isActive) {
-        if (isActive) {
+    LaunchedEffect(isActive, navigating) {
+        if (isActive && navigating) {
+            followUser = true
+        } else if (isActive && !followUser && route == null) {
             followUser = true
         }
     }
@@ -309,9 +312,9 @@ fun OpenStreetMapComponent(
 
     // When a destination changes, frame the trip's actual route instead of
     // merely drawing a straight line. The regular GPS camera follows during navigation.
-    LaunchedEffect(map, route) {
+    LaunchedEffect(map, route, navigating) {
         val mapRef = map ?: return@LaunchedEffect
-        if (route != null && route.coordinates.isNotEmpty()) {
+        if (route != null && route.coordinates.isNotEmpty() && !navigating) {
             followUser = false
             val midPoint = route.coordinates[route.coordinates.size / 2]
             mapRef.animateCamera(
