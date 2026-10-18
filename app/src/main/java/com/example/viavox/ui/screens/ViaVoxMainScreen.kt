@@ -95,6 +95,7 @@ fun ViaVoxMainScreen(
                 config = state.config,
                 onSpeedChanged = onSpeedChanged,
                 onVoiceSelectionChanged = onVoiceSelectionChanged,
+                onTestVoice = onTestVoice,
                 onIntervalChanged = onIntervalChanged,
                 onPoiCategoryToggled = onPoiCategoryToggled,
                 onFranciscaBrokerUrlChanged = onFranciscaBrokerUrlChanged,
