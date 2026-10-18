@@ -20,9 +20,9 @@ data class Place(
         return neighbourhood.isNotBlank() && neighbourhood != UNKNOWN_NEIGHBOURHOOD
     }
 
-    fun toSpeechMessage(isTransition: Boolean = false): String {
+    fun toSpeechMessage(isTransition: Boolean = false, includeNeighbourhood: Boolean = true): String {
         val prefix = if (isTransition) "Agora você está na $road" else "Você está na $road"
-        val bairroPart = if (hasValidNeighbourhood()) {
+        val bairroPart = if (includeNeighbourhood && hasValidNeighbourhood()) {
             ", bairro $neighbourhood"
         } else {
             ""
