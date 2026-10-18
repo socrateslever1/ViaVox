@@ -151,6 +151,19 @@ fun StatusPanel(
                 }
             }
 
+            // Visible diagnostics: the user can tell whether nearby places are
+            // missing from OSM, waiting for GPS, detected, or announced.
+            Spacer(Modifier.height(7.dp))
+            Text(
+                text = state.poiStatus,
+                color = if (state.poiStatus.startsWith("Referência anunciada:")) aqua else subdued,
+                fontSize = 11.sp,
+                lineHeight = 14.sp,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth().testTag("poi_discovery_status")
+            )
+
             val voiceNotice = when {
                 state.config.voiceProvider == "francisca" && !state.config.hasFranciscaSettings() ->
                     "Francisca não configurada. A voz Android será usada até instalar o serviço de voz."
