@@ -1,0 +1,38 @@
+name: Web build validation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'package.json'
+      - 'index.html'
+      - 'tsconfig.json'
+      - '.github/workflows/web-build.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install web dependencies
+        run: npm install --no-audit --no-fund
+      - name: Typecheck and build web
+        run: npm run build
+      - name: Upload Cloudflare Pages bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: ViaVox-web-dist
+          path: dist
+          if-no-files-found: error
+          retention-days: 14
