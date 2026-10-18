@@ -292,7 +292,7 @@ class ViaVoxTrackingService : Service() {
         poiAnnouncements.poiWasAnnounced(System.currentTimeMillis())
         poiService.markAnnounced(poi)
         TrackingRepository.updatePoi(poi, relativeDir)
-        TrackingRepository.updatePoiStatus("Referência anunciada: ${poi.name}")
+        TrackingRepository.updatePoiStatus("Enviando à voz: ${poi.name}")
         speakIfAllowed(speech, forceRepeat = false)
     }
 
