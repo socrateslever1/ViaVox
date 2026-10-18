@@ -11,7 +11,9 @@ data class ViaVoxConfig(
     val enableFuelPoi: Boolean = true,
     val enablePublicPoi: Boolean = true,
     val franciscaBrokerUrl: String = "",
-    val franciscaAccessToken: String = ""
+    val franciscaAccessToken: String = "",
+    val voiceProvider: String = "android",
+    val nativeVoiceId: String = ""
 ) {
     fun saveTo(prefs: SharedPreferences) {
         prefs.edit()
@@ -24,6 +26,8 @@ data class ViaVoxConfig(
             .putBoolean("poi_public", enablePublicPoi)
             .putString("francisca_broker_url", franciscaBrokerUrl.trim())
             .putString("francisca_access_token", franciscaAccessToken.trim())
+            .putString("voice_provider", voiceProvider)
+            .putString("native_voice_id", nativeVoiceId)
             .apply()
     }
 
@@ -38,7 +42,9 @@ data class ViaVoxConfig(
                 enableFuelPoi = prefs.getBoolean("poi_fuel", true),
                 enablePublicPoi = prefs.getBoolean("poi_public", true),
                 franciscaBrokerUrl = prefs.getString("francisca_broker_url", "")?.trim().orEmpty(),
-                franciscaAccessToken = prefs.getString("francisca_access_token", "")?.trim().orEmpty()
+                franciscaAccessToken = prefs.getString("francisca_access_token", "")?.trim().orEmpty(),
+                voiceProvider = prefs.getString("voice_provider", "android")?.takeIf { it == "francisca" } ?: "android",
+                nativeVoiceId = prefs.getString("native_voice_id", "")?.trim().orEmpty()
             )
         }
     }
