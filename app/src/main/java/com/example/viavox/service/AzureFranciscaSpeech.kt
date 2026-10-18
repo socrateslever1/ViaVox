@@ -26,6 +26,7 @@ class AzureFranciscaSpeech(
     private var player: MediaPlayer? = null
     @Volatile private var generation = 0L
     var endpoint: String? = null
+    var accessToken: String? = null
 
     fun speak(text: String, onUnavailable: () -> Unit) {
         val url = endpoint?.takeIf { it.startsWith("https://") }
@@ -44,6 +45,9 @@ class AzureFranciscaSpeech(
                     conn.readTimeout = 6000
                     conn.doOutput = true
                     conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                    accessToken?.takeIf { it.isNotBlank() }?.let { token ->
+                        conn.setRequestProperty("Authorization", "Bearer $token")
+                    }
                     conn.outputStream.use {
                         it.write(JSONObject().put("text", text)
                             .put("voice", "pt-BR-FranciscaNeural").toString()
