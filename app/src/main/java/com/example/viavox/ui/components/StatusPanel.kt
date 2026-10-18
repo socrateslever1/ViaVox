@@ -161,10 +161,9 @@ fun StatusPanel(
                         color = Color(0xFFFFD5B3),
                         fontSize = 11.sp,
                         lineHeight = 14.sp,
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1f).testTag("voice_diagnostic"),
                         maxLines = 3,
-                        overflow = TextOverflow.Ellipsis,
-                        testTag = "voice_diagnostic"
+                        overflow = TextOverflow.Ellipsis
                     )
                     TextButton(onClick = onTestVoice, modifier = Modifier.testTag("test_voice_button")) {
                         Icon(Icons.Default.PlayArrow, null, tint = aqua, modifier = Modifier.size(18.dp))
