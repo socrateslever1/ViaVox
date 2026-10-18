@@ -75,6 +75,10 @@ class TextToSpeechManager(
             router.franciscaEndpoint = value
         }
 
+    var franciscaAccessToken: String?
+        get() = francisca.accessToken
+        set(value) { francisca.accessToken = value }
+
     private var isInitialized = false
     private var currentSpeechRate = 0.95f
     private var pendingUtteranceBeforeInit: String? = null
