@@ -66,6 +66,7 @@ fun ViaVoxMainScreen(
             hasBearing = state.hasBearing,
             isActive = state.isActive,
             route = navigationUi.route,
+            navigating = navigationUi.navigating,
             destination = navigationUi.selected,
             favorites = navigationUi.savedPlaces.map { it.second },
             savedTrack = navigationUi.showingTrip?.points.orEmpty(),
