@@ -21,6 +21,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.viavox.ui.screens.ViaVoxMainScreen
 import com.example.viavox.ui.theme.ViaVoxTheme
 import com.example.viavox.viewmodel.ViaVoxViewModel
+import com.example.viavox.viewmodel.NavigationViewModel
 
 class MainActivity : ComponentActivity() {
 
@@ -31,6 +32,8 @@ class MainActivity : ComponentActivity() {
         setContent {
             ViaVoxTheme {
                 val viewModel: ViaVoxViewModel = viewModel()
+                val navigation: NavigationViewModel = viewModel()
+                val navigationUi by navigation.ui.collectAsState()
                 val state by viewModel.state.collectAsState()
                 val isSettingsOpen by viewModel.isSettingsDialogOpen.collectAsState()
                 val lifecycleOwner = LocalLifecycleOwner.current
@@ -38,7 +41,10 @@ class MainActivity : ComponentActivity() {
                     val observer = LifecycleEventObserver { _, event ->
                         when (event) {
                             Lifecycle.Event.ON_START -> viewModel.onAppVisible()
-                            Lifecycle.Event.ON_STOP -> viewModel.onAppHidden()
+                            Lifecycle.Event.ON_STOP -> {
+                                navigation.onAppHidden()
+                                viewModel.onAppHidden()
+                            }
                             else -> Unit
                         }
                     }
@@ -84,6 +90,8 @@ class MainActivity : ComponentActivity() {
 
                 ViaVoxMainScreen(
                     state = state,
+                    navigationUi = navigationUi,
+                    navigation = navigation,
                     isSettingsDialogOpen = isSettingsOpen,
                     onOpenSettings = { viewModel.openSettings() },
                     onCloseSettings = { viewModel.closeSettings() },
