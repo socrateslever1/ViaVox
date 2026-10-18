@@ -30,6 +30,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -38,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.viavox.R
 import com.example.viavox.model.TrackingState
+import com.example.viavox.service.VoiceDataInstaller
 
 private val aqua = Color(0xFF42E6D1)
 private val text = Color(0xFFF5F8FF)
@@ -55,6 +57,7 @@ fun StatusPanel(
     onTestVoice: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     Surface(
         modifier = modifier.testTag("status_panel"),
         shape = RoundedCornerShape(25.dp),
@@ -170,9 +173,20 @@ fun StatusPanel(
                         maxLines = 3,
                         overflow = TextOverflow.Ellipsis
                     )
-                    TextButton(onClick = onTestVoice, modifier = Modifier.testTag("test_voice_button")) {
-                        Icon(Icons.Default.PlayArrow, null, tint = aqua, modifier = Modifier.size(18.dp))
-                        Text("Testar", fontSize = 11.sp, color = aqua)
+                    Column(horizontalAlignment = Alignment.End) {
+                        TextButton(onClick = onTestVoice, modifier = Modifier.testTag("test_voice_button")) {
+                            Icon(Icons.Default.PlayArrow, null, tint = aqua, modifier = Modifier.size(18.dp))
+                            Text("Testar", fontSize = 11.sp, color = aqua)
+                        }
+                        if (voiceNotice?.contains("instalad", ignoreCase = true) == true ||
+                            voiceNotice?.contains("erro -9") == true) {
+                            TextButton(
+                                onClick = { VoiceDataInstaller.open(context) },
+                                modifier = Modifier.testTag("install_voice_button")
+                            ) {
+                                Text("Instalar voz", fontSize = 11.sp, color = aqua)
+                            }
+                        }
                     }
                 }
             }
