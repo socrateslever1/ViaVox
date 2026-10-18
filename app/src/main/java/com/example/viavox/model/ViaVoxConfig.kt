@@ -10,7 +10,8 @@ data class ViaVoxConfig(
     val enableParksPoi: Boolean = true,
     val enableFuelPoi: Boolean = true,
     val enablePublicPoi: Boolean = true,
-    val franciscaBrokerUrl: String = ""
+    val franciscaBrokerUrl: String = "",
+    val franciscaAccessToken: String = ""
 ) {
     fun saveTo(prefs: SharedPreferences) {
         prefs.edit()
@@ -22,6 +23,7 @@ data class ViaVoxConfig(
             .putBoolean("poi_fuel", enableFuelPoi)
             .putBoolean("poi_public", enablePublicPoi)
             .putString("francisca_broker_url", franciscaBrokerUrl.trim())
+            .putString("francisca_access_token", franciscaAccessToken.trim())
             .apply()
     }
 
@@ -35,7 +37,8 @@ data class ViaVoxConfig(
                 enableParksPoi = prefs.getBoolean("poi_parks", true),
                 enableFuelPoi = prefs.getBoolean("poi_fuel", true),
                 enablePublicPoi = prefs.getBoolean("poi_public", true),
-                franciscaBrokerUrl = prefs.getString("francisca_broker_url", "")?.trim().orEmpty()
+                franciscaBrokerUrl = prefs.getString("francisca_broker_url", "")?.trim().orEmpty(),
+                franciscaAccessToken = prefs.getString("francisca_access_token", "")?.trim().orEmpty()
             )
         }
     }
