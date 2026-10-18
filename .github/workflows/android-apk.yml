@@ -67,6 +67,14 @@ jobs:
       - name: Build debug APK
         run: gradle --no-daemon --stacktrace :app:assembleDebug
 
+      - name: Verify APK package and signing
+        run: |
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$APK"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | grep -m1 '^package:' | tee /tmp/viavox-package.txt
+          grep -q "name='com.socrateslever.viavox'" /tmp/viavox-package.txt
+          echo "Correct package identity and valid APK signing verified."
+
       - name: Run unit tests
         run: gradle --no-daemon --stacktrace :app:testDebugUnitTest
 
