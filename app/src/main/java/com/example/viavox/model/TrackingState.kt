@@ -18,6 +18,7 @@ data class TrackingState(
     val statusMessage: String = "Pronto para localizar",
     val isVoiceEnabled: Boolean = true,
     val isSpeaking: Boolean = false,
+    val voiceIssue: String? = null,
     val hasLocationPermission: Boolean = false,
     val config: ViaVoxConfig = ViaVoxConfig()
 )
