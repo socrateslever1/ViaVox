@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -24,10 +26,12 @@ import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Explore
+import androidx.compose.material.icons.filled.Terrain
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.Text
 import androidx.compose.material3.Surface
 import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.runtime.Composable
@@ -43,6 +47,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.example.viavox.ui.theme.ViaVoxHeader
@@ -58,8 +64,10 @@ import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
 import org.maplibre.android.style.layers.FillExtrusionLayer
+import org.maplibre.android.style.layers.LineLayer
 import org.maplibre.android.style.layers.PropertyFactory
 import org.maplibre.android.style.expressions.Expression
+import kotlin.math.abs
 
 private const val INITIAL_ZOOM = 16.8
 private const val DARK_MAP_STYLE = "https://tiles.openfreemap.org/styles/dark"
@@ -90,10 +98,12 @@ fun OpenStreetMapComponent(
     var map by remember { mutableStateOf<MapLibreMap?>(null) }
     var isStyleReady by remember { mutableStateOf(false) }
     var followUser by remember { mutableStateOf(true) }
-    var darkStyle by remember { mutableStateOf(false) }
+    var darkStyle by remember { mutableStateOf(true) }
+    var headingUp by remember { mutableStateOf(true) }
+    var threeDView by remember { mutableStateOf(true) }
     var mapCameraBearing by remember { mutableStateOf(0f) }
     var marker by remember { mutableStateOf<Marker?>(null) }
-    val compassHeading = rememberDeviceCompassHeading(isActive)
+    val compassHeading = rememberDeviceCompassHeading(isActive, latitude, longitude)
 
     // Resume following user whenever tracking starts
     LaunchedEffect(isActive) {
@@ -124,13 +134,15 @@ fun OpenStreetMapComponent(
                 }
             }
 
-            readyMap.setStyle(Style.Builder().fromUri(FALLBACK_MAP_STYLE)) { style ->
+            readyMap.setStyle(Style.Builder().fromUri(DARK_MAP_STYLE)) { style ->
+                enhanceRealRoadContrast(style, true)
                 addBuildings3DIfAvailable(style)
                 isStyleReady = true
             }
             mapView.addOnDidFailLoadingMapListener {
                 if (!isStyleReady) {
-                    readyMap.setStyle(Style.Builder().fromUri(DARK_MAP_STYLE)) { style ->
+                    readyMap.setStyle(Style.Builder().fromUri(FALLBACK_MAP_STYLE)) { style ->
+                        if (darkStyle) enhanceRealRoadContrast(style, true)
                         addBuildings3DIfAvailable(style)
                         isStyleReady = true
                     }
@@ -142,7 +154,7 @@ fun OpenStreetMapComponent(
             readyMap.cameraPosition = CameraPosition.Builder()
                 .target(initialPoint)
                 .zoom(if (hasLocationFix) INITIAL_ZOOM else 11.5)
-                .tilt(if (hasLocationFix) 53.0 else 0.0)
+                .tilt(if (hasLocationFix) 58.0 else 0.0)
                 .build()
 
             map = readyMap
@@ -157,7 +169,7 @@ fun OpenStreetMapComponent(
     // Update coordinates/camera only on new GPS fixes, not on every compass event.
     LaunchedEffect(
         map, isStyleReady, latitude, longitude, bearing, hasBearing,
-        speedKmh, followUser, hasLocationFix
+        speedKmh, followUser, hasLocationFix, headingUp, threeDView
     ) {
         val currentMap = map ?: return@LaunchedEffect
         if (!isStyleReady || !hasLocationFix) return@LaunchedEffect
@@ -175,13 +187,12 @@ fun OpenStreetMapComponent(
         if (followUser) {
             // Heading-up while actually moving; don't spin the map as the
             // phone is handled while stopped. Preserve user zoom and tilt.
-            val movingWithCourse = hasBearing && speedKmh >= 7f
             val cameraNow = currentMap.cameraPosition
             val cameraPos = CameraPosition.Builder()
                 .target(point)
                 .zoom(if (previousMarker == null) INITIAL_ZOOM else cameraNow.zoom)
-                .tilt(if (previousMarker == null) 53.0 else cameraNow.tilt)
-                .bearing(if (movingWithCourse) bearing.toDouble() else cameraNow.bearing)
+                .tilt(if (threeDView) 58.0 else 0.0)
+                .bearing(cameraNow.bearing)
                 .build()
             currentMap.animateCamera(CameraUpdateFactory.newCameraPosition(cameraPos), 550)
         }
@@ -191,23 +202,29 @@ fun OpenStreetMapComponent(
     // In heading-up mode the arrow faces screen top, rather than double-rotating.
     LaunchedEffect(
         map, isStyleReady, marker, compassHeading, bearing, hasBearing,
-        speedKmh, followUser, hasLocationFix, mapCameraBearing
+        speedKmh, followUser, hasLocationFix, mapCameraBearing, headingUp
     ) {
         val currentMap = map ?: return@LaunchedEffect
         val currentMarker = marker ?: return@LaunchedEffect
         if (!isStyleReady || !hasLocationFix) return@LaunchedEffect
 
-        val gpsHeadingReliable = hasBearing && speedKmh >= 7f
-        val heading = if (gpsHeadingReliable) bearing else compassHeading
-        val relative = if (heading == null) 0f else if (gpsHeadingReliable && followUser) {
-            0f
-        } else {
+        // Vehicle course is meaningful only when actually moving.
+        // At a stop, the top of the phone is the chosen reference direction.
+        val movingCourseReliable = hasBearing && speedKmh >= 7f
+        val heading = if (movingCourseReliable) bearing else compassHeading
+        if (headingUp && followUser && heading != null) {
+            val cameraBearing = currentMap.cameraPosition.bearing.toFloat()
+            val delta = abs(((heading - cameraBearing + 540f) % 360f) - 180f)
+            if (delta >= 7f) {
+                currentMap.animateCamera(CameraUpdateFactory.bearingTo(heading.toDouble()), 450)
+            }
+        }
+        val relative = if (heading == null) 0f else {
             ((heading - mapCameraBearing) % 360f + 360f) % 360f
         }
-        val icon = IconFactory.getInstance(context).fromBitmap(
+        currentMarker.icon = IconFactory.getInstance(context).fromBitmap(
             createBlueLocationMarkerBitmap(relative, heading != null)
         )
-        currentMarker.icon = icon
     }
 
     Box(modifier = modifier.fillMaxSize().testTag("map_view")) {
@@ -245,16 +262,36 @@ fun OpenStreetMapComponent(
                 }
             }
 
-            MapControlButton(
-                icon = Icons.Default.Explore,
-                label = "Orientar mapa ao norte",
-                testTag = "compass_button"
-            ) {
-                val current = map
-                if (current != null) {
-                    followUser = false
-                    current.animateCamera(CameraUpdateFactory.bearingTo(0.0), 450)
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                MapControlButton(
+                    icon = Icons.Default.Explore,
+                    label = if (headingUp) "Fixar norte na tela" else "Seguir direção à frente",
+                    testTag = "compass_button"
+                ) {
+                    headingUp = !headingUp
+                    followUser = true
+                    if (!headingUp) {
+                        map?.animateCamera(CameraUpdateFactory.bearingTo(0.0), 450)
+                    }
                 }
+                Text(
+                    if (headingUp) "FRENTE" else "NORTE",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 9.sp,
+                    modifier = Modifier
+                        .background(Color(0xE0102642), RoundedCornerShape(7.dp))
+                        .padding(horizontal = 5.dp, vertical = 3.dp)
+                )
+            }
+
+            MapControlButton(
+                icon = Icons.Default.Terrain,
+                label = if (threeDView) "Vista de cima (2D)" else "Vista inclinada (3D)",
+                testTag = "map_3d_button"
+            ) {
+                threeDView = !threeDView
+                map?.animateCamera(CameraUpdateFactory.tiltTo(if (threeDView) 58.0 else 0.0), 550)
             }
 
             MapControlButton(
@@ -364,6 +401,29 @@ private fun MapControlButton(
         ) {
             Icon(icon, contentDescription = label, tint = Color.White, modifier = Modifier.size(23.dp))
         }
+    }
+}
+
+/**
+ * Enhance actual vector road lines in the dark style rather than drawing fake
+ * roads or inventing 3D buildings. Other geometry retains provider styling.
+ */
+private fun enhanceRealRoadContrast(style: Style, dark: Boolean) {
+    if (!dark) return
+    try {
+        style.layers.filterIsInstance<LineLayer>().forEach { layer ->
+            val id = layer.id.lowercase()
+            if ((id.contains("road") || id.contains("street")) &&
+                !id.contains("label") && !id.contains("outline") &&
+                !id.contains("casing")
+            ) {
+                layer.setProperties(
+                    PropertyFactory.lineColor(android.graphics.Color.rgb(78, 105, 139))
+                )
+            }
+        }
+    } catch (_: Exception) {
+        // A provider changing layer names must never stop the map loading.
     }
 }
 
