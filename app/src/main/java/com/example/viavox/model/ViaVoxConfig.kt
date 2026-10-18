@@ -15,6 +15,11 @@ data class ViaVoxConfig(
     val voiceProvider: String = "android",
     val nativeVoiceId: String = ""
 ) {
+    /** Configuration presence does not guarantee Azure availability; an audio test does. */
+    fun hasFranciscaSettings(): Boolean =
+        franciscaBrokerUrl.trim().startsWith("https://", ignoreCase = true) &&
+            franciscaAccessToken.isNotBlank()
+
     fun saveTo(prefs: SharedPreferences) {
         prefs.edit()
             .putFloat("speech_rate", speechRate)
