@@ -51,6 +51,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.viavox.ui.theme.ViaVoxHeader
 import com.example.viavox.ui.theme.ViaVoxTeal
 import org.maplibre.android.MapLibre
@@ -91,6 +94,7 @@ fun OpenStreetMapComponent(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val mapView = remember {
         MapLibre.getInstance(context)
         MapView(context)
@@ -112,10 +116,27 @@ fun OpenStreetMapComponent(
         }
     }
 
-    DisposableEffect(mapView) {
+    DisposableEffect(mapView, lifecycleOwner) {
         mapView.onCreate(null)
-        mapView.onStart()
-        mapView.onResume()
+        val lifecycle = lifecycleOwner.lifecycle
+        var mapStarted = false
+        var mapResumed = false
+        fun startIfNeeded() { if (!mapStarted) { mapView.onStart(); mapStarted = true } }
+        fun resumeIfNeeded() { if (!mapResumed) { startIfNeeded(); mapView.onResume(); mapResumed = true } }
+        fun pauseIfNeeded() { if (mapResumed) { mapView.onPause(); mapResumed = false } }
+        fun stopIfNeeded() { if (mapStarted) { pauseIfNeeded(); mapView.onStop(); mapStarted = false } }
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> startIfNeeded()
+                Lifecycle.Event.ON_RESUME -> resumeIfNeeded()
+                Lifecycle.Event.ON_PAUSE -> pauseIfNeeded()
+                Lifecycle.Event.ON_STOP -> stopIfNeeded()
+                else -> Unit
+            }
+        }
+        lifecycle.addObserver(observer)
+        if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) startIfNeeded()
+        if (lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) resumeIfNeeded()
         mapView.getMapAsync { readyMap ->
             readyMap.uiSettings.isCompassEnabled = false // custom functional compass in the right-hand control rail
             readyMap.uiSettings.isAttributionEnabled = true
@@ -160,8 +181,8 @@ fun OpenStreetMapComponent(
             map = readyMap
         }
         onDispose {
-            mapView.onPause()
-            mapView.onStop()
+            lifecycle.removeObserver(observer)
+            stopIfNeeded()
             mapView.onDestroy()
         }
     }
