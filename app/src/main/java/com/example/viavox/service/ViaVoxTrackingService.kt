@@ -29,12 +29,14 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 
 class ViaVoxTrackingService : Service() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var poiJob: Job? = null
     private var lastPoiCheckTimestamp = 0L
+    private val poiAnnouncements = PoiAnnouncementCoordinator()
 
     private lateinit var ttsManager: TextToSpeechManager
     private lateinit var locationTracker: LocationTrackingManager
@@ -76,6 +78,9 @@ class ViaVoxTrackingService : Service() {
                 updateNotification(place.road, place.neighbourhood)
             },
             onRoadAnnounceNeeded = { speechMessage, _ ->
+                if (TrackingRepository.state.value.isVoiceEnabled) {
+                    poiAnnouncements.roadWasAnnounced(System.currentTimeMillis())
+                }
                 speakIfAllowed(speechMessage, forceRepeat = false)
             },
             onStatusMessage = { status ->
@@ -169,6 +174,8 @@ class ViaVoxTrackingService : Service() {
 
         roadEngine.reset()
         lastPoiCheckTimestamp = 0L
+        poiAnnouncements.reset()
+        TrackingRepository.updatePoiStatus("Buscando pontos de referência próximos...")
         locationTracker.startTracking()
     }
 
@@ -180,6 +187,9 @@ class ViaVoxTrackingService : Service() {
         roadEngine.reset()
         poiJob?.cancel()
         poiJob = null
+        poiAnnouncements.reset()
+        TrackingRepository.updatePoi(null, null)
+        TrackingRepository.updatePoiStatus("Referências pausadas")
 
         TrackingRepository.updateActive(false)
         TrackingRepository.updateStatus(getString(R.string.status_location_paused))
@@ -211,40 +221,79 @@ class ViaVoxTrackingService : Service() {
         // Identify current street or street transition
         roadEngine.onLocationUpdate(location)
 
-        // Check for nearby landmark POIs if speech cooldown allows
+        // POI discovery is independent of the road-announcement cooldown:
+        // 25-second scan delays previously skipped whole landmarks at driving speeds.
+        tryAnnouncePendingPoi(location)
         val now = System.currentTimeMillis()
-        val speechIntervalMs = currentConfig.minIntervalSeconds * 1000L
-        // Nearby-place lookup is lower priority than street announcements.
-        // Never start a new network operation on every GPS fix.
-        val poiIntervalMs = if (speedKmh >= 5f) 25_000L else 90_000L
-        if (now - lastPoiCheckTimestamp >= poiIntervalMs &&
-            now - lastSpeechTimestamp >= speechIntervalMs &&
-            !TrackingRepository.state.value.isSpeaking &&
-            poiJob?.isActive != true
-        ) {
-            lastPoiCheckTimestamp = now
-            poiJob = serviceScope.launch {
-                val poi = poiService.findNearbyPoi(lat, lon, currentConfig)
-                if (poi != null) {
-                    val relativeDir = poi.calculateRelativeDirection(
-                        userLat = lat,
-                        userLon = lon,
-                        vehicleBearing = bearing,
-                        speedMps = if (location.hasSpeed()) location.speed else 0f
-                    )
+        val intervalMs = if (speedKmh >= 5f) 5_000L else 12_000L
+        val accuracyMeters = if (location.hasAccuracy()) location.accuracy else 100f
+        if (accuracyMeters > 40f) {
+            TrackingRepository.updatePoiStatus("Aguardando GPS mais preciso para reconhecer referências")
+            return
+        }
+        if (now - lastPoiCheckTimestamp < intervalMs || poiJob?.isActive == true) return
 
-                    TrackingRepository.updatePoi(poi, relativeDir)
-
-                    val poiMessage = when (relativeDir) {
-                        RelativeDirection.RIGHT -> getString(R.string.tts_poi_right, poi.name)
-                        RelativeDirection.LEFT -> getString(R.string.tts_poi_left, poi.name)
-                        RelativeDirection.NEARBY -> getString(R.string.tts_poi_nearby, poi.name)
-                    }
-
-                    speakIfAllowed(poiMessage, forceRepeat = false)
-                }
+        lastPoiCheckTimestamp = now
+        poiJob = serviceScope.launch {
+            val poi = poiService.findNearbyPoi(
+                userLat = lat,
+                userLon = lon,
+                config = currentConfig,
+                gpsAccuracyMeters = accuracyMeters,
+                speedMps = if (location.hasSpeed()) location.speed else 0f,
+                bearingDegrees = if (location.hasBearing()) location.bearing else null
+            )
+            if (!isTrackingRunning) return@launch
+            if (poi != null) {
+                poiAnnouncements.offer(poi, System.currentTimeMillis())
+                TrackingRepository.updatePoiStatus("Referência detectada: ${poi.name}")
+                // Permit current street-change geocoding and TTS to finish first.
+                delay(1_800L)
+                if (isTrackingRunning) tryAnnouncePendingPoi(location)
+            } else {
+                val failure = poiService.lastFailure
+                TrackingRepository.updatePoiStatus(
+                    failure ?: if (poiService.cachedCount == 0)
+                        "Nenhum ponto cadastrado próximo no OpenStreetMap"
+                    else "Procurando referências próximas na direção do percurso"
+                )
             }
         }
+    }
+
+    private fun tryAnnouncePendingPoi(location: Location) {
+        if (!isTrackingRunning) return
+        val poi = poiAnnouncements.ready(
+            nowMs = System.currentTimeMillis(),
+            poiIntervalSeconds = currentConfig.minIntervalSeconds,
+            ttsBusy = TrackingRepository.state.value.isSpeaking,
+            voiceEnabled = TrackingRepository.state.value.isVoiceEnabled,
+            latitude = location.latitude,
+            longitude = location.longitude,
+            accuracyMeters = if (location.hasAccuracy()) location.accuracy else 100f,
+            speedMps = if (location.hasSpeed()) location.speed else 0f,
+            bearingDegrees = if (location.hasBearing()) location.bearing else null
+        ) ?: return
+
+        val relativeDir = if (location.hasBearing() && location.hasSpeed() &&
+            location.speed >= 2.5f && location.accuracy <= 20f
+        ) {
+            poi.calculateRelativeDirection(
+                location.latitude, location.longitude, location.bearing, location.speed
+            )
+        } else RelativeDirection.NEARBY
+
+        val speech = when (relativeDir) {
+            RelativeDirection.RIGHT -> getString(R.string.tts_poi_right, poi.name)
+            RelativeDirection.LEFT -> getString(R.string.tts_poi_left, poi.name)
+            RelativeDirection.NEARBY -> getString(R.string.tts_poi_nearby, poi.name)
+        }
+        // Mark as announced only at the moment it actually enters the TTS system.
+        poiAnnouncements.poiWasAnnounced(System.currentTimeMillis())
+        poiService.markAnnounced(poi)
+        TrackingRepository.updatePoi(poi, relativeDir)
+        TrackingRepository.updatePoiStatus("Referência anunciada: ${poi.name}")
+        speakIfAllowed(speech, forceRepeat = false)
     }
 
     private fun speakIfAllowed(message: String, forceRepeat: Boolean) {
@@ -335,6 +384,7 @@ class ViaVoxTrackingService : Service() {
         roadEngine.reset()
         poiJob?.cancel()
         poiJob = null
+        poiAnnouncements.reset()
         serviceScope.cancel()
     }
 
