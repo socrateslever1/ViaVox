@@ -7,16 +7,28 @@ import android.graphics.Path
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -26,6 +38,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -72,6 +85,7 @@ fun OpenStreetMapComponent(
     var map by remember { mutableStateOf<MapLibreMap?>(null) }
     var isStyleReady by remember { mutableStateOf(false) }
     var followUser by remember { mutableStateOf(true) }
+    var darkStyle by remember { mutableStateOf(true) }
     var marker by remember { mutableStateOf<Marker?>(null) }
 
     // Resume following user whenever tracking starts
@@ -86,7 +100,7 @@ fun OpenStreetMapComponent(
         mapView.onStart()
         mapView.onResume()
         mapView.getMapAsync { readyMap ->
-            readyMap.uiSettings.isCompassEnabled = true
+            readyMap.uiSettings.isCompassEnabled = false // custom functional compass in the right-hand control rail
             readyMap.uiSettings.isAttributionEnabled = true
             readyMap.uiSettings.isLogoEnabled = false
             readyMap.uiSettings.isZoomGesturesEnabled = true
@@ -116,7 +130,7 @@ fun OpenStreetMapComponent(
             readyMap.cameraPosition = CameraPosition.Builder()
                 .target(initialPoint)
                 .zoom(INITIAL_ZOOM)
-                .tilt(45.0)
+                .tilt(53.0)
                 .build()
 
             map = readyMap
@@ -153,7 +167,7 @@ fun OpenStreetMapComponent(
             val cameraPos = CameraPosition.Builder()
                 .target(point)
                 .zoom(INITIAL_ZOOM)
-                .tilt(45.0)
+                .tilt(53.0)
                 .bearing(if (hasBearing) bearing.toDouble() else currentMap.cameraPosition.bearing)
                 .build()
             currentMap.animateCamera(CameraUpdateFactory.newCameraPosition(cameraPos), 750)
@@ -170,30 +184,72 @@ fun OpenStreetMapComponent(
             )
         }
 
-        // Discreet Recenter button when user has manually moved the map
-        AnimatedVisibility(
-            visible = !followUser,
-            enter = fadeIn(),
-            exit = fadeOut(),
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(top = 88.dp, end = 16.dp)
+        // Floating map controls, all wired to MapLibre camera or style actions.
+        // Keep the map interactive and visible beneath the controls.
+        Column(
+            modifier = Modifier.align(Alignment.CenterEnd).padding(end = 12.dp, bottom = 40.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            SmallFloatingActionButton(
-                onClick = { followUser = true },
-                shape = CircleShape,
-                containerColor = ViaVoxHeader.copy(alpha = 0.92f),
-                contentColor = ViaVoxTeal,
-                elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 4.dp),
-                modifier = Modifier
-                    .size(48.dp)
-                    .testTag("recenter_button")
+            MapControlButton(
+                icon = Icons.Default.Layers,
+                label = if (darkStyle) "Mapa claro" else "Mapa escuro",
+                testTag = "map_style_button"
             ) {
-                Icon(
-                    imageVector = Icons.Default.LocationOn,
-                    contentDescription = "Recentralizar mapa",
-                    tint = Color(0xFF29B6F6)
-                )
+                darkStyle = !darkStyle
+                val current = map
+                if (current != null) {
+                    isStyleReady = false
+                    current.setStyle(
+                        Style.Builder().fromUri(if (darkStyle) DARK_MAP_STYLE else FALLBACK_MAP_STYLE)
+                    ) { isStyleReady = true }
+                }
+            }
+
+            MapControlButton(
+                icon = Icons.Default.Explore,
+                label = "Orientar mapa ao norte",
+                testTag = "compass_button"
+            ) {
+                val current = map
+                if (current != null) {
+                    followUser = false
+                    current.animateCamera(CameraUpdateFactory.bearingTo(0.0), 450)
+                }
+            }
+
+            MapControlButton(
+                icon = Icons.Default.MyLocation,
+                label = "Recentralizar minha posição",
+                testTag = "recenter_button"
+            ) { followUser = true }
+
+            Surface(
+                shape = RoundedCornerShape(23.dp),
+                color = Color(0xF0081A30),
+                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.13f)),
+                shadowElevation = 8.dp
+            ) {
+                Column {
+                    IconButton(
+                        onClick = { map?.animateCamera(CameraUpdateFactory.zoomIn(), 260) },
+                        modifier = Modifier.size(44.dp).testTag("zoom_in_button")
+                    ) {
+                        Icon(Icons.Default.Add, "Ampliar mapa", tint = Color.White)
+                    }
+                    Box(
+                        modifier = Modifier
+                            .padding(horizontal = 10.dp)
+                            .size(width = 24.dp, height = 1.dp)
+                            .background(Color.White.copy(alpha = 0.18f))
+                    )
+                    IconButton(
+                        onClick = { map?.animateCamera(CameraUpdateFactory.zoomOut(), 260) },
+                        modifier = Modifier.size(44.dp).testTag("zoom_out_button")
+                    ) {
+                        Icon(Icons.Default.Remove, "Reduzir mapa", tint = Color.White)
+                    }
+                }
             }
         }
     }
@@ -248,4 +304,26 @@ private fun createBlueLocationMarkerBitmap(bearing: Float, showHeading: Boolean)
     canvas.drawCircle(center, center, 16f, corePaint)
 
     return bitmap
+}
+
+@Composable
+private fun MapControlButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    testTag: String,
+    onClick: () -> Unit
+) {
+    Surface(
+        shape = CircleShape,
+        color = Color(0xF0081A30),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.13f)),
+        shadowElevation = 8.dp
+    ) {
+        IconButton(
+            onClick = onClick,
+            modifier = Modifier.size(44.dp).testTag(testTag)
+        ) {
+            Icon(icon, contentDescription = label, tint = Color.White, modifier = Modifier.size(23.dp))
+        }
+    }
 }
