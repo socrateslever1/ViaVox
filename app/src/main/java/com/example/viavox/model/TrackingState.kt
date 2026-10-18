@@ -5,6 +5,7 @@ package com.example.viavox.model
  */
 data class TrackingState(
     val isActive: Boolean = false,
+    val hasLocationFix: Boolean = false,
     val latitude: Double = -3.119,
     val longitude: Double = -60.022,
     val speedKmh: Float = 0f,
