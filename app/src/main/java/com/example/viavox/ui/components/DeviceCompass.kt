@@ -17,6 +17,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlin.math.abs
 
 /**
@@ -34,14 +37,29 @@ fun rememberDeviceCompassHeading(
     val sensors = remember(context) {
         context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
     }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var visible by remember(lifecycleOwner) {
+        mutableStateOf(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))
+    }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> visible = true
+                Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP -> visible = false
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     val lat by rememberUpdatedState(latitude)
     val lon by rememberUpdatedState(longitude)
     var heading by remember { mutableStateOf<Float?>(null) }
 
-    DisposableEffect(enabled, sensors) {
+    DisposableEffect(enabled, visible, sensors) {
         val vector = sensors.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
             ?: sensors.getDefaultSensor(Sensor.TYPE_GEOMAGNETIC_ROTATION_VECTOR)
-        if (!enabled || vector == null) {
+        if (!enabled || !visible || vector == null) {
             heading = null
             onDispose { }
         } else {
