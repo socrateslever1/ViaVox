@@ -339,4 +339,69 @@ class RoadDetectionEngineTest {
         assertEquals(1, spokenMessages.size)
         assertEquals("Agora você está na Rua Paraíba.", spokenMessages[0])
     }
+
+    @Test
+    fun neighbourhoodPolicy_speaksOnlyWhenAreaActuallyChanges() = runTest(UnconfinedTestDispatcher()) {
+        val said = mutableListOf<String>()
+        var road = "Rua Aristides Rocha"
+        var area = "Petrópolis"
+        val engine = RoadDetectionEngine(
+            coroutineScope = backgroundScope,
+            onPlaceUpdated = {},
+            onRoadAnnounceNeeded = { message, _ -> said.add(message) },
+            onStatusMessage = {},
+            reverseGeocodeProvider = { _, _ -> Result.success(Place(road, area)) }
+        )
+        var lat = -3.1000
+        var now = 1_000L
+        fun update() {
+            engine.onGeoFixUpdate(GeoFix(latitude = lat, longitude = -60.0000, speedMps = 5f, timestampMs = now))
+            lat -= 0.00025
+            now += 9_000L
+        }
+
+        update() // initial road + neighbourhood
+        road = "Rua Benjamin Constant"
+        update() // candidate street
+        update() // street confirmed, same neighbourhood
+        road = "Rua Nova"
+        area = "Cachoeirinha"
+        update() // candidate street
+        update() // street and neighbourhood confirmed
+        area = "Centro"
+        update() // candidate neighbourhood on same road
+        update() // neighbourhood confirmed even with unchanged street
+
+        assertEquals(
+            listOf(
+                "Você está na Rua Aristides Rocha, bairro Petrópolis.",
+                "Agora você está na Rua Benjamin Constant.",
+                "Agora você está na Rua Nova, bairro Cachoeirinha.",
+                "Agora você está na Rua Nova, bairro Centro."
+            ),
+            said
+        )
+    }
+
+    @Test
+    fun neighbourhoodPolicy_ignoresCapitalizationAndAccents() = runTest(UnconfinedTestDispatcher()) {
+        val said = mutableListOf<String>()
+        var road = "Rua São José"
+        var area = "São Jorge"
+        val engine = RoadDetectionEngine(
+            coroutineScope = backgroundScope,
+            onPlaceUpdated = {},
+            onRoadAnnounceNeeded = { message, _ -> said.add(message) },
+            onStatusMessage = {},
+            reverseGeocodeProvider = { _, _ -> Result.success(Place(road, area)) }
+        )
+        engine.onGeoFixUpdate(GeoFix(-3.100, -60.000, timestampMs = 1_000L))
+        road = "Rua das Flores"
+        area = "SAO JORGE"
+        engine.onGeoFixUpdate(GeoFix(-3.1003, -60.000, timestampMs = 11_000L))
+        engine.onGeoFixUpdate(GeoFix(-3.1006, -60.000, timestampMs = 20_000L))
+
+        assertEquals(2, said.size)
+        assertEquals("Agora você está na Rua das Flores.", said[1])
+    }
 }
