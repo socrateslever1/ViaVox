@@ -330,7 +330,8 @@ class ViaVoxTrackingService : Service() {
         locationTracker.stopTracking()
         ttsManager.shutdown()
         roadEngine.reset()
-        releaseWakeLock()
+        poiJob?.cancel()
+        poiJob = null
         serviceScope.cancel()
     }
 
