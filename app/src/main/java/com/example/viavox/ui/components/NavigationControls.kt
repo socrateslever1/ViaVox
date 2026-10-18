@@ -78,7 +78,7 @@ fun NavigationSearchAndActions(
                         cursorColor = aqua
                     ),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    keyboardActions = KeyboardActions(onSearch = onSearch)
+                    keyboardActions = KeyboardActions(onSearch = { onSearch() })
                 )
                 IconButton(onClick = onSearch,modifier = Modifier.testTag("run_search_button")) {
                     Icon(Icons.Default.ArrowForward,"Buscar local",tint = aqua)
@@ -256,7 +256,7 @@ fun NavigationLibraryDialog(
                         modifier = Modifier.fillMaxWidth().testTag("dialog_search_field"),
                         textStyle = androidx.compose.ui.text.TextStyle(color = pale),
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                        keyboardActions = KeyboardActions(onSearch = onSearch)
+                        keyboardActions = KeyboardActions(onSearch = { onSearch() })
                     )
                     Button(onClick = onSearch,modifier = Modifier.align(Alignment.End)) {
                         Text("Pesquisar")
