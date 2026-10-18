@@ -31,6 +31,8 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.material3.Surface
 import androidx.compose.material3.SmallFloatingActionButton
@@ -72,9 +74,16 @@ import org.maplibre.android.style.layers.PropertyFactory
 import org.maplibre.android.style.expressions.Expression
 import kotlin.math.abs
 
-private const val INITIAL_ZOOM = 16.8
+private const val INITIAL_ZOOM = 17.2
 private const val DARK_MAP_STYLE = "https://tiles.openfreemap.org/styles/dark"
+private const val BRIGHT_MAP_STYLE = "https://tiles.openfreemap.org/styles/bright"
 private const val FALLBACK_MAP_STYLE = "https://tiles.openfreemap.org/styles/liberty"
+
+private fun mapStyleUrl(style: String): String = when (style) {
+    "dark" -> DARK_MAP_STYLE
+    "liberty" -> FALLBACK_MAP_STYLE
+    else -> BRIGHT_MAP_STYLE
+}
 
 /**
  * Real GPU-accelerated vector map powered by MapLibre Native and OpenStreetMap data.
@@ -102,7 +111,9 @@ fun OpenStreetMapComponent(
     var map by remember { mutableStateOf<MapLibreMap?>(null) }
     var isStyleReady by remember { mutableStateOf(false) }
     var followUser by remember { mutableStateOf(true) }
-    var darkStyle by remember { mutableStateOf(true) }
+    val prefs = remember(context) { context.getSharedPreferences("viavox_prefs", android.content.Context.MODE_PRIVATE) }
+    var selectedMapStyle by remember { mutableStateOf(prefs.getString("map_style", "bright") ?: "bright") }
+    var styleMenuExpanded by remember { mutableStateOf(false) }
     var headingUp by remember { mutableStateOf(true) }
     var threeDView by remember { mutableStateOf(true) }
     var mapCameraBearing by remember { mutableStateOf(0f) }
@@ -155,16 +166,16 @@ fun OpenStreetMapComponent(
                 }
             }
 
-            readyMap.setStyle(Style.Builder().fromUri(DARK_MAP_STYLE)) { style ->
-                enhanceRealRoadContrast(style, true)
-                addBuildings3DIfAvailable(style)
+            readyMap.setStyle(Style.Builder().fromUri(mapStyleUrl(selectedMapStyle))) { style ->
+                enhanceRealRoadContrast(style, selectedMapStyle == "dark")
+                if (threeDView) addBuildings3DIfAvailable(style)
                 isStyleReady = true
             }
             mapView.addOnDidFailLoadingMapListener {
                 if (!isStyleReady) {
                     readyMap.setStyle(Style.Builder().fromUri(FALLBACK_MAP_STYLE)) { style ->
-                        if (darkStyle) enhanceRealRoadContrast(style, true)
-                        addBuildings3DIfAvailable(style)
+                        enhanceRealRoadContrast(style, false)
+                        if (threeDView) addBuildings3DIfAvailable(style)
                         isStyleReady = true
                     }
                 }
@@ -175,7 +186,7 @@ fun OpenStreetMapComponent(
             readyMap.cameraPosition = CameraPosition.Builder()
                 .target(initialPoint)
                 .zoom(if (hasLocationFix) INITIAL_ZOOM else 11.5)
-                .tilt(if (hasLocationFix) 58.0 else 0.0)
+                .tilt(if (hasLocationFix) 48.0 else 0.0)
                 .build()
 
             map = readyMap
@@ -212,7 +223,7 @@ fun OpenStreetMapComponent(
             val cameraPos = CameraPosition.Builder()
                 .target(point)
                 .zoom(if (previousMarker == null) INITIAL_ZOOM else cameraNow.zoom)
-                .tilt(if (threeDView) 58.0 else 0.0)
+                .tilt(if (threeDView) 48.0 else 0.0)
                 .bearing(cameraNow.bearing)
                 .build()
             currentMap.animateCamera(CameraUpdateFactory.newCameraPosition(cameraPos), 550)
@@ -265,20 +276,40 @@ fun OpenStreetMapComponent(
             verticalArrangement = Arrangement.spacedBy(10.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            MapControlButton(
-                icon = Icons.Default.Layers,
-                label = if (darkStyle) "Mapa claro" else "Mapa escuro",
-                testTag = "map_style_button"
-            ) {
-                darkStyle = !darkStyle
-                val current = map
-                if (current != null) {
-                    isStyleReady = false
-                    current.setStyle(
-                        Style.Builder().fromUri(if (darkStyle) DARK_MAP_STYLE else FALLBACK_MAP_STYLE)
-                    ) { style ->
-                        addBuildings3DIfAvailable(style)
-                        isStyleReady = true
+            Box {
+                MapControlButton(
+                    icon = Icons.Default.Layers,
+                    label = "Selecionar mapa: ruas, detalhado ou noturno",
+                    testTag = "map_style_button"
+                ) { styleMenuExpanded = true }
+
+                DropdownMenu(
+                    expanded = styleMenuExpanded,
+                    onDismissRequest = { styleMenuExpanded = false }
+                ) {
+                    listOf(
+                        "bright" to "Ruas · colorido",
+                        "liberty" to "Detalhado · bairros e pontos",
+                        "dark" to "Noturno · escuro"
+                    ).forEach { (key, title) ->
+                        DropdownMenuItem(
+                            text = { Text(if (selectedMapStyle == key) "✓ $title" else title) },
+                            onClick = {
+                                styleMenuExpanded = false
+                                if (selectedMapStyle == key) return@DropdownMenuItem
+                                selectedMapStyle = key
+                                prefs.edit().putString("map_style", key).apply()
+                                val current = map ?: return@DropdownMenuItem
+                                marker?.let { current.removeMarker(it) }
+                                marker = null
+                                isStyleReady = false
+                                current.setStyle(Style.Builder().fromUri(mapStyleUrl(key))) { style ->
+                                    if (key == "dark") enhanceRealRoadContrast(style, true)
+                                    if (threeDView) addBuildings3DIfAvailable(style)
+                                    isStyleReady = true
+                                }
+                            }
+                        )
                     }
                 }
             }
@@ -312,7 +343,7 @@ fun OpenStreetMapComponent(
                 testTag = "map_3d_button"
             ) {
                 threeDView = !threeDView
-                map?.animateCamera(CameraUpdateFactory.tiltTo(if (threeDView) 58.0 else 0.0), 550)
+                map?.animateCamera(CameraUpdateFactory.tiltTo(if (threeDView) 48.0 else 0.0), 550)
             }
 
             MapControlButton(
