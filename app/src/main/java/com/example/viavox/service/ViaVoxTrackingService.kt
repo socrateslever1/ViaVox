@@ -60,6 +60,7 @@ class ViaVoxTrackingService : Service() {
         ttsManager.setSpeechRate(currentConfig.speechRate)
         ttsManager.franciscaEndpoint = currentConfig.franciscaBrokerUrl.ifBlank { null }
         ttsManager.franciscaAccessToken = currentConfig.franciscaAccessToken.ifBlank { null }
+        ttsManager.setVoiceSelection(currentConfig.voiceProvider, currentConfig.nativeVoiceId)
 
         nominatimService = NominatimService()
         poiService = PoiDiscoveryService()
