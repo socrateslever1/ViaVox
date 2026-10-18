@@ -28,6 +28,7 @@ fun ViaVoxMainScreen(
     onOpenSettings: () -> Unit,
     onCloseSettings: () -> Unit,
     onSpeedChanged: (Float) -> Unit,
+    onVoiceSelectionChanged: (String, String) -> Unit,
     onIntervalChanged: (Int) -> Unit,
     onPoiCategoryToggled: (PoiCategory, Boolean) -> Unit,
     onFranciscaBrokerUrlChanged: (String) -> Unit = {},
@@ -89,6 +90,7 @@ fun ViaVoxMainScreen(
             SettingsDialog(
                 config = state.config,
                 onSpeedChanged = onSpeedChanged,
+                onVoiceSelectionChanged = onVoiceSelectionChanged,
                 onIntervalChanged = onIntervalChanged,
                 onPoiCategoryToggled = onPoiCategoryToggled,
                 onFranciscaBrokerUrlChanged = onFranciscaBrokerUrlChanged,
