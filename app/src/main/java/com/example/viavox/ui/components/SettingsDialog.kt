@@ -63,6 +63,7 @@ fun SettingsDialog(
     config: ViaVoxConfig,
     onSpeedChanged: (Float) -> Unit,
     onVoiceSelectionChanged: (String, String) -> Unit,
+    onTestVoice: () -> Unit,
     onIntervalChanged: (Int) -> Unit,
     onPoiCategoryToggled: (PoiCategory, Boolean) -> Unit,
     onFranciscaBrokerUrlChanged: (String) -> Unit = {},
@@ -211,6 +212,15 @@ fun SettingsDialog(
                         )
                     }
 
+                    TextButton(onClick = onTestVoice, modifier = Modifier.testTag("service_voice_test")) {
+                        Text("▶ Testar voz no ViaVox", color = accent, fontWeight = FontWeight.Bold)
+                    }
+                    Text(
+                        "O teste usa a voz selecionada no aplicativo. Verifique também o volume de mídia do celular.",
+                        color = muted,
+                        fontSize = 11.sp,
+                        lineHeight = 15.sp
+                    )
                     Spacer(Modifier.height(7.dp))
                     Text(
                         text = stringResource(R.string.settings_voice_rate, config.speechRate),
