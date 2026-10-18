@@ -33,6 +33,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -56,9 +57,11 @@ fun SettingsDialog(
     onIntervalChanged: (Int) -> Unit,
     onPoiCategoryToggled: (PoiCategory, Boolean) -> Unit,
     onFranciscaBrokerUrlChanged: (String) -> Unit = {},
+    onFranciscaAccessTokenChanged: (String) -> Unit = {},
     onDismiss: () -> Unit
 ) {
     var voiceUrl by remember(config.franciscaBrokerUrl) { mutableStateOf(config.franciscaBrokerUrl) }
+    var accessToken by remember(config.franciscaAccessToken) { mutableStateOf(config.franciscaAccessToken) }
     val invalidUrl = voiceUrl.isNotBlank() && !voiceUrl.trim().startsWith("https://")
     val uriHandler = LocalUriHandler.current
 
@@ -139,6 +142,25 @@ fun SettingsDialog(
                         ),
                         modifier = Modifier.fillMaxWidth().testTag("francisca_broker_input")
                     )
+                    OutlinedTextField(
+                        value = accessToken,
+                        onValueChange = { accessToken = it },
+                        label = { Text("Token de acesso do seu servidor") },
+                        placeholder = { Text("Token configurado no Cloudflare Worker") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = white,
+                            unfocusedTextColor = white,
+                            focusedBorderColor = accent,
+                            unfocusedBorderColor = Color(0xFF38516B),
+                            focusedLabelColor = accent,
+                            unfocusedLabelColor = muted,
+                            cursorColor = accent
+                        ),
+                        modifier = Modifier.fillMaxWidth().testTag("francisca_token_input")
+                    )
+                    Spacer(Modifier.height(6.dp))
                     Text(
                         "Como configurar a API Microsoft Speech ↗",
                         color = accent,
@@ -203,6 +225,7 @@ fun SettingsDialog(
                         enabled = !invalidUrl,
                         onClick = {
                             onFranciscaBrokerUrlChanged(voiceUrl.trim())
+                            onFranciscaAccessTokenChanged(accessToken.trim())
                             onDismiss()
                         },
                         shape = RoundedCornerShape(14.dp),
