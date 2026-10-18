@@ -1,5 +1,6 @@
 package com.example.viavox.ui.components
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -7,23 +8,23 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.RadioButton
-import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -32,20 +33,21 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import com.example.viavox.R
 import com.example.viavox.model.PoiCategory
 import com.example.viavox.model.ViaVoxConfig
-import com.example.viavox.ui.theme.ViaVoxDarkBg
-import com.example.viavox.ui.theme.ViaVoxDarkText
-import com.example.viavox.ui.theme.ViaVoxHeader
-import com.example.viavox.ui.theme.ViaVoxTeal
-import com.example.viavox.ui.theme.ViaVoxTextMuted
-import com.example.viavox.ui.theme.ViaVoxTextWhite
+
+private val accent = Color(0xFF38DFCA)
+private val panel = Color(0xFF0B1D33)
+private val white = Color(0xFFF2F7FF)
+private val muted = Color(0xFFA9BED1)
 
 @Composable
 fun SettingsDialog(
@@ -56,241 +58,217 @@ fun SettingsDialog(
     onFranciscaBrokerUrlChanged: (String) -> Unit = {},
     onDismiss: () -> Unit
 ) {
-    var brokerUrlText by remember(config.franciscaBrokerUrl) {
-        mutableStateOf(config.franciscaBrokerUrl)
-    }
+    var voiceUrl by remember(config.franciscaBrokerUrl) { mutableStateOf(config.franciscaBrokerUrl) }
+    val invalidUrl = voiceUrl.isNotBlank() && !voiceUrl.trim().startsWith("https://")
+    val uriHandler = LocalUriHandler.current
 
-    AlertDialog(
-        onDismissRequest = {
-            onFranciscaBrokerUrlChanged(brokerUrlText)
-            onDismiss()
-        },
-        containerColor = ViaVoxHeader,
-        title = {
-            Text(
-                text = stringResource(R.string.settings_title),
-                color = ViaVoxTextWhite,
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold
-            )
-        },
-        text = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
-                    .padding(vertical = 4.dp)
-            ) {
-                // Speech Rate Slider
-                Text(
-                    text = stringResource(R.string.settings_voice_rate, config.speechRate),
-                    color = ViaVoxTeal,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
-
-                Slider(
-                    value = config.speechRate,
-                    onValueChange = onSpeedChanged,
-                    valueRange = 0.8f..1.3f,
-                    steps = 4,
-                    colors = SliderDefaults.colors(
-                        thumbColor = ViaVoxTeal,
-                        activeTrackColor = ViaVoxTeal,
-                        inactiveTrackColor = ViaVoxDarkBg
-                    ),
-                    modifier = Modifier.padding(bottom = 12.dp)
-                )
-
-                HorizontalDivider(color = Color(0xFF1E3A52), thickness = 1.dp)
-                Spacer(modifier = Modifier.height(12.dp))
-
-                // Optional HTTPS Voice Broker URL (pt-BR-FranciscaNeural)
-                Text(
-                    text = stringResource(R.string.settings_francisca_label),
-                    color = ViaVoxTeal,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.padding(bottom = 6.dp)
-                )
-
-                OutlinedTextField(
-                    value = brokerUrlText,
-                    onValueChange = {
-                        brokerUrlText = it
-                        onFranciscaBrokerUrlChanged(it)
-                    },
-                    placeholder = {
-                        Text(
-                            text = stringResource(R.string.settings_francisca_hint),
-                            color = ViaVoxTextMuted.copy(alpha = 0.6f),
-                            fontSize = 13.sp
-                        )
-                    },
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = ViaVoxTextWhite,
-                        unfocusedTextColor = ViaVoxTextWhite,
-                        focusedBorderColor = ViaVoxTeal,
-                        unfocusedBorderColor = Color(0xFF284B6A),
-                        cursorColor = ViaVoxTeal
-                    ),
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(26.dp),
+            color = panel,
+            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.13f)),
+            shadowElevation = 20.dp
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Column(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 12.dp)
-                        .testTag("francisca_broker_input")
-                )
+                        .weight(1f, fill = false)
+                        .heightIn(max = 570.dp)
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 20.dp, vertical = 18.dp)
+                ) {
+                    Text(
+                        text = stringResource(R.string.settings_title),
+                        color = white,
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Voz, mapas e pontos de referência",
+                        color = muted,
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(top = 3.dp, bottom = 19.dp)
+                    )
 
-                HorizontalDivider(color = Color(0xFF1E3A52), thickness = 1.dp)
-                Spacer(modifier = Modifier.height(12.dp))
+                    SectionTitle("Narração")
+                    Text(
+                        text = stringResource(R.string.settings_voice_rate, config.speechRate),
+                        color = white,
+                        fontSize = 13.sp,
+                        modifier = Modifier.padding(top = 9.dp)
+                    )
+                    Slider(
+                        value = config.speechRate,
+                        onValueChange = onSpeedChanged,
+                        valueRange = 0.8f..1.3f,
+                        steps = 4,
+                        colors = SliderDefaults.colors(
+                            thumbColor = accent,
+                            activeTrackColor = accent,
+                            inactiveTrackColor = Color(0xFF28415C)
+                        )
+                    )
 
-                // Interval Between Announcements
-                Text(
-                    text = stringResource(R.string.settings_interval),
-                    color = ViaVoxTeal,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.padding(bottom = 6.dp)
-                )
+                    Spacer(Modifier.height(10.dp))
+                    Text("Voz Microsoft Francisca", color = white, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Opcional. Informe a URL HTTPS de seu serviço de voz; sem ela, o Android continua falando normalmente.",
+                        color = muted,
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp,
+                        modifier = Modifier.padding(top = 4.dp, bottom = 6.dp)
+                    )
+                    OutlinedTextField(
+                        value = voiceUrl,
+                        onValueChange = { voiceUrl = it },
+                        label = { Text("Endereço da API de voz (HTTPS)") },
+                        placeholder = { Text("https://seu-dominio/tts") },
+                        isError = invalidUrl,
+                        supportingText = {
+                            if (invalidUrl) Text("O endereço precisa começar com https://")
+                        },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = white,
+                            unfocusedTextColor = white,
+                            focusedBorderColor = accent,
+                            unfocusedBorderColor = Color(0xFF38516B),
+                            focusedLabelColor = accent,
+                            unfocusedLabelColor = muted,
+                            cursorColor = accent
+                        ),
+                        modifier = Modifier.fillMaxWidth().testTag("francisca_broker_input")
+                    )
+                    Text(
+                        "Como configurar a API Microsoft Speech ↗",
+                        color = accent,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(top = 7.dp, bottom = 14.dp)
+                            .clickable {
+                                uriHandler.openUri("https://learn.microsoft.com/pt-br/azure/ai-services/speech-service/rest-text-to-speech")
+                            }
+                    )
+                    HorizontalDivider(color = Color.White.copy(alpha = 0.09f))
+                    Spacer(Modifier.height(14.dp))
 
-                IntervalOption(
-                    title = stringResource(R.string.interval_dynamic),
-                    selected = config.minIntervalSeconds == 12,
-                    onClick = { onIntervalChanged(12) }
-                )
-                IntervalOption(
-                    title = stringResource(R.string.interval_standard),
-                    selected = config.minIntervalSeconds == 20,
-                    onClick = { onIntervalChanged(20) }
-                )
-                IntervalOption(
-                    title = stringResource(R.string.interval_calm),
-                    selected = config.minIntervalSeconds == 35,
-                    onClick = { onIntervalChanged(35) }
-                )
+                    SectionTitle("Intervalo entre referências")
+                    Text(
+                        "As mudanças de rua são anunciadas independentemente deste intervalo.",
+                        color = muted,
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp,
+                        modifier = Modifier.padding(vertical = 7.dp)
+                    )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(7.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        IntervalChip("12 s", config.minIntervalSeconds == 12, { onIntervalChanged(12) }, Modifier.weight(1f))
+                        IntervalChip("20 s", config.minIntervalSeconds == 20, { onIntervalChanged(20) }, Modifier.weight(1f))
+                        IntervalChip("35 s", config.minIntervalSeconds == 35, { onIntervalChanged(35) }, Modifier.weight(1f))
+                    }
+                    Spacer(Modifier.height(18.dp))
+                    HorizontalDivider(color = Color.White.copy(alpha = 0.09f))
+                    Spacer(Modifier.height(15.dp))
 
-                Spacer(modifier = Modifier.height(12.dp))
-                HorizontalDivider(color = Color(0xFF1E3A52), thickness = 1.dp)
-                Spacer(modifier = Modifier.height(12.dp))
+                    SectionTitle("Pontos de referência")
+                    CategoryToggle(stringResource(R.string.category_health), config.enableHealthPoi) {
+                        onPoiCategoryToggled(PoiCategory.HEALTH, it)
+                    }
+                    CategoryToggle(stringResource(R.string.category_education), config.enableEducationPoi) {
+                        onPoiCategoryToggled(PoiCategory.EDUCATION, it)
+                    }
+                    CategoryToggle(stringResource(R.string.category_parks), config.enableParksPoi) {
+                        onPoiCategoryToggled(PoiCategory.PARK, it)
+                    }
+                    CategoryToggle(stringResource(R.string.category_fuel), config.enableFuelPoi) {
+                        onPoiCategoryToggled(PoiCategory.FUEL, it)
+                    }
+                    CategoryToggle(stringResource(R.string.category_public), config.enablePublicPoi) {
+                        onPoiCategoryToggled(PoiCategory.PUBLIC, it)
+                    }
+                }
 
-                // POI Category Toggles
-                Text(
-                    text = stringResource(R.string.settings_poi_categories),
-                    color = ViaVoxTeal,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.padding(bottom = 8.dp)
-                )
-
-                CategoryRow(
-                    title = stringResource(R.string.category_health),
-                    checked = config.enableHealthPoi,
-                    onCheckedChange = { onPoiCategoryToggled(PoiCategory.HEALTH, it) }
-                )
-
-                CategoryRow(
-                    title = stringResource(R.string.category_education),
-                    checked = config.enableEducationPoi,
-                    onCheckedChange = { onPoiCategoryToggled(PoiCategory.EDUCATION, it) }
-                )
-
-                CategoryRow(
-                    title = stringResource(R.string.category_parks),
-                    checked = config.enableParksPoi,
-                    onCheckedChange = { onPoiCategoryToggled(PoiCategory.PARK, it) }
-                )
-
-                CategoryRow(
-                    title = stringResource(R.string.category_fuel),
-                    checked = config.enableFuelPoi,
-                    onCheckedChange = { onPoiCategoryToggled(PoiCategory.FUEL, it) }
-                )
-
-                CategoryRow(
-                    title = stringResource(R.string.category_public),
-                    checked = config.enablePublicPoi,
-                    onCheckedChange = { onPoiCategoryToggled(PoiCategory.PUBLIC, it) }
-                )
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    onFranciscaBrokerUrlChanged(brokerUrlText)
-                    onDismiss()
-                },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = ViaVoxTeal,
-                    contentColor = ViaVoxDarkText
-                ),
-                shape = RoundedCornerShape(8.dp)
-            ) {
-                Text(
-                    text = stringResource(R.string.btn_close),
-                    fontWeight = FontWeight.Bold
-                )
+                HorizontalDivider(color = Color.White.copy(alpha = 0.10f))
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 17.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text("Cancelar", color = muted)
+                    }
+                    Button(
+                        enabled = !invalidUrl,
+                        onClick = {
+                            onFranciscaBrokerUrlChanged(voiceUrl.trim())
+                            onDismiss()
+                        },
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = accent,
+                            contentColor = panel
+                        )
+                    ) {
+                        Text("Salvar", fontWeight = FontWeight.Bold)
+                    }
+                }
             }
         }
-    )
+    }
 }
 
 @Composable
-private fun IntervalOption(
-    title: String,
+private fun SectionTitle(title: String) {
+    Text(title, color = accent, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+}
+
+@Composable
+private fun IntervalChip(
+    label: String,
     selected: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onClick() }
-            .padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
+    Surface(
+        modifier = modifier.clickable(onClick = onClick),
+        shape = RoundedCornerShape(13.dp),
+        color = if (selected) accent.copy(alpha = 0.19f) else Color(0xFF182E47),
+        border = BorderStroke(1.dp, if (selected) accent else Color.White.copy(alpha = 0.10f))
     ) {
-        RadioButton(
-            selected = selected,
-            onClick = onClick,
-            colors = RadioButtonDefaults.colors(
-                selectedColor = ViaVoxTeal,
-                unselectedColor = ViaVoxTextMuted
-            )
-        )
         Text(
-            text = title,
-            color = if (selected) ViaVoxTextWhite else ViaVoxTextMuted,
-            fontSize = 14.sp,
-            modifier = Modifier.padding(start = 6.dp)
+            text = label,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            color = if (selected) accent else muted,
+            fontWeight = FontWeight.Medium,
+            fontSize = 12.sp,
+            modifier = Modifier.padding(vertical = 11.dp)
         )
     }
 }
 
 @Composable
-private fun CategoryRow(
-    title: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit
-) {
+private fun CategoryToggle(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+        modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Text(
-            text = title,
-            color = ViaVoxTextWhite,
-            fontSize = 14.sp
+            text = label,
+            fontSize = 13.sp,
+            color = white,
+            modifier = Modifier.weight(1f).padding(end = 8.dp)
         )
-
         Switch(
             checked = checked,
-            onCheckedChange = onCheckedChange,
+            onCheckedChange = onChange,
             colors = SwitchDefaults.colors(
-                checkedThumbColor = ViaVoxTeal,
-                checkedTrackColor = Color(0xFF264057),
-                uncheckedThumbColor = ViaVoxTextMuted,
-                uncheckedTrackColor = ViaVoxDarkBg
+                checkedTrackColor = accent.copy(alpha = 0.32f),
+                checkedThumbColor = accent,
+                uncheckedTrackColor = Color(0xFF2B4055),
+                uncheckedThumbColor = muted
             )
         )
     }
