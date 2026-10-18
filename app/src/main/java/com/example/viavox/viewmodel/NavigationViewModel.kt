@@ -42,7 +42,8 @@ data class NavigationUiState(
     val panel: String = "", // search, saved, history, routes
     val recording: Boolean = false,
     val recordedMeters: Double = 0.0,
-    val recordedCount: Int = 0
+    val recordedCount: Int = 0,
+    val livePoints: List<TripPoint> = emptyList()
 )
 
 /** Navigation and local history are separate from working road/neighborhood narration. */
@@ -273,7 +274,7 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
             recordingId = db.startTrip()
             lastRecorded = null
             distanceRecorded = 0.0
-            _ui.update { it.copy(recording = true, recordedMeters = 0.0,recordedCount = 0) }
+            _ui.update { it.copy(recording = true, recordedMeters = 0.0,recordedCount = 0, livePoints = emptyList()) }
         }
     }
 
@@ -293,7 +294,11 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
             db.appendTripPoint(recordingId,point,distanceRecorded)
         }
         lastRecorded = point
-        _ui.update { it.copy(recordedMeters = distanceRecorded,recordedCount = it.recordedCount + 1) }
+        _ui.update { it.copy(
+            recordedMeters = distanceRecorded,
+            recordedCount = it.recordedCount + 1,
+            livePoints = (it.livePoints + point).takeLast(4500)
+        ) }
     }
 
     fun finishRecording() {
@@ -301,7 +306,7 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
         val finishedId = recordingId
         recordingId = 0L
         lastRecorded = null
-        _ui.update { it.copy(recording = false) }
+        _ui.update { it.copy(recording = false, livePoints = emptyList()) }
         viewModelScope.launch(Dispatchers.IO) {
             db.finishTrip(finishedId)
             refreshLists()
