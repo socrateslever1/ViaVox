@@ -148,7 +148,12 @@ fun StatusPanel(
                 }
             }
 
-            if (state.voiceIssue != null) {
+            val voiceNotice = when {
+                state.config.voiceProvider == "francisca" && !state.config.hasFranciscaSettings() ->
+                    "Francisca não configurada. A voz Android será usada até instalar o serviço de voz."
+                else -> state.voiceIssue
+            }
+            if (voiceNotice != null) {
                 Spacer(Modifier.height(8.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth()
@@ -157,7 +162,7 @@ fun StatusPanel(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        state.voiceIssue.orEmpty(),
+                        voiceNotice,
                         color = Color(0xFFFFD5B3),
                         fontSize = 11.sp,
                         lineHeight = 14.sp,
