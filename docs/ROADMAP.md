@@ -39,3 +39,17 @@ O código atual `PoiDiscoveryService.kt` usa consultas Overpass principalmente p
 
 ### ClickUp
 A sincronização com o ClickUp está pendente da escolha do espaço de trabalho. Foram identificados dois workspaces, sem lista ViaVox atualmente. Não criar em workspace arbitrário ou duplicar tarefas.
+
+## Início do Lote 1 — versão 0.5.0
+
+**Código Android integrado em 18/10/2026 (pendente teste de campo):**
+
+- Busca de pontos de referência ampliada para elementos reais OpenStreetMap do tipo `node`, `way` e `relation`, com centro aproximado quando fornecido pelo Overpass.
+- Filtragem de referências em até 135 metros com GPS de precisão adequada e supressão de referências já ultrapassadas conforme rumo confiável.
+- Cache de referências, limitação de frequência de consultas, exclusão de anúncios repetidos e retenção de cache anterior em falha de rede.
+- Fila de referência que aguarda o anúncio de mudança de rua/bairro, sem interrompê-lo, e revalida posição antes de falar.
+- Painel exibindo status real de busca, ausência de cadastro, falha de rede, referência detectada e envio para voz.
+- Testes unitários para leitura de elementos OSM, proximidade/direção e prioridade da voz.
+- **Não está concluído:** reproduzir e confirmar em campo os nomes reais dos postos, hospitais, escolas e praças e verificar a latência de voz em veículo.
+
+**Próximas ações do Lote 1:** corrigir eventual problema identificado no teste de campo, validar voz Android, melhorar o mapa e integrar os controles de navegação planejados para o Lote 2.
