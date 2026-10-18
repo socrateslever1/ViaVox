@@ -65,18 +65,26 @@ jobs:
             -storepass android -alias androiddebugkey | grep -E "Alias name:|SHA256:"
 
       - name: Build debug APK
-        run: gradle --no-daemon --stacktrace :app:assembleDebug
+        run: gradle --no-daemon --stacktrace -PviavoxDebugKeystore="$HOME/.android/debug.keystore" :app:assembleDebug
 
       - name: Verify APK package and signing
         run: |
           APK="app/build/outputs/apk/debug/app-debug.apk"
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$APK"
+          APK_CERT=$("$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$APK" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -1)
+          EXPECTED_CERT=$(keytool -exportcert -alias androiddebugkey \
+            -keystore "$HOME/.android/debug.keystore" -storepass android 2>/dev/null | sha256sum | cut -d' ' -f1)
+          if [ -z "$APK_CERT" ] || [ "$APK_CERT" != "$EXPECTED_CERT" ]; then
+            echo "::error::APK certificate does not match the persistent development keystore"
+            exit 1
+          fi
+          echo "APK certificate matches the cached debug signing key."
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | grep -m1 '^package:' | tee /tmp/viavox-package.txt
           grep -q "name='com.socrateslever.viavox'" /tmp/viavox-package.txt
           echo "Correct package identity and valid APK signing verified."
 
       - name: Run unit tests
-        run: gradle --no-daemon --stacktrace :app:testDebugUnitTest
+        run: gradle --no-daemon --stacktrace -PviavoxDebugKeystore="$HOME/.android/debug.keystore" :app:testDebugUnitTest
 
       - name: Upload APK
         if: success()
