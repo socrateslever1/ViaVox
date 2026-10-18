@@ -99,6 +99,7 @@ class MainActivity : ComponentActivity() {
                     onToggleVoice = { enabled ->
                         viewModel.toggleVoice(enabled)
                     },
+                    onTestVoice = { viewModel.testVoice() },
                     onRepeatSpeech = {
                         viewModel.repeatCurrentLocationSpeech()
                     }
