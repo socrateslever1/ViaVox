@@ -72,7 +72,7 @@ class TextToSpeechManager(
         get() = francisca.endpoint
         set(value) {
             francisca.endpoint = value
-            router.franciscaEndpoint = value
+            router.franciscaEndpoint = if (voiceProvider == "francisca") value else null
         }
 
     var franciscaAccessToken: String?
@@ -81,6 +81,8 @@ class TextToSpeechManager(
 
     private var isInitialized = false
     private var currentSpeechRate = 0.95f
+    private var voiceProvider = "android"
+    private var selectedAndroidVoiceId = ""
     private var pendingUtteranceBeforeInit: String? = null
 
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
@@ -111,12 +113,7 @@ class TextToSpeechManager(
 
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
-            val ptBr = Locale("pt", "BR")
-            val langResult = tts?.setLanguage(ptBr)
-            if (langResult == TextToSpeech.LANG_MISSING_DATA || langResult == TextToSpeech.LANG_NOT_SUPPORTED) {
-                Log.w("ViaVoxTTS", "pt-BR not directly available, falling back to default locale")
-                tts?.setLanguage(Locale.getDefault())
-            }
+            applyNativeVoiceSelection()
 
             tts?.setSpeechRate(currentSpeechRate)
 
@@ -164,6 +161,48 @@ class TextToSpeechManager(
 
     fun setVoiceEnabled(enabled: Boolean) {
         router.setVoiceEnabledState(enabled)
+    }
+
+    /**
+     * By default only the Android synthesizer speaks. Selecting the online
+     * Francisca option opts into Azure; it falls back to the Android voice
+     * when the broker is missing or unavailable.
+     */
+    fun setVoiceSelection(provider: String, androidVoiceId: String) {
+        voiceProvider = if (provider == "francisca") "francisca" else "android"
+        selectedAndroidVoiceId = androidVoiceId
+        router.franciscaEndpoint = if (voiceProvider == "francisca") francisca.endpoint else null
+        if (isInitialized) applyNativeVoiceSelection()
+    }
+
+    private fun applyNativeVoiceSelection() {
+        val speech = tts ?: return
+        val ptBr = Locale("pt", "BR")
+        val langResult = speech.setLanguage(ptBr)
+        if (langResult == TextToSpeech.LANG_MISSING_DATA ||
+            langResult == TextToSpeech.LANG_NOT_SUPPORTED
+        ) {
+            Log.w("ViaVoxTTS", "pt-BR voice missing; using engine default")
+            speech.setLanguage(Locale.getDefault())
+        }
+        if (selectedAndroidVoiceId.isNotBlank()) {
+            try {
+                val selected = speech.voices?.firstOrNull { voice ->
+                    voice.name == selectedAndroidVoiceId && voice.locale.language == "pt"
+                }
+                if (selected != null) {
+                    val result = speech.setVoice(selected)
+                    if (result != TextToSpeech.SUCCESS) {
+                        Log.w("ViaVoxTTS", "Selected Android voice unavailable; default retained")
+                        speech.setLanguage(ptBr)
+                    }
+                } else {
+                    Log.w("ViaVoxTTS", "Selected voice is no longer installed; using default")
+                }
+            } catch (e: Exception) {
+                Log.w("ViaVoxTTS", "Unable to apply Android voice; using default", e)
+            }
+        }
     }
 
     fun setSpeechRate(rate: Float) {
