@@ -10,190 +10,146 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONObject
 import java.util.Locale
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
+/**
+ * Finds only named, real OpenStreetMap landmarks. Cache and rate limits protect
+ * battery and public Overpass infrastructure. Never fabricate a POI.
+ */
 class PoiDiscoveryService(
     private val client: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(10, TimeUnit.SECONDS)
+        .connectTimeout(8, TimeUnit.SECONDS)
+        .readTimeout(9, TimeUnit.SECONDS)
         .build()
 ) {
-
     private val cachedPois = mutableListOf<PointOfInterest>()
-    private var lastQueryCenterLat = 0.0
-    private var lastQueryCenterLon = 0.0
-    private var lastQueryTimestamp = 0L
-    private var isQuerying = false
+    private val announced = mutableMapOf<String, Long>()
+    private var lastQueryLat = Double.NaN
+    private var lastQueryLon = Double.NaN
+    private var lastSuccessAt = 0L
+    private var lastAttemptAt = 0L
+    private var querying = false
 
-    // Avoid repeating recently announced POIs (key: POI id or clean name, value: announced timestamp)
-    private val recentlyAnnouncedPois = ConcurrentHashMap<String, Long>()
+    var lastFailure: String? = null
+        private set
 
-    /**
-     * Checks if a relevant landmark POI is nearby and ready to be announced.
-     */
+    /** Number of real named landmarks returned by the latest successful query. */
+    val cachedCount: Int get() = synchronized(cachedPois) { cachedPois.size }
+
     suspend fun findNearbyPoi(
         userLat: Double,
         userLon: Double,
-        config: ViaVoxConfig
+        config: ViaVoxConfig,
+        gpsAccuracyMeters: Float = 30f,
+        speedMps: Float = 0f,
+        bearingDegrees: Float? = null
     ): PointOfInterest? {
-        // Purge expired announcements (> 15 minutes)
         val now = System.currentTimeMillis()
-        val iterator = recentlyAnnouncedPois.entries.iterator()
-        while (iterator.hasNext()) {
-            val entry = iterator.next()
-            if (now - entry.value > 15 * 60 * 1000L) {
-                iterator.remove()
-            }
+        synchronized(announced) {
+            announced.entries.removeAll { now - it.value >= ANNOUNCE_COOLDOWN_MS }
         }
+        val moved = if (lastQueryLat.isFinite() && lastQueryLon.isFinite()) {
+            PointOfInterest("centre", "", PoiCategory.PUBLIC, lastQueryLat, lastQueryLon)
+                .distanceTo(userLat, userLon)
+        } else Double.POSITIVE_INFINITY
 
-        // Check if we need to refresh the local spatial cache
-        val distFromLastQuery = if (lastQueryCenterLat != 0.0) {
-            calculateDistance(userLat, userLon, lastQueryCenterLat, lastQueryCenterLon)
-        } else {
-            Double.POSITIVE_INFINITY
-        }
+        // Requery after moving into a new area; never hammer Overpass on each GPS fix.
+        if ((lastSuccessAt == 0L || moved >= 175.0 || now - lastSuccessAt >= 120_000L) &&
+            (lastAttemptAt == 0L || now - lastAttemptAt >= 35_000L)
+        ) refreshCache(userLat, userLon, now)
 
-        if (distFromLastQuery >= 250.0 || (now - lastQueryTimestamp >= 90_000L && distFromLastQuery >= 50.0)) {
-            refreshPoiCache(userLat, userLon)
-        }
-
-        // Search within current in-memory cache for close POIs (<= 75 meters)
-        val candidate = synchronized(cachedPois) {
+        val candidates = synchronized(cachedPois) {
             cachedPois.filter { isCategoryEnabled(it.category, config) }
-                .map { poi -> Pair(poi, poi.distanceTo(userLat, userLon)) }
-                .filter { it.second <= 75.0 }
-                .minByOrNull { it.second }
-                ?.first
         }
-
-        if (candidate != null) {
-            val cleanKey = candidate.name.lowercase().trim()
-            val lastAnnounced = recentlyAnnouncedPois[cleanKey] ?: 0L
-            if (now - lastAnnounced > 15 * 60 * 1000L) {
-                recentlyAnnouncedPois[cleanKey] = now
-                return candidate
-            }
+        val seen = synchronized(announced) {
+            candidates.filter { poi -> (announced[dedupeKey(poi)] ?: 0L) > now - ANNOUNCE_COOLDOWN_MS }
+                .map { it.id }.toSet()
         }
-
-        return null
+        return PoiSelectionPolicy.choose(
+            candidates, userLat, userLon, gpsAccuracyMeters, speedMps, bearingDegrees, seen
+        )
     }
 
-    private fun isCategoryEnabled(category: PoiCategory, config: ViaVoxConfig): Boolean {
-        return when (category) {
+    /**
+     * Mark only when the service actually sends the message to the TTS manager,
+     * never while querying. A postponed POI must remain eligible.
+     */
+    fun markAnnounced(poi: PointOfInterest) {
+        synchronized(announced) {
+            announced[dedupeKey(poi)] = System.currentTimeMillis()
+        }
+    }
+
+    private fun dedupeKey(poi: PointOfInterest): String =
+        "${poi.category}:${poi.name.trim().lowercase(Locale.ROOT)}"
+
+    private fun isCategoryEnabled(category: PoiCategory, config: ViaVoxConfig): Boolean =
+        when (category) {
             PoiCategory.HEALTH -> config.enableHealthPoi
             PoiCategory.EDUCATION -> config.enableEducationPoi
             PoiCategory.PARK -> config.enableParksPoi
             PoiCategory.FUEL -> config.enableFuelPoi
             PoiCategory.PUBLIC -> config.enablePublicPoi
         }
-    }
 
-    private suspend fun refreshPoiCache(lat: Double, lon: Double) = withContext(Dispatchers.IO) {
-        if (isQuerying) return@withContext
-        val now = System.currentTimeMillis()
-        if (now - lastQueryTimestamp < 25_000L) return@withContext // Minimum cooldown between queries
+    private suspend fun refreshCache(lat: Double, lon: Double, now: Long) =
+        withContext(Dispatchers.IO) {
+            if (querying) return@withContext
+            querying = true
+            lastAttemptAt = now
+            try {
+                val latText = String.format(Locale.US, "%.6f", lat)
+                val lonText = String.format(Locale.US, "%.6f", lon)
+                val ql = """
+                    [out:json][timeout:9];
+                    (
+                      nwr["amenity"~"^(hospital|clinic|doctors|health_post|school|university|college|kindergarten|fuel|townhall|police|fire_station|courthouse|library|bus_station)$"]["name"](around:390,$latText,$lonText);
+                      nwr["leisure"~"^(park|garden|playground|pitch)$"]["name"](around:390,$latText,$lonText);
+                      nwr["historic"~"^(monument|memorial)$"]["name"](around:390,$latText,$lonText);
+                      nwr["tourism"~"^(museum|attraction)$"]["name"](around:390,$latText,$lonText);
+                      nwr["building"~"^(civic|public)$"]["name"](around:390,$latText,$lonText);
+                    );
+                    out center 100;
+                """.trimIndent()
+                val request = Request.Builder()
+                    .url("https://overpass-api.de/api/interpreter")
+                    .post(ql.toRequestBody("text/plain; charset=utf-8".toMediaType()))
+                    .header("User-Agent", "ViaVox/0.5 Android (POI discovery; OpenStreetMap)")
+                    .build()
 
-        isQuerying = true
-        try {
-            val formattedLat = String.format(Locale.US, "%.6f", lat)
-            val formattedLon = String.format(Locale.US, "%.6f", lon)
-
-            // Overpass QL query: search within 300m radius around vehicle
-            val overpassQuery = """
-                [out:json][timeout:8];
-                (
-                  node["amenity"~"hospital|clinic|school|university|college|bus_station|townhall|fuel"]["name"](around:300,$formattedLat,$formattedLon);
-                  node["leisure"~"park|pitch"]["name"](around:300,$formattedLat,$formattedLon);
-                  node["historic"~"monument|memorial"]["name"](around:300,$formattedLat,$formattedLon);
-                  node["bridge"]["name"](around:300,$formattedLat,$formattedLon);
-                );
-                out 15;
-            """.trimIndent()
-
-            val body = overpassQuery.toRequestBody("text/plain".toMediaType())
-            val request = Request.Builder()
-                .url("https://overpass-api.de/api/interpreter")
-                .post(body)
-                .header("User-Agent", "ViaVox-Android/0.2.0 (viavox.android.app)")
-                .build()
-
-            val response = client.newCall(request).execute()
-            if (!response.isSuccessful) {
-                Log.w("PoiDiscoveryService", "Overpass returned code ${response.code}")
-                return@withContext
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        lastFailure = "Servidor de pontos de referência indisponível (${response.code})"
+                        Log.w(TAG, "Overpass HTTP ${response.code}")
+                        return@withContext
+                    }
+                    val raw = response.body?.string()
+                    if (raw.isNullOrBlank()) {
+                        lastFailure = "Resposta vazia do servidor de referências"
+                        return@withContext
+                    }
+                    val found = OverpassPoiParser.parse(raw)
+                    synchronized(cachedPois) {
+                        cachedPois.clear()
+                        cachedPois.addAll(found)
+                    }
+                    lastQueryLat = lat
+                    lastQueryLon = lon
+                    lastSuccessAt = System.currentTimeMillis()
+                    lastFailure = null
+                    Log.d(TAG, "${found.size} named landmarks cached around current GPS area")
+                }
+            } catch (e: Exception) {
+                lastFailure = "Sem conexão com a base de pontos de referência"
+                Log.w(TAG, "POI query failed; retaining previous cache", e)
+            } finally {
+                querying = false
             }
-
-            val responseBody = response.body?.string() ?: return@withContext
-            val json = JSONObject(responseBody)
-            val elements = json.optJSONArray("elements") ?: return@withContext
-
-            val newPois = mutableListOf<PointOfInterest>()
-            for (i in 0 until elements.length()) {
-                val element = elements.optJSONObject(i) ?: continue
-                val tags = element.optJSONObject("tags") ?: continue
-                val name = tags.optString("name").trim()
-                if (name.isBlank()) continue
-
-                val poiLat = element.optDouble("lat", 0.0)
-                val poiLon = element.optDouble("lon", 0.0)
-                if (poiLat == 0.0 || poiLon == 0.0) continue
-
-                val category = determineCategory(tags) ?: continue
-                val id = "osm_${element.optLong("id")}"
-
-                newPois.add(
-                    PointOfInterest(
-                        id = id,
-                        name = name,
-                        category = category,
-                        latitude = poiLat,
-                        longitude = poiLon
-                    )
-                )
-            }
-
-            synchronized(cachedPois) {
-                cachedPois.clear()
-                cachedPois.addAll(newPois)
-            }
-
-            lastQueryCenterLat = lat
-            lastQueryCenterLon = lon
-            lastQueryTimestamp = now
-            Log.d("PoiDiscoveryService", "Refreshed ${newPois.size} POIs near $formattedLat,$formattedLon")
-        } catch (e: Exception) {
-            Log.w("PoiDiscoveryService", "Failed to fetch POIs from Overpass: ${e.message}")
-        } finally {
-            isQuerying = false
         }
-    }
 
-    private fun determineCategory(tags: JSONObject): PoiCategory? {
-        val amenity = tags.optString("amenity")
-        val leisure = tags.optString("leisure")
-        val historic = tags.optString("historic")
-        val bridge = tags.optString("bridge")
-
-        return when {
-            amenity in listOf("hospital", "clinic") -> PoiCategory.HEALTH
-            amenity in listOf("school", "university", "college") -> PoiCategory.EDUCATION
-            amenity == "fuel" -> PoiCategory.FUEL
-            amenity in listOf("bus_station", "townhall") || historic in listOf("monument", "memorial") || bridge.isNotBlank() -> PoiCategory.PUBLIC
-            leisure in listOf("park", "pitch", "garden") -> PoiCategory.PARK
-            else -> null
-        }
-    }
-
-    private fun calculateDistance(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
-        val dLat = Math.toRadians(lat2 - lat1)
-        val dLon = Math.toRadians(lon2 - lon1)
-        val a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-                Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2)) *
-                Math.sin(dLon / 2) * Math.sin(dLon / 2)
-        val c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
-        return 6371000.0 * c
+    private companion object {
+        const val TAG = "ViaVoxPOI"
+        const val ANNOUNCE_COOLDOWN_MS = 15 * 60_000L
     }
 }
