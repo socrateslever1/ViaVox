@@ -67,6 +67,7 @@ fun ViaVoxMainScreen(
             isActive = state.isActive,
             route = navigationUi.route,
             destination = navigationUi.selected,
+            favorites = navigationUi.savedPlaces.map { it.second },
             savedTrack = navigationUi.showingTrip?.points.orEmpty(),
             liveTrack = navigationUi.livePoints,
             onMapLongPress = { lat, lon -> navigation.selectMapPoint(lat, lon) },
