@@ -75,6 +75,8 @@ private const val FALLBACK_MAP_STYLE = "https://tiles.openfreemap.org/styles/lib
 fun OpenStreetMapComponent(
     latitude: Double,
     longitude: Double,
+    hasLocationFix: Boolean = false,
+    speedKmh: Float = 0f,
     bearing: Float = 0f,
     hasBearing: Boolean = false,
     isActive: Boolean,
@@ -88,8 +90,9 @@ fun OpenStreetMapComponent(
     var map by remember { mutableStateOf<MapLibreMap?>(null) }
     var isStyleReady by remember { mutableStateOf(false) }
     var followUser by remember { mutableStateOf(true) }
-    var darkStyle by remember { mutableStateOf(true) }
+    var darkStyle by remember { mutableStateOf(false) }
     var marker by remember { mutableStateOf<Marker?>(null) }
+    val compassHeading = rememberDeviceCompassHeading(isActive)
 
     // Resume following user whenever tracking starts
     LaunchedEffect(isActive) {
@@ -117,13 +120,13 @@ fun OpenStreetMapComponent(
                 }
             }
 
-            readyMap.setStyle(Style.Builder().fromUri(DARK_MAP_STYLE)) { style ->
+            readyMap.setStyle(Style.Builder().fromUri(FALLBACK_MAP_STYLE)) { style ->
                 addBuildings3DIfAvailable(style)
                 isStyleReady = true
             }
             mapView.addOnDidFailLoadingMapListener {
                 if (!isStyleReady) {
-                    readyMap.setStyle(Style.Builder().fromUri(FALLBACK_MAP_STYLE)) { style ->
+                    readyMap.setStyle(Style.Builder().fromUri(DARK_MAP_STYLE)) { style ->
                         addBuildings3DIfAvailable(style)
                         isStyleReady = true
                     }
@@ -134,8 +137,8 @@ fun OpenStreetMapComponent(
             val initialPoint = LatLng(latitude, longitude)
             readyMap.cameraPosition = CameraPosition.Builder()
                 .target(initialPoint)
-                .zoom(INITIAL_ZOOM)
-                .tilt(53.0)
+                .zoom(if (hasLocationFix) INITIAL_ZOOM else 11.5)
+                .tilt(if (hasLocationFix) 53.0 else 0.0)
                 .build()
 
             map = readyMap
@@ -147,36 +150,60 @@ fun OpenStreetMapComponent(
         }
     }
 
-    LaunchedEffect(map, isStyleReady, latitude, longitude, bearing, hasBearing, isActive, followUser) {
+    // Update coordinates/camera only on new GPS fixes, not on every compass event.
+    LaunchedEffect(
+        map, isStyleReady, latitude, longitude, bearing, hasBearing,
+        speedKmh, followUser, hasLocationFix
+    ) {
         val currentMap = map ?: return@LaunchedEffect
-        if (!isStyleReady) return@LaunchedEffect
-
+        if (!isStyleReady || !hasLocationFix) return@LaunchedEffect
         val point = LatLng(latitude, longitude)
-        val markerIcon = IconFactory.getInstance(context).fromBitmap(
-            createBlueLocationMarkerBitmap(bearing = bearing, showHeading = hasBearing)
-        )
-
-        val existing = marker
-        if (existing == null) {
-            marker = currentMap.addMarker(
-                MarkerOptions()
-                    .position(point)
-                    .icon(markerIcon)
+        val previousMarker = marker
+        if (previousMarker == null) {
+            val defaultPuck = IconFactory.getInstance(context).fromBitmap(
+                createBlueLocationMarkerBitmap(0f, false)
             )
+            marker = currentMap.addMarker(MarkerOptions().position(point).icon(defaultPuck))
         } else {
-            existing.position = point
-            existing.icon = markerIcon
+            previousMarker.position = point
         }
 
         if (followUser) {
+            // Heading-up while actually moving; don't spin the map as the
+            // phone is handled while stopped. Preserve user zoom and tilt.
+            val movingWithCourse = hasBearing && speedKmh >= 7f
+            val cameraNow = currentMap.cameraPosition
             val cameraPos = CameraPosition.Builder()
                 .target(point)
-                .zoom(INITIAL_ZOOM)
-                .tilt(53.0)
-                .bearing(if (hasBearing) bearing.toDouble() else currentMap.cameraPosition.bearing)
+                .zoom(if (previousMarker == null) INITIAL_ZOOM else cameraNow.zoom)
+                .tilt(if (previousMarker == null) 53.0 else cameraNow.tilt)
+                .bearing(if (movingWithCourse) bearing.toDouble() else cameraNow.bearing)
                 .build()
-            currentMap.animateCamera(CameraUpdateFactory.newCameraPosition(cameraPos), 750)
+            currentMap.animateCamera(CameraUpdateFactory.newCameraPosition(cameraPos), 550)
         }
+    }
+
+    // Annotation icons are screen-aligned: compensate for map camera rotation.
+    // In heading-up mode the arrow faces screen top, rather than double-rotating.
+    LaunchedEffect(
+        map, isStyleReady, marker, compassHeading, bearing, hasBearing,
+        speedKmh, followUser, hasLocationFix
+    ) {
+        val currentMap = map ?: return@LaunchedEffect
+        val currentMarker = marker ?: return@LaunchedEffect
+        if (!isStyleReady || !hasLocationFix) return@LaunchedEffect
+
+        val gpsHeadingReliable = hasBearing && speedKmh >= 7f
+        val heading = if (gpsHeadingReliable) bearing else compassHeading
+        val relative = if (heading == null) 0f else if (gpsHeadingReliable && followUser) {
+            0f
+        } else {
+            ((heading - currentMap.cameraPosition.bearing.toFloat()) % 360f + 360f) % 360f
+        }
+        val icon = IconFactory.getInstance(context).fromBitmap(
+            createBlueLocationMarkerBitmap(relative, heading != null)
+        )
+        currentMarker.icon = icon
     }
 
     Box(modifier = modifier.fillMaxSize().testTag("map_view")) {
