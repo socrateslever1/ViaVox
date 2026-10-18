@@ -2,6 +2,7 @@ package com.example.viavox.viewmodel
 
 import android.app.Application
 import android.content.Context
+import android.content.Intent
 import androidx.lifecycle.AndroidViewModel
 import com.example.viavox.data.TrackingRepository
 import com.example.viavox.model.PoiCategory
@@ -36,11 +37,28 @@ class ViaVoxViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun isManuallyPaused(): Boolean = prefs.getBoolean("tracking_manually_paused", false)
+
     fun startTracking() {
+        prefs.edit().putBoolean("tracking_manually_paused", false).apply()
         ViaVoxTrackingService.start(getApplication())
     }
 
+    fun onAppVisible() {
+        if (!isManuallyPaused() && state.value.hasLocationPermission) {
+            ViaVoxTrackingService.start(getApplication())
+        }
+    }
+
+    fun onAppHidden() {
+        // Normal free-mode tracking is screen-only, not a background recorder.
+        val app = getApplication<Application>()
+        app.stopService(Intent(app, ViaVoxTrackingService::class.java))
+        TrackingRepository.updateActive(false)
+    }
+
     fun stopTracking() {
+        prefs.edit().putBoolean("tracking_manually_paused", true).apply()
         ViaVoxTrackingService.stop(getApplication())
     }
 
