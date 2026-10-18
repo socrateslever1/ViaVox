@@ -73,6 +73,7 @@ fun SettingsDialog(
     var voiceUrl by remember(config.franciscaBrokerUrl) { mutableStateOf(config.franciscaBrokerUrl) }
     var accessToken by remember(config.franciscaAccessToken) { mutableStateOf(config.franciscaAccessToken) }
     val invalidUrl = voiceUrl.isNotBlank() && !voiceUrl.trim().startsWith("https://")
+    val franciscaReady = config.hasFranciscaSettings()
     val uriHandler = LocalUriHandler.current
     val context = LocalContext.current
     var availableVoices by remember { mutableStateOf<List<AndroidVoiceOption>>(emptyList()) }
@@ -171,11 +172,20 @@ fun SettingsDialog(
                                 )
                             }
                             DropdownMenuItem(
-                                text = { Text("Francisca · Microsoft (exige API)") },
+                                text = {
+                                    Text(
+                                        if (franciscaReady) "Francisca · Microsoft (configurada, testar)"
+                                        else "Francisca · Microsoft (configuração necessária)"
+                                    )
+                                },
                                 onClick = {
-                                    onVoiceSelectionChanged("francisca", config.nativeVoiceId)
                                     voiceMenuExpanded = false
-                                    advancedFranciscaExpanded = true
+                                    if (franciscaReady) {
+                                        onVoiceSelectionChanged("francisca", config.nativeVoiceId)
+                                    } else {
+                                        // Do not silently select a paid cloud voice that has no endpoint.
+                                        advancedFranciscaExpanded = true
+                                    }
                                 }
                             )
                         }
@@ -204,8 +214,11 @@ fun SettingsDialog(
                         }
                     } else {
                         Text(
-                            "Francisca precisa de uma API Microsoft configurada. Sem ela, a narração volta para o Android.",
-                            color = muted,
+                            if (franciscaReady)
+                                "Francisca selecionada. Toque em Testar voz no ViaVox para confirmar a conexão. Se falhar, usaremos a voz Android."
+                            else
+                                "Francisca não configurada. É necessário publicar o serviço Azure/Cloudflare e informar URL e token. A voz Android será utilizada.",
+                            color = if (franciscaReady) muted else Color(0xFFFFC99D),
                             fontSize = 12.sp,
                             lineHeight = 17.sp,
                             modifier = Modifier.padding(vertical = 8.dp)
@@ -252,6 +265,12 @@ fun SettingsDialog(
                         )
                     }
                     if (advancedFranciscaExpanded) {
+                        Text(
+                            "Essa voz não vem instalada no Android. A configuração exige Microsoft Azure Speech e um servidor intermediário seguro.",
+                            color = Color(0xFFFFCE9B),
+                            fontSize = 12.sp,
+                            lineHeight = 17.sp
+                        )
                         Spacer(Modifier.height(10.dp))
                         Text("Voz Microsoft Francisca", color = white, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                         Text(
@@ -368,6 +387,11 @@ fun SettingsDialog(
                         onClick = {
                             onFranciscaBrokerUrlChanged(voiceUrl.trim())
                             onFranciscaAccessTokenChanged(accessToken.trim())
+                            if (config.voiceProvider == "francisca" &&
+                                (voiceUrl.isBlank() || accessToken.isBlank())
+                            ) {
+                                onVoiceSelectionChanged("android", config.nativeVoiceId)
+                            }
                             onDismiss()
                         },
                         shape = RoundedCornerShape(14.dp),
