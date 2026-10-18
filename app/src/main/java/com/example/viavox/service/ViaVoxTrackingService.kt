@@ -54,9 +54,11 @@ class ViaVoxTrackingService : Service() {
         currentConfig = ViaVoxConfig.loadFrom(prefs)
         val initialVoiceEnabled = prefs.getBoolean("voice_enabled", true)
 
-        ttsManager = TextToSpeechManager(this) { isSpeaking ->
-            TrackingRepository.updateSpeaking(isSpeaking)
-        }
+        ttsManager = TextToSpeechManager(
+            context = this,
+            onSpeakingStateChanged = { TrackingRepository.updateSpeaking(it) },
+            onVoiceIssue = { TrackingRepository.updateVoiceIssue(it) }
+        )
         ttsManager.setVoiceEnabled(initialVoiceEnabled)
         ttsManager.setSpeechRate(currentConfig.speechRate)
         ttsManager.franciscaEndpoint = currentConfig.franciscaBrokerUrl.ifBlank { null }
@@ -102,6 +104,7 @@ class ViaVoxTrackingService : Service() {
             ACTION_START -> startForegroundTracking()
             ACTION_STOP -> stopForegroundTracking()
             ACTION_REPEAT_SPEECH -> repeatCurrentSpeech()
+            ACTION_TEST_VOICE -> ttsManager.testVoice()
             ACTION_UPDATE_CONFIG -> {
                 val prefs = getSharedPreferences("viavox_prefs", Context.MODE_PRIVATE)
                 currentConfig = ViaVoxConfig.loadFrom(prefs)
@@ -345,6 +348,7 @@ class ViaVoxTrackingService : Service() {
         const val ACTION_START = "com.example.viavox.ACTION_START"
         const val ACTION_STOP = "com.example.viavox.ACTION_STOP"
         const val ACTION_REPEAT_SPEECH = "com.example.viavox.ACTION_REPEAT_SPEECH"
+        const val ACTION_TEST_VOICE = "com.example.viavox.ACTION_TEST_VOICE"
         const val ACTION_UPDATE_CONFIG = "com.example.viavox.ACTION_UPDATE_CONFIG"
 
         fun start(context: Context) {
@@ -370,6 +374,12 @@ class ViaVoxTrackingService : Service() {
                 action = ACTION_REPEAT_SPEECH
             }
             context.startService(intent)
+        }
+
+        fun testVoice(context: Context) {
+            context.startService(Intent(context, ViaVoxTrackingService::class.java).apply {
+                action = ACTION_TEST_VOICE
+            })
         }
 
         fun updateConfig(context: Context) {
