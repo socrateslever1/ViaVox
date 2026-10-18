@@ -31,6 +31,7 @@ fun ViaVoxMainScreen(
     onIntervalChanged: (Int) -> Unit,
     onPoiCategoryToggled: (PoiCategory, Boolean) -> Unit,
     onFranciscaBrokerUrlChanged: (String) -> Unit = {},
+    onFranciscaAccessTokenChanged: (String) -> Unit = {},
     onStartTracking: () -> Unit,
     onStopTracking: () -> Unit,
     onToggleVoice: (Boolean) -> Unit,
@@ -91,6 +92,7 @@ fun ViaVoxMainScreen(
                 onIntervalChanged = onIntervalChanged,
                 onPoiCategoryToggled = onPoiCategoryToggled,
                 onFranciscaBrokerUrlChanged = onFranciscaBrokerUrlChanged,
+                onFranciscaAccessTokenChanged = onFranciscaAccessTokenChanged,
                 onDismiss = onCloseSettings
             )
         }
