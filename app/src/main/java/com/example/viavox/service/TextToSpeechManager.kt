@@ -10,6 +10,57 @@ import android.speech.tts.UtteranceProgressListener
 import android.util.Log
 import java.util.Locale
 
+/**
+ * Coordinates primary voice (Microsoft Azure pt-BR-FranciscaNeural via HTTPS broker)
+ * and fallback voice (Android native TextToSpeech), respecting user voice toggle
+ * and prioritizing street announcements without overlapping utterances.
+ */
+class SpeechFallbackRouter(
+    var isVoiceEnabled: Boolean = true,
+    var franciscaEndpoint: String? = null,
+    private val primarySpeak: (text: String, endpoint: String, onUnavailable: () -> Unit) -> Unit,
+    private val fallbackSpeak: (text: String) -> Unit,
+    private val stopAll: () -> Unit
+) {
+    private var lastSpokenMessage: String? = null
+    private var lastSpokenTimeMs: Long = 0L
+
+    fun setVoiceEnabledState(enabled: Boolean) {
+        isVoiceEnabled = enabled
+        if (!enabled) {
+            stopAll()
+        }
+    }
+
+    fun speak(text: String, forceRepeat: Boolean = false, nowMs: Long = System.currentTimeMillis()): Boolean {
+        val cleanText = text.trim()
+        if (cleanText.isBlank() || !isVoiceEnabled) return false
+
+        if (!forceRepeat && cleanText == lastSpokenMessage && (nowMs - lastSpokenTimeMs) < 15_000L) {
+            return false
+        }
+
+        lastSpokenMessage = cleanText
+        lastSpokenTimeMs = nowMs
+
+        val endpoint = franciscaEndpoint?.trim()
+        if (!endpoint.isNullOrBlank() && endpoint.startsWith("https://")) {
+            primarySpeak(cleanText, endpoint) {
+                if (isVoiceEnabled) {
+                    fallbackSpeak(cleanText)
+                }
+            }
+        } else {
+            fallbackSpeak(cleanText)
+        }
+        return true
+    }
+
+    fun stop() {
+        stopAll()
+    }
+}
+
 class TextToSpeechManager(
     private val context: Context,
     private val onSpeakingStateChanged: (Boolean) -> Unit = {}
@@ -19,12 +70,40 @@ class TextToSpeechManager(
     private val francisca = AzureFranciscaSpeech(context.applicationContext, onSpeakingStateChanged)
     var franciscaEndpoint: String?
         get() = francisca.endpoint
-        set(value) { francisca.endpoint = value }
+        set(value) {
+            francisca.endpoint = value
+            router.franciscaEndpoint = value
+        }
+
     private var isInitialized = false
     private var currentSpeechRate = 0.95f
+    private var pendingUtteranceBeforeInit: String? = null
 
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
     private var audioFocusRequest: AudioFocusRequest? = null
+
+    private val router = SpeechFallbackRouter(
+        isVoiceEnabled = true,
+        franciscaEndpoint = francisca.endpoint,
+        primarySpeak = { text, endpoint, onUnavailable ->
+            tts?.stop()
+            francisca.endpoint = endpoint
+            requestAudioFocus()
+            francisca.speak(text) {
+                onUnavailable()
+            }
+        },
+        fallbackSpeak = { text ->
+            speakLocally(text)
+        },
+        stopAll = {
+            pendingUtteranceBeforeInit = null
+            francisca.stop()
+            tts?.stop()
+            releaseAudioFocus()
+            onSpeakingStateChanged(false)
+        }
+    )
 
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
@@ -37,7 +116,6 @@ class TextToSpeechManager(
 
             tts?.setSpeechRate(currentSpeechRate)
 
-            // Configure audio attributes for speech guidance
             val attributes = AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
                 .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
@@ -67,9 +145,21 @@ class TextToSpeechManager(
             })
             isInitialized = true
             Log.d("ViaVoxTTS", "TextToSpeech initialized successfully")
+
+            // Speak any utterance queued while engine was initializing
+            pendingUtteranceBeforeInit?.let { queued ->
+                pendingUtteranceBeforeInit = null
+                if (router.isVoiceEnabled) {
+                    speakLocally(queued)
+                }
+            }
         } else {
             Log.e("ViaVoxTTS", "Failed to initialize TextToSpeech engine")
         }
+    }
+
+    fun setVoiceEnabled(enabled: Boolean) {
+        router.setVoiceEnabledState(enabled)
     }
 
     fun setSpeechRate(rate: Float) {
@@ -118,18 +208,16 @@ class TextToSpeechManager(
         }
     }
 
-    fun speak(text: String) {
-        if (text.isBlank()) return
-        if (!franciscaEndpoint.isNullOrBlank()) {
-            tts?.stop()
-            francisca.speak(text) { speakLocally(text) }
-            return
-        }
-        speakLocally(text)
+    fun speak(text: String, forceRepeat: Boolean = false) {
+        router.speak(text, forceRepeat = forceRepeat)
     }
 
     private fun speakLocally(text: String) {
-        if (!isInitialized) return
+        if (!isInitialized) {
+            pendingUtteranceBeforeInit = text
+            return
+        }
+        francisca.stop()
         tts?.stop()
         requestAudioFocus()
         val utteranceId = "viavox_${System.currentTimeMillis()}"
@@ -137,10 +225,7 @@ class TextToSpeechManager(
     }
 
     fun stop() {
-        francisca.stop()
-        tts?.stop()
-        releaseAudioFocus()
-        onSpeakingStateChanged(false)
+        router.stop()
     }
 
     fun shutdown() {

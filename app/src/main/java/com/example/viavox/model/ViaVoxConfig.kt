@@ -1,6 +1,5 @@
 package com.example.viavox.model
 
-import android.content.Context
 import android.content.SharedPreferences
 
 data class ViaVoxConfig(
@@ -10,7 +9,8 @@ data class ViaVoxConfig(
     val enableEducationPoi: Boolean = true,
     val enableParksPoi: Boolean = true,
     val enableFuelPoi: Boolean = true,
-    val enablePublicPoi: Boolean = true
+    val enablePublicPoi: Boolean = true,
+    val franciscaBrokerUrl: String = ""
 ) {
     fun saveTo(prefs: SharedPreferences) {
         prefs.edit()
@@ -21,6 +21,7 @@ data class ViaVoxConfig(
             .putBoolean("poi_parks", enableParksPoi)
             .putBoolean("poi_fuel", enableFuelPoi)
             .putBoolean("poi_public", enablePublicPoi)
+            .putString("francisca_broker_url", franciscaBrokerUrl.trim())
             .apply()
     }
 
@@ -33,7 +34,8 @@ data class ViaVoxConfig(
                 enableEducationPoi = prefs.getBoolean("poi_education", true),
                 enableParksPoi = prefs.getBoolean("poi_parks", true),
                 enableFuelPoi = prefs.getBoolean("poi_fuel", true),
-                enablePublicPoi = prefs.getBoolean("poi_public", true)
+                enablePublicPoi = prefs.getBoolean("poi_public", true),
+                franciscaBrokerUrl = prefs.getString("francisca_broker_url", "")?.trim().orEmpty()
             )
         }
     }

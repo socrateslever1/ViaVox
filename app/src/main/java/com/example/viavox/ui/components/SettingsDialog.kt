@@ -1,9 +1,7 @@
 package com.example.viavox.ui.components
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -17,6 +15,8 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Slider
@@ -25,9 +25,12 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -50,10 +53,18 @@ fun SettingsDialog(
     onSpeedChanged: (Float) -> Unit,
     onIntervalChanged: (Int) -> Unit,
     onPoiCategoryToggled: (PoiCategory, Boolean) -> Unit,
+    onFranciscaBrokerUrlChanged: (String) -> Unit = {},
     onDismiss: () -> Unit
 ) {
+    var brokerUrlText by remember(config.franciscaBrokerUrl) {
+        mutableStateOf(config.franciscaBrokerUrl)
+    }
+
     AlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = {
+            onFranciscaBrokerUrlChanged(brokerUrlText)
+            onDismiss()
+        },
         containerColor = ViaVoxHeader,
         title = {
             Text(
@@ -92,7 +103,45 @@ fun SettingsDialog(
                 )
 
                 HorizontalDivider(color = Color(0xFF1E3A52), thickness = 1.dp)
+                Spacer(modifier = Modifier.height(12.dp))
 
+                // Optional HTTPS Voice Broker URL (pt-BR-FranciscaNeural)
+                Text(
+                    text = stringResource(R.string.settings_francisca_label),
+                    color = ViaVoxTeal,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(bottom = 6.dp)
+                )
+
+                OutlinedTextField(
+                    value = brokerUrlText,
+                    onValueChange = {
+                        brokerUrlText = it
+                        onFranciscaBrokerUrlChanged(it)
+                    },
+                    placeholder = {
+                        Text(
+                            text = stringResource(R.string.settings_francisca_hint),
+                            color = ViaVoxTextMuted.copy(alpha = 0.6f),
+                            fontSize = 13.sp
+                        )
+                    },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = ViaVoxTextWhite,
+                        unfocusedTextColor = ViaVoxTextWhite,
+                        focusedBorderColor = ViaVoxTeal,
+                        unfocusedBorderColor = Color(0xFF284B6A),
+                        cursorColor = ViaVoxTeal
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 12.dp)
+                        .testTag("francisca_broker_input")
+                )
+
+                HorizontalDivider(color = Color(0xFF1E3A52), thickness = 1.dp)
                 Spacer(modifier = Modifier.height(12.dp))
 
                 // Interval Between Announcements
@@ -166,7 +215,10 @@ fun SettingsDialog(
         },
         confirmButton = {
             Button(
-                onClick = onDismiss,
+                onClick = {
+                    onFranciscaBrokerUrlChanged(brokerUrlText)
+                    onDismiss()
+                },
                 colors = ButtonDefaults.buttonColors(
                     containerColor = ViaVoxTeal,
                     contentColor = ViaVoxDarkText

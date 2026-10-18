@@ -3,7 +3,6 @@ package com.example.viavox.ui.components
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -29,7 +28,6 @@ import com.example.viavox.ui.theme.ViaVoxBrandIconBg
 import com.example.viavox.ui.theme.ViaVoxBrandIconColor
 import com.example.viavox.ui.theme.ViaVoxHeader
 import com.example.viavox.ui.theme.ViaVoxTeal
-import com.example.viavox.ui.theme.ViaVoxTextMuted
 import com.example.viavox.ui.theme.ViaVoxTextWhite
 
 @Composable
@@ -40,78 +38,53 @@ fun HeaderBar(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .height(76.dp)
-            .background(ViaVoxHeader)
-            .padding(horizontal = 20.dp, vertical = 12.dp)
+            .padding(horizontal = 14.dp, vertical = 10.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(ViaVoxHeader.copy(alpha = 0.92f))
+            .height(54.dp)
+            .padding(horizontal = 14.dp)
             .testTag("app_header"),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Box(
                 modifier = Modifier
-                    .size(44.dp)
-                    .clip(RoundedCornerShape(14.dp))
+                    .size(34.dp)
+                    .clip(RoundedCornerShape(10.dp))
                     .background(ViaVoxBrandIconBg),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     text = "◉",
                     color = ViaVoxBrandIconColor,
-                    fontSize = 28.sp,
+                    fontSize = 20.sp,
                     fontWeight = FontWeight.Bold
                 )
             }
 
-            Column {
-                Text(
-                    text = stringResource(R.string.app_name),
-                    color = ViaVoxTextWhite,
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.Bold,
-                    lineHeight = 24.sp
-                )
-                Text(
-                    text = stringResource(R.string.brand_subtitle),
-                    color = ViaVoxTextMuted,
-                    fontSize = 11.sp,
-                    lineHeight = 14.sp
-                )
-            }
+            Text(
+                text = stringResource(R.string.app_name),
+                color = ViaVoxTextWhite,
+                fontSize = 19.sp,
+                fontWeight = FontWeight.Bold
+            )
         }
 
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        IconButton(
+            onClick = onOpenSettings,
+            modifier = Modifier
+                .size(48.dp)
+                .testTag("settings_button")
         ) {
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(ViaVoxBrandIconBg.copy(alpha = 0.6f))
-                    .padding(horizontal = 8.dp, vertical = 4.dp)
-            ) {
-                Text(
-                    text = stringResource(R.string.version_badge),
-                    color = ViaVoxTeal,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.sp
-                )
-            }
-
-            IconButton(
-                onClick = onOpenSettings,
-                modifier = Modifier.testTag("settings_button")
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Settings,
-                    contentDescription = stringResource(R.string.settings_title),
-                    tint = ViaVoxTeal
-                )
-            }
+            Icon(
+                imageVector = Icons.Default.Settings,
+                contentDescription = stringResource(R.string.settings_title),
+                tint = ViaVoxTeal
+            )
         }
     }
 }

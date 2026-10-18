@@ -41,6 +41,9 @@ android {
     buildFeatures {
         compose = true
     }
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 dependencies {
@@ -62,6 +65,10 @@ dependencies {
     implementation(libs.okhttp.logging)
     implementation(libs.maplibre.android)
     implementation(libs.play.services.location)
+
+    testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.org.json)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
 }

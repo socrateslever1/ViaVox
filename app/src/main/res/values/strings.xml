@@ -1,30 +1,27 @@
 <resources>
     <string name="app_name">ViaVox</string>
     <string name="brand_subtitle">Sua localização ganha voz</string>
-    <string name="version_badge">BETA 0.2</string>
 
-    <string name="eyebrow_tracking">ACOMPANHANDO TRAJETO</string>
-    <string name="eyebrow_paused">LOCALIZAÇÃO PAUSADA</string>
-    <string name="accuracy_format">GPS ±%1$d m</string>
+    <string name="eyebrow_tracking">LOCALIZAÇÃO ATIVA</string>
+    <string name="eyebrow_paused">PAUSADO</string>
+    <string name="accuracy_format">±%1$d m</string>
 
-    <string name="where_are_you">Onde você está?</string>
-    <string name="empty_address_hint">Ative a localização para começar a identificar as ruas.</string>
-    <string name="reference_format">📍 Referência: %1$s</string>
+    <string name="where_are_you">Identificando rua atual…</string>
+    <string name="empty_address_hint">Aguardando coordenadas do GPS</string>
+    <string name="reference_format">📍 %1$s</string>
 
     <string name="status_ready">Pronto para localizar</string>
-    <string name="status_waiting_gps">Aguardando sinal de GPS...</string>
-    <string name="status_location_updated">Localização atualizada</string>
-    <string name="status_location_paused">Localização pausada</string>
+    <string name="status_waiting_gps">Obtendo localização GPS…</string>
+    <string name="status_location_updated">Localização ativa</string>
+    <string name="status_location_paused">Acompanhamento pausado</string>
     <string name="status_inaccurate_gps">Sinal GPS impreciso (±%1$d m)</string>
-    <string name="status_permission_denied">Permissão de localização negada</string>
+    <string name="status_permission_denied">Permissão de localização necessária</string>
     <string name="status_gps_unavailable">GPS indisponível no dispositivo</string>
 
-    <string name="btn_start">▶ Iniciar localização</string>
-    <string name="btn_stop">■ Parar narração</string>
-    <string name="toggle_voice">Narração por voz</string>
-    <string name="btn_repeat">🔊 Ouvir localização atual</string>
-
-    <string name="info_note">Versão Android: funciona em primeiro e segundo plano com Foreground Service persistente, GPS de alta precisão e narração TTS em português.</string>
+    <string name="btn_start">Iniciar</string>
+    <string name="btn_stop">Pausar</string>
+    <string name="toggle_voice">Voz ativa</string>
+    <string name="btn_repeat">🔊 Repetir</string>
 
     <!-- TTS Templates -->
     <string name="tts_initial_street">Você está na %1$s, bairro %2$s.</string>
@@ -34,23 +31,25 @@
     <string name="tts_poi_nearby">Próximo daqui, encontra-se %1$s.</string>
 
     <!-- Foreground Service Notification -->
-    <string name="notification_channel_name">Rastreamento de Trajeto ViaVox</string>
-    <string name="notification_channel_desc">Notificação contínua enquanto o ViaVox acompanha seu trajeto por voz</string>
-    <string name="notification_title">ViaVox — Rastreamento Ativo</string>
+    <string name="notification_channel_name">Acompanhamento ViaVox</string>
+    <string name="notification_channel_desc">Notificação exibida enquanto o ViaVox acompanha sua localização</string>
+    <string name="notification_title">ViaVox</string>
     <string name="notification_stop_action">Parar</string>
 
     <!-- Settings Dialog -->
-    <string name="settings_title">Configurações de Narração</string>
-    <string name="settings_voice_rate">Velocidade da Voz: %1$.1fx</string>
-    <string name="settings_interval">Intervalo entre anúncios não urgentes</string>
-    <string name="interval_dynamic">Dinâmico (12s)</string>
+    <string name="settings_title">Configurações</string>
+    <string name="settings_voice_rate">Velocidade da voz: %1$.1fx</string>
+    <string name="settings_interval">Intervalo entre referências</string>
+    <string name="interval_dynamic">Curto (12s)</string>
     <string name="interval_standard">Padrão (20s)</string>
-    <string name="interval_calm">Tranquilo (35s)</string>
-    <string name="settings_poi_categories">Categorias de Pontos de Referência</string>
-    <string name="category_health">Hospitais e Saúde</string>
-    <string name="category_education">Escolas e Faculdades</string>
-    <string name="category_parks">Praças e Parques</string>
-    <string name="category_fuel">Postos de Combustível</string>
-    <string name="category_public">Prédios Públicos e Monumentos</string>
-    <string name="btn_close">Fechar</string>
+    <string name="interval_calm">Longo (35s)</string>
+    <string name="settings_poi_categories">Pontos de referência</string>
+    <string name="category_health">Hospitais e unidades de saúde</string>
+    <string name="category_education">Escolas e universidades</string>
+    <string name="category_parks">Praças e parques</string>
+    <string name="category_fuel">Postos de combustível</string>
+    <string name="category_public">Prédios públicos e monumentos</string>
+    <string name="settings_francisca_label">Servidor de voz (HTTPS opcional)</string>
+    <string name="settings_francisca_hint">https://seu-servidor.exemplo/tts</string>
+    <string name="btn_close">Concluir</string>
 </resources>

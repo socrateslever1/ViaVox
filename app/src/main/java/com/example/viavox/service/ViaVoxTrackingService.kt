@@ -1,5 +1,6 @@
 package com.example.viavox.service
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -7,6 +8,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.location.Location
 import android.os.Build
@@ -14,12 +16,12 @@ import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import com.example.viavox.MainActivity
 import com.example.viavox.R
 import com.example.viavox.data.NominatimService
 import com.example.viavox.data.PoiDiscoveryService
 import com.example.viavox.data.TrackingRepository
-import com.example.viavox.model.Place
 import com.example.viavox.model.RelativeDirection
 import com.example.viavox.model.ViaVoxConfig
 import kotlinx.coroutines.CoroutineScope
@@ -49,12 +51,14 @@ class ViaVoxTrackingService : Service() {
 
         val prefs = getSharedPreferences("viavox_prefs", Context.MODE_PRIVATE)
         currentConfig = ViaVoxConfig.loadFrom(prefs)
+        val initialVoiceEnabled = prefs.getBoolean("voice_enabled", true)
 
         ttsManager = TextToSpeechManager(this) { isSpeaking ->
             TrackingRepository.updateSpeaking(isSpeaking)
         }
+        ttsManager.setVoiceEnabled(initialVoiceEnabled)
         ttsManager.setSpeechRate(currentConfig.speechRate)
-        ttsManager.franciscaEndpoint = prefs.getString("francisca_broker_url", null)
+        ttsManager.franciscaEndpoint = currentConfig.franciscaBrokerUrl.ifBlank { null }
 
         nominatimService = NominatimService()
         poiService = PoiDiscoveryService()
@@ -67,7 +71,7 @@ class ViaVoxTrackingService : Service() {
                 updateNotification(place.road, place.neighbourhood)
             },
             onRoadAnnounceNeeded = { speechMessage, _ ->
-                speakIfAllowed(speechMessage)
+                speakIfAllowed(speechMessage, forceRepeat = false)
             },
             onStatusMessage = { status ->
                 TrackingRepository.updateStatus(status)
@@ -98,40 +102,68 @@ class ViaVoxTrackingService : Service() {
             ACTION_UPDATE_CONFIG -> {
                 val prefs = getSharedPreferences("viavox_prefs", Context.MODE_PRIVATE)
                 currentConfig = ViaVoxConfig.loadFrom(prefs)
+                val voiceEnabled = prefs.getBoolean("voice_enabled", true)
+                ttsManager.setVoiceEnabled(voiceEnabled)
                 ttsManager.setSpeechRate(currentConfig.speechRate)
+                ttsManager.franciscaEndpoint = currentConfig.franciscaBrokerUrl.ifBlank { null }
                 TrackingRepository.updateConfig(currentConfig)
+                TrackingRepository.updateVoiceEnabled(voiceEnabled)
             }
         }
 
-        return START_STICKY
+        return START_NOT_STICKY
+    }
+
+    private fun hasLocationPermission(): Boolean {
+        val fine = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        val coarse = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        return fine || coarse
     }
 
     private fun startForegroundTracking() {
+        if (!hasLocationPermission()) {
+            TrackingRepository.updateActive(false)
+            TrackingRepository.updateStatus(getString(R.string.status_permission_denied))
+            stopSelf()
+            return
+        }
+
         if (isTrackingRunning) return
+
+        val initialNotification = buildNotification(getString(R.string.status_waiting_gps), "")
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    initialNotification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, initialNotification)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start foreground service: ${e.message}", e)
+            TrackingRepository.updateStatus(getString(R.string.status_permission_denied))
+            stopSelf()
+            return
+        }
 
         acquireWakeLock()
         isTrackingRunning = true
         TrackingRepository.updateActive(true)
-        TrackingRepository.updateStatus("Acompanhando trajeto...")
-
-        val initialNotification = buildNotification("Aguardando sinal de GPS...", "")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                NOTIFICATION_ID,
-                initialNotification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, initialNotification)
-        }
+        TrackingRepository.updateStatus(getString(R.string.status_waiting_gps))
 
         roadEngine.reset()
         locationTracker.startTracking()
     }
 
     private fun stopForegroundTracking() {
-        if (!isTrackingRunning) return
-
         Log.d(TAG, "Stopping foreground tracking")
         isTrackingRunning = false
         locationTracker.stopTracking()
@@ -140,13 +172,17 @@ class ViaVoxTrackingService : Service() {
         releaseWakeLock()
 
         TrackingRepository.updateActive(false)
-        TrackingRepository.updateStatus("Localização pausada")
+        TrackingRepository.updateStatus(getString(R.string.status_location_paused))
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-        } else {
-            @Suppress("DEPRECATION")
-            stopForeground(true)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+            } else {
+                @Suppress("DEPRECATION")
+                stopForeground(true)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error stopping foreground: ${e.message}")
         }
 
         stopSelf()
@@ -162,13 +198,13 @@ class ViaVoxTrackingService : Service() {
 
         TrackingRepository.updateCoordinates(lat, lon, accuracy, speedKmh, bearing, hasBearing)
 
-        // Pass location to road identification engine
+        // Identify current street or street transition
         roadEngine.onLocationUpdate(location)
 
         // Check for nearby landmark POIs if speech cooldown allows
         val now = System.currentTimeMillis()
         val speechIntervalMs = currentConfig.minIntervalSeconds * 1000L
-        if (now - lastSpeechTimestamp >= speechIntervalMs) {
+        if (now - lastSpeechTimestamp >= speechIntervalMs && !TrackingRepository.state.value.isSpeaking) {
             serviceScope.launch {
                 val poi = poiService.findNearbyPoi(lat, lon, currentConfig)
                 if (poi != null) {
@@ -187,25 +223,25 @@ class ViaVoxTrackingService : Service() {
                         RelativeDirection.NEARBY -> getString(R.string.tts_poi_nearby, poi.name)
                     }
 
-                    speakIfAllowed(poiMessage)
+                    speakIfAllowed(poiMessage, forceRepeat = false)
                 }
             }
         }
     }
 
-    private fun speakIfAllowed(message: String) {
+    private fun speakIfAllowed(message: String, forceRepeat: Boolean) {
         val isVoiceEnabled = TrackingRepository.state.value.isVoiceEnabled
         if (!isVoiceEnabled) return
 
         lastSpeechTimestamp = System.currentTimeMillis()
-        ttsManager.speak(message)
+        ttsManager.speak(message, forceRepeat = forceRepeat)
     }
 
     private fun repeatCurrentSpeech() {
         val currentPlace = TrackingRepository.state.value.place
-        if (currentPlace != null) {
-            val message = currentPlace.toSpeechMessage()
-            speakIfAllowed(message)
+        if (currentPlace != null && currentPlace.hasValidRoad()) {
+            val message = currentPlace.toSpeechMessage(isTransition = false)
+            speakIfAllowed(message, forceRepeat = true)
         }
     }
 
@@ -218,9 +254,8 @@ class ViaVoxTrackingService : Service() {
                     "ViaVox:LocationTrackingWakeLock"
                 ).apply {
                     setReferenceCounted(false)
-                    acquire(4 * 60 * 60 * 1000L) // 4 hours safety timeout
+                    acquire(30 * 60 * 1000L) // 30 minutes safety timeout
                 }
-                Log.d(TAG, "Partial wake lock acquired")
             }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to acquire wake lock: ${e.message}")
@@ -232,7 +267,6 @@ class ViaVoxTrackingService : Service() {
             wakeLock?.let {
                 if (it.isHeld) {
                     it.release()
-                    Log.d(TAG, "Partial wake lock released")
                 }
             }
             wakeLock = null
@@ -277,7 +311,11 @@ class ViaVoxTrackingService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val content = if (neighbourhood.isNotBlank()) "$road · $neighbourhood" else road
+        val content = if (neighbourhood.isNotBlank() && neighbourhood != "Bairro não identificado") {
+            "$road · $neighbourhood"
+        } else {
+            road
+        }
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
@@ -303,8 +341,11 @@ class ViaVoxTrackingService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         Log.d(TAG, "Destroying ViaVoxTrackingService")
-        stopForegroundTracking()
+        isTrackingRunning = false
+        locationTracker.stopTracking()
         ttsManager.shutdown()
+        roadEngine.reset()
+        releaseWakeLock()
         serviceScope.cancel()
     }
 

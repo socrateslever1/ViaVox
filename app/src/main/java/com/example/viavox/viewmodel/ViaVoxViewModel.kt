@@ -11,7 +11,6 @@ import com.example.viavox.service.ViaVoxTrackingService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
 
 class ViaVoxViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -33,7 +32,7 @@ class ViaVoxViewModel(application: Application) : AndroidViewModel(application) 
         TrackingRepository.updatePermission(granted)
         if (!granted) {
             TrackingRepository.updateActive(false)
-            TrackingRepository.updateStatus("Permissão de localização negada")
+            TrackingRepository.updateStatus("Permissão de localização necessária")
         }
     }
 
@@ -48,6 +47,9 @@ class ViaVoxViewModel(application: Application) : AndroidViewModel(application) 
     fun toggleVoice(enabled: Boolean) {
         prefs.edit().putBoolean("voice_enabled", enabled).apply()
         TrackingRepository.updateVoiceEnabled(enabled)
+        if (state.value.isActive) {
+            ViaVoxTrackingService.updateConfig(getApplication())
+        }
     }
 
     fun repeatCurrentLocationSpeech() {
@@ -72,6 +74,11 @@ class ViaVoxViewModel(application: Application) : AndroidViewModel(application) 
         saveAndApplyConfig(newConfig)
     }
 
+    fun updateFranciscaBrokerUrl(url: String) {
+        val newConfig = state.value.config.copy(franciscaBrokerUrl = url.trim())
+        saveAndApplyConfig(newConfig)
+    }
+
     fun togglePoiCategory(category: PoiCategory, enabled: Boolean) {
         val current = state.value.config
         val newConfig = when (category) {
@@ -87,6 +94,8 @@ class ViaVoxViewModel(application: Application) : AndroidViewModel(application) 
     private fun saveAndApplyConfig(config: ViaVoxConfig) {
         config.saveTo(prefs)
         TrackingRepository.updateConfig(config)
-        ViaVoxTrackingService.updateConfig(getApplication())
+        if (state.value.isActive) {
+            ViaVoxTrackingService.updateConfig(getApplication())
+        }
     }
 }

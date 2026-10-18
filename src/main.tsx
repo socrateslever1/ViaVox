@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { MapContainer, TileLayer, Marker, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, useMap, useMapEvents } from 'react-leaflet';
 import type { LatLngExpression } from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
@@ -20,54 +20,70 @@ type Place = {
   reference: string;
 };
 
-type POI = {
-  name: string;
-  direction: 'RIGHT' | 'LEFT' | 'NEARBY';
-};
-
 const clean = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
 
-function Camera({ position }: { position: LatLngExpression }) {
-  const map = useMap();
-  useEffect(() => {
-    map.setView(position, 16);
-  }, [map, position]);
-  return null;
+function normalizeRoad(name: string): string {
+  const s = name.trim().replace(/\s+/g, ' ');
+  if (!s) return 'Via não identificada';
+  return s
+    .replace(/^R\.\s*/i, 'Rua ')
+    .replace(/^Av\.\s*/i, 'Avenida ')
+    .replace(/^Trav\.\s*/i, 'Travessa ')
+    .replace(/^Al\.\s*/i, 'Alameda ')
+    .replace(/^Rod\.\s*/i, 'Rodovia ');
 }
 
-// Simulated vehicle trajectory along real Manaus avenues for instant testing in preview
-const SIMULATED_ROUTE = [
-  { lat: -3.1025, lon: -60.0235, road: 'Avenida Djalma Batista', neighbourhood: 'Chapada', city: 'Manaus', poi: null },
-  { lat: -3.1042, lon: -60.0231, road: 'Avenida Djalma Batista', neighbourhood: 'Chapada', city: 'Manaus', poi: { name: 'Amazonas Shopping', direction: 'RIGHT' as const } },
-  { lat: -3.1068, lon: -60.0225, road: 'Avenida Djalma Batista', neighbourhood: 'Chapada', city: 'Manaus', poi: null },
-  { lat: -3.1085, lon: -60.0210, road: 'Rua Pará', neighbourhood: 'Nossa Senhora das Graças', city: 'Manaus', poi: null },
-  { lat: -3.1110, lon: -60.0185, road: 'Rua Pará', neighbourhood: 'Nossa Senhora das Graças', city: 'Manaus', poi: { name: 'Hospital 28 de Agosto', direction: 'LEFT' as const } },
-  { lat: -3.1130, lon: -60.0170, road: 'Rua Paraíba', neighbourhood: 'Adrianópolis', city: 'Manaus', poi: null },
-  { lat: -3.1155, lon: -60.0160, road: 'Avenida Maceió', neighbourhood: 'Adrianópolis', city: 'Manaus', poi: { name: 'Parque Municipal do Idoso', direction: 'RIGHT' as const } }
-];
+function normalizeComparison(name: string): string {
+  return normalizeRoad(name)
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]/g, '');
+}
+
+function MapController({
+  position,
+  followUser,
+  onUserDrag
+}: {
+  position: LatLngExpression;
+  followUser: boolean;
+  onUserDrag: () => void;
+}) {
+  const map = useMap();
+  useMapEvents({
+    dragstart: () => onUserDrag()
+  });
+  useEffect(() => {
+    if (followUser) {
+      map.setView(position, 17, { animate: true });
+    }
+  }, [map, position, followUser]);
+  return null;
+}
 
 function App() {
   const [position, setPosition] = useState<LatLngExpression>([-3.1025, -60.0235]);
   const [place, setPlace] = useState<Place | null>(null);
-  const [poi, setPoi] = useState<POI | null>(null);
-  const [status, setStatus] = useState('Pronto para localizar');
+  const [status, setStatus] = useState('Obtendo localização GPS…');
   const [active, setActive] = useState(false);
-  const [simulating, setSimulating] = useState(false);
-  const [speed, setSpeed] = useState<number | null>(null);
+  const [followUser, setFollowUser] = useState(true);
   const [accuracy, setAccuracy] = useState<number | null>(null);
   const [voice, setVoice] = useState(() => localStorage.getItem('viavox.voice') !== 'false');
-  const [voiceRate, setVoiceRate] = useState(0.95);
-  const [showApkModal, setShowApkModal] = useState(false);
+  const [voiceRate, setVoiceRate] = useState(() => Number(localStorage.getItem('viavox.rate') || '0.95'));
+  const [brokerUrl, setBrokerUrl] = useState(() => localStorage.getItem('viavox.broker') || '');
+  const [showSettings, setShowSettings] = useState(false);
 
   const watch = useRef<number | null>(null);
-  const simTimer = useRef<number | null>(null);
-  const simIndex = useRef(0);
-  const lastRoad = useRef('');
-  const lastSpeech = useRef(0);
+  const lastLookup = useRef(0);
+  const lastPoint = useRef<{ lat: number; lon: number } | null>(null);
+  const confirmedRoad = useRef('');
+  const pending = useRef({ road: '', count: 0 });
   const busy = useRef(false);
   const session = useRef(0);
   const voiceRef = useRef(voice);
   const voiceRateRef = useRef(voiceRate);
+  const brokerUrlRef = useRef(brokerUrl);
 
   useEffect(() => {
     voiceRef.current = voice;
@@ -77,41 +93,59 @@ function App() {
 
   useEffect(() => {
     voiceRateRef.current = voiceRate;
+    localStorage.setItem('viavox.rate', String(voiceRate));
   }, [voiceRate]);
 
-  function say(message: string) {
+  useEffect(() => {
+    brokerUrlRef.current = brokerUrl.trim();
+    localStorage.setItem('viavox.broker', brokerUrl.trim());
+  }, [brokerUrl]);
+
+  function speakLocal(message: string) {
     if (!voiceRef.current || !('speechSynthesis' in window)) return;
     window.speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(message);
     u.lang = 'pt-BR';
     u.rate = voiceRateRef.current;
     window.speechSynthesis.speak(u);
-    lastSpeech.current = Date.now();
   }
 
-  function handleRoadAnnounce(newRoad: string, newNeighbourhood: string) {
-    if (!newRoad || newRoad === 'Via não identificada') return;
-    if (lastRoad.current === newRoad) return;
-
-    if (!lastRoad.current) {
-      // First identified road announced immediately
-      lastRoad.current = newRoad;
-      say(`Você está na ${newRoad}, bairro ${newNeighbourhood}.`);
-    } else {
-      // Transitioning to a new street
-      lastRoad.current = newRoad;
-      say(`Agora você está na ${newRoad}, bairro ${newNeighbourhood}.`);
+  async function say(message: string) {
+    if (!voiceRef.current || !message.trim()) return;
+    const endpoint = brokerUrlRef.current;
+    if (endpoint.startsWith('https://')) {
+      try {
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: message, voice: 'pt-BR-FranciscaNeural' })
+        });
+        if (res.ok && (res.headers.get('content-type') || '').startsWith('audio/')) {
+          const blob = await res.blob();
+          const url = URL.createObjectURL(blob);
+          const audio = new Audio(url);
+          audio.onended = () => URL.revokeObjectURL(url);
+          audio.onerror = () => {
+            URL.revokeObjectURL(url);
+            speakLocal(message);
+          };
+          await audio.play();
+          return;
+        }
+      } catch {
+        // Fallback to native speech synthesis
+      }
     }
+    speakLocal(message);
   }
 
-  function handlePoiAnnounce(currentPoi: POI) {
-    const dirText =
-      currentPoi.direction === 'RIGHT'
-        ? 'À sua direita'
-        : currentPoi.direction === 'LEFT'
-        ? 'À sua esquerda'
-        : 'Próximo daqui';
-    say(`${dirText}, encontra-se ${currentPoi.name}.`);
+  function buildMessage(p: Place, isTransition: boolean): string {
+    const prefix = isTransition ? `Agora você está na ${p.road}` : `Você está na ${p.road}`;
+    const bairro =
+      p.neighbourhood && p.neighbourhood !== 'Bairro não identificado'
+        ? `, bairro ${p.neighbourhood}`
+        : '';
+    return `${prefix}${bairro}.`;
   }
 
   async function lookup(lat: number, lon: number) {
@@ -121,16 +155,17 @@ function App() {
     try {
       const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}&zoom=18&addressdetails=1`;
       const res = await fetch(url, { headers: { 'Accept-Language': 'pt-BR' } });
-      if (!res.ok) throw Error(`Serviço de endereços indisponível (${res.status})`);
+      if (!res.ok) throw Error('Sem conexão para consultar endereço');
       const json = await res.json();
       if (requestSession !== session.current) return;
       const a = json.address || {};
-      const road =
+      const rawRoad =
         clean(a.road) ||
         clean(a.pedestrian) ||
         clean(a.residential) ||
         clean(a.path) ||
         'Via não identificada';
+      const road = normalizeRoad(rawRoad);
       const neighbourhood =
         clean(a.suburb) ||
         clean(a.neighbourhood) ||
@@ -145,12 +180,40 @@ function App() {
         '';
       const reference = clean(json.name) && clean(json.name) !== road ? clean(json.name) : '';
 
-      setPlace({ road, neighbourhood, city, reference });
-      setStatus('Localização atualizada');
-      handleRoadAnnounce(road, neighbourhood);
+      const newPlace: Place = { road, neighbourhood, city, reference };
+      setPlace(newPlace);
+      setStatus('Localização ativa');
+
+      if (road === 'Via não identificada') return;
+
+      const norm = normalizeComparison(road);
+      const currentNorm = confirmedRoad.current ? normalizeComparison(confirmedRoad.current) : '';
+
+      if (!currentNorm) {
+        confirmedRoad.current = road;
+        pending.current = { road: '', count: 0 };
+        void say(buildMessage(newPlace, false));
+        return;
+      }
+
+      if (norm === currentNorm) {
+        pending.current = { road: '', count: 0 };
+        return;
+      }
+
+      if (normalizeComparison(pending.current.road) === norm) {
+        pending.current.count += 1;
+        if (pending.current.count >= 2) {
+          confirmedRoad.current = road;
+          pending.current = { road: '', count: 0 };
+          void say(buildMessage(newPlace, true));
+        }
+      } else {
+        pending.current = { road, count: 1 };
+      }
     } catch (e) {
       if (requestSession === session.current) {
-        setStatus(e instanceof Error ? e.message : 'Erro ao identificar endereço');
+        setStatus(e instanceof Error ? e.message : 'Sem conexão para consultar endereço');
       }
     } finally {
       busy.current = false;
@@ -161,130 +224,81 @@ function App() {
     session.current++;
     if (watch.current !== null) navigator.geolocation.clearWatch(watch.current);
     watch.current = null;
-    if (simTimer.current !== null) clearInterval(simTimer.current);
-    simTimer.current = null;
     setActive(false);
-    setSimulating(false);
-    setSpeed(null);
-    setStatus('Localização pausada');
+    setStatus('Acompanhamento pausado');
     window.speechSynthesis?.cancel();
   }
 
   function start() {
-    stop();
+    if (watch.current !== null) return;
     session.current++;
     if (!navigator.geolocation) {
-      setStatus('GPS indisponível neste navegador. Use a "Simulação de Trajeto".');
+      setStatus('GPS indisponível no dispositivo');
       return;
     }
-    setStatus('Aguardando permissão de localização...');
-    lastRoad.current = '';
+    setStatus('Obtendo localização GPS…');
+    setFollowUser(true);
 
     watch.current = navigator.geolocation.watchPosition(
       p => {
-        const { latitude: lat, longitude: lon, accuracy: acc, speed: spd } = p.coords;
+        const { latitude: lat, longitude: lon, accuracy: acc } = p.coords;
         setPosition([lat, lon]);
         setAccuracy(Math.round(acc));
-        if (spd !== null && spd !== undefined) {
-          setSpeed(Math.round(spd * 3.6));
-        }
         setActive(true);
-        setSimulating(false);
-        if (acc > 80) {
+        if (acc > 70) {
           setStatus(`Sinal GPS impreciso (±${Math.round(acc)} m)`);
           return;
         }
-        void lookup(lat, lon);
+        const now = Date.now();
+        const prior = lastPoint.current;
+        const meters = prior
+          ? Math.hypot(
+              (lat - prior.lat) * 111000,
+              (lon - prior.lon) * 111000 * Math.cos((lat * Math.PI) / 180)
+            )
+          : Infinity;
+        if (
+          lastLookup.current === 0 ||
+          (now - lastLookup.current >= 8000 && (meters >= 14 || now - lastLookup.current >= 45000))
+        ) {
+          lastLookup.current = now;
+          lastPoint.current = { lat, lon };
+          void lookup(lat, lon);
+        }
       },
       e => {
-        setStatus(`GPS não disponível: ${e.message}. Use o botão "Simular Trajeto".`);
         if (e.code === 1) {
           stop();
-          setStatus('Permissão de GPS negada. Teste com a "Simulação de Trajeto".');
+          setStatus('Permissão de localização necessária');
+        } else {
+          setStatus('Aguardando sinal de GPS…');
         }
       },
       { enableHighAccuracy: true, maximumAge: 3000, timeout: 20000 }
     );
   }
 
-  function startSimulation() {
-    stop();
-    session.current++;
-    setActive(true);
-    setSimulating(true);
-    setAccuracy(8);
-    setSpeed(36);
-    setStatus('Acompanhando trajeto simulado...');
-    lastRoad.current = '';
-    simIndex.current = 0;
-
-    const step = SIMULATED_ROUTE[0];
-    setPosition([step.lat, step.lon]);
-    setPlace({
-      road: step.road,
-      neighbourhood: step.neighbourhood,
-      city: step.city,
-      reference: ''
-    });
-    setPoi(null);
-    handleRoadAnnounce(step.road, step.neighbourhood);
-
-    simTimer.current = window.setInterval(() => {
-      simIndex.current = (simIndex.current + 1) % SIMULATED_ROUTE.length;
-      const current = SIMULATED_ROUTE[simIndex.current];
-      setPosition([current.lat, current.lon]);
-      setPlace({
-        road: current.road,
-        neighbourhood: current.neighbourhood,
-        city: current.city,
-        reference: current.poi?.name || ''
-      });
-      setPoi(current.poi);
-      setStatus('Localização atualizada');
-
-      if (current.poi) {
-        handlePoiAnnounce(current.poi);
-      } else {
-        handleRoadAnnounce(current.road, current.neighbourhood);
-      }
-    }, 6000);
-  }
-
+  // Automatically start tracking on application open
   useEffect(() => {
+    start();
     return () => {
       if (watch.current !== null) navigator.geolocation.clearWatch(watch.current);
-      if (simTimer.current !== null) clearInterval(simTimer.current);
       window.speechSynthesis?.cancel();
     };
   }, []);
 
+  const subtitle = place
+    ? `${place.neighbourhood !== 'Bairro não identificado' ? place.neighbourhood : ''}${
+        place.city ? (place.neighbourhood !== 'Bairro não identificado' ? ` · ${place.city}` : place.city) : ''
+      }`
+    : '';
+
   return (
-    <main>
-      <header>
-        <div className="brand">
-          <span className="brandicon">◉</span>
-          <div>
-            <strong>ViaVox</strong>
-            <small>Sua localização ganha voz</small>
-          </div>
-        </div>
-
-        <div className="header-actions">
-          <button
-            className="badge-btn"
-            onClick={() => setShowApkModal(true)}
-            title="Informações sobre o APK Android"
-          >
-            📱 APK & Código
-          </button>
-          <span className="version">BETA 0.2</span>
-        </div>
-      </header>
-
-      <section className="map">
+    <div className="viewport">
+      <div className="map-layer">
         <MapContainer
           center={position}
-          zoom={16}
+          zoom={17}
           zoomControl={false}
           style={{ height: '100%', width: '100%' }}
         >
@@ -293,124 +307,117 @@ function App() {
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           />
           <Marker position={position} icon={marker} />
-          <Camera position={position} />
+          <MapController
+            position={position}
+            followUser={followUser}
+            onUserDrag={() => setFollowUser(false)}
+          />
         </MapContainer>
-      </section>
+      </div>
 
-      <section className="panel">
-        <div className="eyebrow">
-          <span className={active ? 'live' : ''}>●</span>{' '}
-          {active ? 'ACOMPANHANDO TRAJETO' : 'LOCALIZAÇÃO PAUSADA'}{' '}
-          {accuracy !== null && <span className="accuracy">GPS ±{accuracy} m</span>}
-          {speed !== null && <span className="speed-badge">{speed} km/h</span>}
-          {simulating && <span className="speed-badge">SIMULAÇÃO ATIVA</span>}
+      <header className="top-bar">
+        <div className="brand">
+          <span className="brandicon">◉</span>
+          <strong>ViaVox</strong>
         </div>
-
-        <h1>{place?.road || 'Onde você está?'}</h1>
-        <p className="address">
-          {place
-            ? `${place.neighbourhood}${place.city ? ` · ${place.city}` : ''}`
-            : 'Inicie a localização ou a simulação para identificar as vias em tempo real.'}
-        </p>
-
-        {poi && (
-          <div className="poi-card">
-            <div className="poi-dir">
-              {poi.direction === 'RIGHT'
-                ? '👉 À sua direita'
-                : poi.direction === 'LEFT'
-                ? '👈 À sua esquerda'
-                : '📍 Próximo daqui'}
-            </div>
-            <div className="poi-name">{poi.name}</div>
-          </div>
-        )}
-
-        <p className="status" role="status">
-          {status}
-        </p>
-
-        <div className="button-row">
-          <button className={active ? 'stop' : 'start'} onClick={active ? stop : start}>
-            {active ? '■ Parar narração' : '▶ Iniciar GPS Real'}
-          </button>
-          {!active && (
-            <button className="sim-btn" onClick={startSimulation}>
-              🚗 Simular Rota
-            </button>
-          )}
-        </div>
-
-        <label className="toggle">
-          <input
-            type="checkbox"
-            checked={voice}
-            onChange={e => setVoice(e.target.checked)}
-          />{' '}
-          Narração por voz
-        </label>
-
         <button
-          className="repeat"
-          disabled={!place}
-          onClick={() =>
-            place &&
-            say(
-              `Você está na ${place.road}, bairro ${place.neighbourhood}${
-                place.reference ? `, próximo a ${place.reference}` : ''
-              }.`
-            )
-          }
+          className="icon-btn"
+          onClick={() => setShowSettings(true)}
+          aria-label="Configurações"
         >
-          🔊 Ouvir localização atual
+          ⚙
         </button>
+      </header>
 
-        <div className="android-info-box">
-          <h3>📱 Aplicativo Nativo Android em app/</h3>
-          <p>
-            O código nativo completo está pronto na pasta <code>app/</code> com Foreground Service,
-            WakeLock para tela bloqueada, síntese de voz nativa e consultas espaciais do OpenStreetMap.
-            Clique no botão <strong>📱 APK & Código</strong> no topo para instruções de exportação.
-          </p>
+      {!followUser && (
+        <button
+          className="recenter-btn"
+          onClick={() => setFollowUser(true)}
+          aria-label="Recentralizar mapa"
+        >
+          ◎
+        </button>
+      )}
+
+      <section className="bottom-card">
+        <div className="status-row">
+          <div className="status-info" role="status">
+            <span className={`dot-indicator ${active ? 'live' : ''}`} />
+            <span>{status}</span>
+            {accuracy !== null && <span className="accuracy">±{accuracy} m</span>}
+          </div>
+          <button
+            className={`text-btn ${active ? 'pause' : ''}`}
+            onClick={active ? stop : start}
+          >
+            {active ? 'Pausar' : 'Iniciar'}
+          </button>
+        </div>
+
+        <h1 className="road-title">
+          {place?.road && place.road !== 'Via não identificada'
+            ? place.road
+            : 'Identificando rua atual…'}
+        </h1>
+
+        <p className="address">{subtitle || 'Aguardando coordenadas do GPS'}</p>
+
+        {place?.reference && <div className="reference-pill">📍 {place.reference}</div>}
+
+        <div className="controls-row">
+          <label className="toggle">
+            <input
+              type="checkbox"
+              checked={voice}
+              onChange={e => setVoice(e.target.checked)}
+            />
+            Voz ativa
+          </label>
+
+          <button
+            className="repeat-btn"
+            disabled={!place || place.road === 'Via não identificada'}
+            onClick={() => place && void say(buildMessage(place, false))}
+          >
+            🔊 Repetir
+          </button>
         </div>
       </section>
 
-      {showApkModal && (
-        <div className="modal-backdrop" onClick={() => setShowApkModal(false)}>
+      {showSettings && (
+        <div className="modal-backdrop" onClick={() => setShowSettings(false)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
-            <h2>📱 Como Gerar o APK do ViaVox</h2>
-            <p>
-              O ViaVox foi reescrito como um <strong>aplicativo nativo Android completo</strong> em
-              Kotlin e Jetpack Compose, localizado na pasta <code>app/</code>.
-            </p>
-            <p>
-              Como este projeto foi importado do GitHub com base Web, o preview do AI Studio executa o
-              servidor Node.js para visualização interativa instantânea. Para compilar o arquivo{' '}
-              <code>.apk</code> ou instalar no seu celular Android:
-            </p>
-            <ul>
-              <li>
-                <strong>Opção 1 (Android Studio):</strong> Baixe o projeto pelo menu do AI Studio
-                (ícone de configurações/export $\to$ <em>Export to ZIP</em> ou <em>Push to GitHub</em>),
-                abra no Android Studio e clique em <code>Build &gt; Build APK(s)</code>.
-              </li>
-              <li>
-                <strong>Opção 2 (Direto no Celular):</strong> Conecte seu smartphone via USB com a
-                depuração USB ativada e clique em <strong>Run 'app'</strong> no Android Studio. O app
-                rodará com o <code>ForegroundService</code> real, inclusive com a tela desligada.
-              </li>
-            </ul>
-            <p>
-              Enquanto isso, você pode testar todo o fluxo de narração por voz e geocodificação aqui mesmo
-              no preview usando o botão <strong>"🚗 Simular Rota"</strong> ou o <strong>"▶ Iniciar GPS Real"</strong>!
-            </p>
-            <button className="modal-close" onClick={() => setShowApkModal(false)}>
-              Entendi
+            <h2>Configurações</h2>
+
+            <label className="field-label">
+              Velocidade da voz: {voiceRate.toFixed(1)}x
+            </label>
+            <input
+              type="range"
+              min="0.8"
+              max="1.3"
+              step="0.1"
+              value={voiceRate}
+              onChange={e => setVoiceRate(Number(e.target.value))}
+            />
+
+            <label className="field-label">
+              Servidor de voz (HTTPS opcional)
+            </label>
+            <input
+              type="url"
+              placeholder="https://seu-servidor.exemplo/tts"
+              value={brokerUrl}
+              onChange={e => setBrokerUrl(e.target.value)}
+            />
+
+            <button className="modal-close" onClick={() => setShowSettings(false)}>
+              Concluir
             </button>
           </div>
         </div>
       )}
-    </main>
+    </div>
   );
 }
 

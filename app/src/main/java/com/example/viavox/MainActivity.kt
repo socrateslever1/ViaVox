@@ -35,14 +35,15 @@ class MainActivity : ComponentActivity() {
                 ) { permissions ->
                     val fineGranted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true
                     val coarseGranted = permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
-                    viewModel.onPermissionResult(fineGranted || coarseGranted)
+                    val granted = fineGranted || coarseGranted
+                    viewModel.onPermissionResult(granted)
 
-                    if (fineGranted || coarseGranted) {
+                    if (granted) {
                         viewModel.startTracking()
                     }
                 }
 
-                // Check initial permission status
+                // Automatically request permissions on startup and start tracking when authorized
                 LaunchedEffect(Unit) {
                     val fine = ContextCompat.checkSelfPermission(
                         this@MainActivity,
@@ -54,7 +55,15 @@ class MainActivity : ComponentActivity() {
                         Manifest.permission.ACCESS_COARSE_LOCATION
                     ) == PackageManager.PERMISSION_GRANTED
 
-                    viewModel.onPermissionResult(fine || coarse)
+                    if (fine || coarse) {
+                        viewModel.onPermissionResult(true)
+                        if (!state.isActive) {
+                            viewModel.startTracking()
+                        }
+                    } else {
+                        val permissionsToRequest = buildRequiredPermissionsList()
+                        permissionLauncher.launch(permissionsToRequest)
+                    }
                 }
 
                 ViaVoxMainScreen(
@@ -65,6 +74,7 @@ class MainActivity : ComponentActivity() {
                     onSpeedChanged = { viewModel.updateSpeechRate(it) },
                     onIntervalChanged = { viewModel.updateInterval(it) },
                     onPoiCategoryToggled = { cat, enabled -> viewModel.togglePoiCategory(cat, enabled) },
+                    onFranciscaBrokerUrlChanged = { url -> viewModel.updateFranciscaBrokerUrl(url) },
                     onStartTracking = {
                         val fine = ContextCompat.checkSelfPermission(
                             this@MainActivity,
@@ -75,25 +85,10 @@ class MainActivity : ComponentActivity() {
                             Manifest.permission.ACCESS_COARSE_LOCATION
                         ) == PackageManager.PERMISSION_GRANTED
 
-                        val permissionsToRequest = mutableListOf(
-                            Manifest.permission.ACCESS_FINE_LOCATION,
-                            Manifest.permission.ACCESS_COARSE_LOCATION
-                        )
-
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                            val notif = ContextCompat.checkSelfPermission(
-                                this@MainActivity,
-                                Manifest.permission.POST_NOTIFICATIONS
-                            ) == PackageManager.PERMISSION_GRANTED
-                            if (!notif) {
-                                permissionsToRequest.add(Manifest.permission.POST_NOTIFICATIONS)
-                            }
-                        }
-
                         if (fine || coarse) {
                             viewModel.startTracking()
                         } else {
-                            permissionLauncher.launch(permissionsToRequest.toTypedArray())
+                            permissionLauncher.launch(buildRequiredPermissionsList())
                         }
                     },
                     onStopTracking = {
@@ -108,5 +103,22 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+    }
+
+    private fun buildRequiredPermissionsList(): Array<String> {
+        val list = mutableListOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val notifGranted = ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!notifGranted) {
+                list.add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+        return list.toTypedArray()
     }
 }
