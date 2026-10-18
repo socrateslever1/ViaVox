@@ -51,6 +51,7 @@ import com.example.viavox.R
 import com.example.viavox.model.PoiCategory
 import com.example.viavox.model.ViaVoxConfig
 import com.example.viavox.service.AndroidVoiceOption
+import com.example.viavox.service.VoiceDataInstaller
 import com.example.viavox.service.AndroidVoiceCatalog
 
 private val accent = Color(0xFF38DFCA)
@@ -81,6 +82,7 @@ fun SettingsDialog(
     var voiceCatalog by remember { mutableStateOf<AndroidVoiceCatalog?>(null) }
     var voiceMenuExpanded by remember { mutableStateOf(false) }
     var advancedFranciscaExpanded by remember { mutableStateOf(false) }
+    var voicePreviewError by remember { mutableStateOf(false) }
 
     DisposableEffect(context) {
         val catalog = AndroidVoiceCatalog(context) { voices ->
@@ -198,19 +200,37 @@ fun SettingsDialog(
                         )
                     } else if (availableVoices.isEmpty()) {
                         Text(
-                            "Nenhuma voz adicional em português encontrada. A voz padrão continua disponível.",
+                            "O Android não tem uma voz portuguesa pronta. Instale os dados para ativar a narração.",
                             color = muted,
                             fontSize = 12.sp,
                             lineHeight = 17.sp
                         )
                     }
                     if (config.voiceProvider == "android") {
-                        TextButton(
-                            onClick = { voiceCatalog?.preview(config.nativeVoiceId, config.speechRate) },
-                            enabled = !isVoiceLoading,
-                            modifier = Modifier.testTag("preview_voice_button")
-                        ) {
-                            Text("▶ Ouvir exemplo", color = accent)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            TextButton(
+                                onClick = {
+                                    voicePreviewError = voiceCatalog?.preview(
+                                        config.nativeVoiceId, config.speechRate
+                                    ) != true
+                                },
+                                enabled = !isVoiceLoading && availableVoices.isNotEmpty(),
+                                modifier = Modifier.testTag("preview_voice_button")
+                            ) {
+                                Text("▶ Ouvir exemplo", color = accent)
+                            }
+                            TextButton(
+                                onClick = { VoiceDataInstaller.open(context) },
+                                modifier = Modifier.testTag("install_voice_button")
+                            ) {
+                                Text("Instalar voz", color = white)
+                            }
+                        }
+                        if (voicePreviewError) {
+                            Text(
+                                "Prévia indisponível. Instale os dados da voz e tente novamente.",
+                                color = Color(0xFFFFCA99), fontSize = 12.sp
+                            )
                         }
                     } else {
                         Text(
