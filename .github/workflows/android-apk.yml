@@ -12,6 +12,10 @@ on:
       - '.github/workflows/android-apk.yml'
   workflow_dispatch:
 
+concurrency:
+  group: viavox-android-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
 
@@ -102,6 +106,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          CURRENT_SHA=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha')
+          if [ "$CURRENT_SHA" != "$GITHUB_SHA" ]; then
+            echo "Skipping outdated APK release; main advanced to $CURRENT_SHA"
+            exit 0
+          fi
           cp app/build/outputs/apk/debug/app-debug.apk "$RUNNER_TEMP/ViaVox.apk"
           if gh release view viavox-debug-latest >/dev/null 2>&1; then
             gh release upload viavox-debug-latest "$RUNNER_TEMP/ViaVox.apk" --clobber
