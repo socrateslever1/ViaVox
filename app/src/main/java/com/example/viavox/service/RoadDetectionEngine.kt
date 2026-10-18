@@ -39,6 +39,9 @@ class RoadDetectionEngine(
     private var lastQuerySucceeded = false
 
     private var currentConfirmedRoad: String? = null
+    private var lastAnnouncedNeighbourhood: String? = null
+    private var pendingNeighbourhood: String? = null
+    private var pendingNeighbourhoodCount = 0
     private var pendingCandidateRoad: String? = null
     private var pendingCandidatePlace: Place? = null
     private var pendingCandidateCount = 0
@@ -51,6 +54,9 @@ class RoadDetectionEngine(
         activeQueryJob?.cancel()
         activeQueryJob = null
         currentConfirmedRoad = null
+        lastAnnouncedNeighbourhood = null
+        pendingNeighbourhood = null
+        pendingNeighbourhoodCount = 0
         pendingCandidateRoad = null
         pendingCandidatePlace = null
         pendingCandidateCount = 0
@@ -98,12 +104,12 @@ class RoadDetectionEngine(
         val speedMps = fix.speedMps
         val minInterval = when {
             !lastQuerySucceeded -> 3_000L
-            pendingCandidateRoad != null -> 4_000L
+            pendingCandidateRoad != null || pendingNeighbourhood != null -> 4_000L
             speedMps > 8.3f -> 6_000L
             else -> 8_000L
         }
         val minDistance = when {
-            pendingCandidateRoad != null -> 10.0
+            pendingCandidateRoad != null || pendingNeighbourhood != null -> 10.0
             speedMps > 8.3f -> 20.0
             else -> 14.0
         }
@@ -162,6 +168,9 @@ class RoadDetectionEngine(
         // 1. First identified road (works both stationary and moving): announce immediately!
         if (currentNormalized == null) {
             currentConfirmedRoad = road
+            lastAnnouncedNeighbourhood = normalizedPlace.neighbourhood.takeIf { normalizedPlace.hasValidNeighbourhood() }
+            pendingNeighbourhood = null
+            pendingNeighbourhoodCount = 0
             pendingCandidateRoad = null
             pendingCandidatePlace = null
             pendingCandidateCount = 0
@@ -176,6 +185,31 @@ class RoadDetectionEngine(
             pendingCandidateRoad = null
             pendingCandidatePlace = null
             pendingCandidateCount = 0
+
+            // A road may cross neighbourhood boundaries without changing its name.
+            // Require two consecutive address results before announcing the new area.
+            if (normalizedPlace.hasValidNeighbourhood() &&
+                !sameNeighbourhood(lastAnnouncedNeighbourhood, normalizedPlace.neighbourhood)
+            ) {
+                if (sameNeighbourhood(pendingNeighbourhood, normalizedPlace.neighbourhood)) {
+                    pendingNeighbourhoodCount++
+                } else {
+                    pendingNeighbourhood = normalizedPlace.neighbourhood
+                    pendingNeighbourhoodCount = 1
+                }
+                if (pendingNeighbourhoodCount >= 2) {
+                    lastAnnouncedNeighbourhood = normalizedPlace.neighbourhood
+                    pendingNeighbourhood = null
+                    pendingNeighbourhoodCount = 0
+                    onRoadAnnounceNeeded(
+                        normalizedPlace.toSpeechMessage(isTransition = true, includeNeighbourhood = true),
+                        false
+                    )
+                }
+            } else {
+                pendingNeighbourhood = null
+                pendingNeighbourhoodCount = 0
+            }
             return
         }
 
@@ -204,8 +238,19 @@ class RoadDetectionEngine(
                 pendingCandidateRoad = null
                 pendingCandidatePlace = null
                 pendingCandidateCount = 0
+                pendingNeighbourhood = null
+                pendingNeighbourhoodCount = 0
 
-                val message = normalizedPlace.toSpeechMessage(isTransition = true)
+                // Mention the area only on first identification or when it changes.
+                val neighbourhoodChanged = normalizedPlace.hasValidNeighbourhood() &&
+                    !sameNeighbourhood(lastAnnouncedNeighbourhood, normalizedPlace.neighbourhood)
+                if (normalizedPlace.hasValidNeighbourhood()) {
+                    lastAnnouncedNeighbourhood = normalizedPlace.neighbourhood
+                }
+                val message = normalizedPlace.toSpeechMessage(
+                    isTransition = true,
+                    includeNeighbourhood = neighbourhoodChanged
+                )
                 onRoadAnnounceNeeded(message, false)
             }
         } else {
@@ -217,6 +262,9 @@ class RoadDetectionEngine(
             pendingCandidateStartLon = fix.longitude
         }
     }
+
+    private fun sameNeighbourhood(previous: String?, current: String): Boolean =
+        previous != null && normalizeForComparison(previous) == normalizeForComparison(current)
 
     companion object {
         const val MAX_ACCEPTABLE_ACCURACY_METERS = 70f
