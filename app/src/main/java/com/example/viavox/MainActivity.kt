@@ -10,6 +10,10 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.core.content.ContextCompat
@@ -29,6 +33,18 @@ class MainActivity : ComponentActivity() {
                 val viewModel: ViaVoxViewModel = viewModel()
                 val state by viewModel.state.collectAsState()
                 val isSettingsOpen by viewModel.isSettingsDialogOpen.collectAsState()
+                val lifecycleOwner = LocalLifecycleOwner.current
+                DisposableEffect(lifecycleOwner, viewModel) {
+                    val observer = LifecycleEventObserver { _, event ->
+                        when (event) {
+                            Lifecycle.Event.ON_START -> viewModel.onAppVisible()
+                            Lifecycle.Event.ON_STOP -> viewModel.onAppHidden()
+                            else -> Unit
+                        }
+                    }
+                    lifecycleOwner.lifecycle.addObserver(observer)
+                    onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+                }
 
                 val permissionLauncher = rememberLauncherForActivityResult(
                     contract = ActivityResultContracts.RequestMultiplePermissions()
@@ -38,7 +54,7 @@ class MainActivity : ComponentActivity() {
                     val granted = fineGranted || coarseGranted
                     viewModel.onPermissionResult(granted)
 
-                    if (granted) {
+                    if (granted && !viewModel.isManuallyPaused()) {
                         viewModel.startTracking()
                     }
                 }
@@ -57,7 +73,7 @@ class MainActivity : ComponentActivity() {
 
                     if (fine || coarse) {
                         viewModel.onPermissionResult(true)
-                        if (!state.isActive) {
+                        if (!state.isActive && !viewModel.isManuallyPaused()) {
                             viewModel.startTracking()
                         }
                     } else {
