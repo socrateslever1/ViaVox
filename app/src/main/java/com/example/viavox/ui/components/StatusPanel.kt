@@ -156,7 +156,7 @@ fun StatusPanel(
             Spacer(Modifier.height(7.dp))
             Text(
                 text = state.poiStatus,
-                color = if (state.poiStatus.startsWith("Referência anunciada:")) aqua else subdued,
+                color = if (state.poiStatus.startsWith("Enviando à voz:")) aqua else subdued,
                 fontSize = 11.sp,
                 lineHeight = 14.sp,
                 maxLines = 2,
