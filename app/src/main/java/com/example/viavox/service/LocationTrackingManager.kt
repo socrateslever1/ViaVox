@@ -129,18 +129,23 @@ class LocationTrackingManager(
             speedMps = if (location.hasSpeed()) location.speed else 0f,
             timestampMs = location.time
         )
-        if (!qualityGate.accept(candidate, now)) return
-
-        val moving = location.hasSpeed() && location.speed >= 1.5f
+        // Power mode follows accepted low-error samples, not GPS jitter.
+        // Even when a stationary fix is deliberately suppressed by the quality gate,
+        // its passage of time should still permit a low-power transition.
+        val valid = qualityGate.accept(candidate, now)
+        val moving = valid && location.hasSpeed() && location.speed >= 1.5f
         if (moving) {
             stationarySinceMs = null
             if (!highAccuracy && !platformFallback) configureFusedLocation(true)
-        } else if (!platformFallback && highAccuracy) {
+        } else if (!platformFallback && highAccuracy &&
+            candidate.accuracyMeters <= 65f && now - candidate.timestampMs <= 15_000L &&
+            (location.hasSpeed().not() || location.speed < 1.5f)
+        ) {
             val since = stationarySinceMs ?: now.also { stationarySinceMs = it }
             if (now - since >= 25_000L) configureFusedLocation(false)
         }
 
-        onLocationUpdated(location)
+        if (valid) onLocationUpdated(location)
     }
 
     fun stopTracking() {
