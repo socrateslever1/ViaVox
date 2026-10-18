@@ -37,6 +37,7 @@ fun ViaVoxMainScreen(
     onStopTracking: () -> Unit,
     onToggleVoice: (Boolean) -> Unit,
     onRepeatSpeech: () -> Unit,
+    onTestVoice: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     BoxWithConstraints(
@@ -80,6 +81,7 @@ fun ViaVoxMainScreen(
                 onStopTracking = onStopTracking,
                 onToggleVoice = onToggleVoice,
                 onRepeatSpeech = onRepeatSpeech,
+                onTestVoice = onTestVoice,
                 modifier = Modifier
                     .align(if (isWide) Alignment.BottomStart else Alignment.BottomCenter)
                     .padding(horizontal = 14.dp, vertical = 12.dp)
