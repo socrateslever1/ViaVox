@@ -13,7 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.Icon
@@ -103,7 +103,7 @@ fun OpenStreetMapComponent(
             readyMap.setStyle(Style.Builder().fromUri(DARK_MAP_STYLE)) {
                 isStyleReady = true
             }
-            readyMap.addOnDidFailLoadingMapListener {
+            mapView.addOnDidFailLoadingMapListener {
                 if (!isStyleReady) {
                     readyMap.setStyle(Style.Builder().fromUri(FALLBACK_MAP_STYLE)) {
                         isStyleReady = true
@@ -190,7 +190,7 @@ fun OpenStreetMapComponent(
                     .testTag("recenter_button")
             ) {
                 Icon(
-                    imageVector = Icons.Default.MyLocation,
+                    imageVector = Icons.Default.LocationOn,
                     contentDescription = "Recentralizar mapa",
                     tint = Color(0xFF29B6F6)
                 )
