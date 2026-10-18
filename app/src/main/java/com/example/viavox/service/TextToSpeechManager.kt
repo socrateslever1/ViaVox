@@ -5,6 +5,8 @@ import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
@@ -63,10 +65,13 @@ class SpeechFallbackRouter(
 
 class TextToSpeechManager(
     private val context: Context,
-    private val onSpeakingStateChanged: (Boolean) -> Unit = {}
+    private val onSpeakingStateChanged: (Boolean) -> Unit = {},
+    private val onVoiceIssue: (String?) -> Unit = {}
 ) : TextToSpeech.OnInitListener {
 
-    private var tts: TextToSpeech? = TextToSpeech(context.applicationContext, this)
+    // Create TTS only after all callbacks/router state exist; an engine may call onInit quickly.
+    private var tts: TextToSpeech? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
     private val francisca = AzureFranciscaSpeech(context.applicationContext, onSpeakingStateChanged)
     var franciscaEndpoint: String?
         get() = francisca.endpoint
@@ -80,6 +85,7 @@ class TextToSpeechManager(
         set(value) { francisca.accessToken = value }
 
     private var isInitialized = false
+    private var initFailed = false
     private var currentSpeechRate = 0.95f
     private var voiceProvider = "android"
     private var selectedAndroidVoiceId = ""
@@ -129,22 +135,27 @@ class TextToSpeechManager(
                 }
 
                 override fun onDone(utteranceId: String?) {
+                    reportVoiceIssue(null)
                     releaseAudioFocus()
                     onSpeakingStateChanged(false)
                 }
 
                 @Deprecated("Deprecated in Java")
                 override fun onError(utteranceId: String?) {
+                    reportVoiceIssue("A voz do Android não conseguiu reproduzir. Verifique o mecanismo de texto para fala.")
                     releaseAudioFocus()
                     onSpeakingStateChanged(false)
                 }
 
                 override fun onError(utteranceId: String?, errorCode: Int) {
+                    reportVoiceIssue("Falha de narração Android (código $errorCode). Confira as vozes instaladas.")
                     releaseAudioFocus()
                     onSpeakingStateChanged(false)
                 }
             })
             isInitialized = true
+            initFailed = false
+            reportVoiceIssue(null)
             Log.d("ViaVoxTTS", "TextToSpeech initialized successfully")
 
             // Speak any utterance queued while engine was initializing
@@ -155,8 +166,25 @@ class TextToSpeechManager(
                 }
             }
         } else {
+            initFailed = true
+            pendingUtteranceBeforeInit = null
+            reportVoiceIssue("Motor de voz indisponível. Ative ou instale uma voz em Configurações do Android.")
             Log.e("ViaVoxTTS", "Failed to initialize TextToSpeech engine")
         }
+    }
+
+    init {
+        try {
+            tts = TextToSpeech(context.applicationContext, this)
+        } catch (e: Exception) {
+            initFailed = true
+            reportVoiceIssue("O mecanismo de voz do Android não pôde ser iniciado.")
+            Log.e("ViaVoxTTS", "Could not create TTS engine", e)
+        }
+    }
+
+    private fun reportVoiceIssue(message: String?) {
+        mainHandler.post { onVoiceIssue(message) }
     }
 
     fun setVoiceEnabled(enabled: Boolean) {
@@ -232,7 +260,7 @@ class TextToSpeechManager(
             @Suppress("DEPRECATION")
             audioManager.requestAudioFocus(
                 null,
-                AudioManager.STREAM_NOTIFICATION,
+                AudioManager.STREAM_MUSIC,
                 AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK
             ) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
         }
@@ -255,16 +283,38 @@ class TextToSpeechManager(
         router.speak(text, forceRepeat = forceRepeat)
     }
 
+    fun testVoice() {
+        // Voice test always runs through selected TTS provider + local fallback.
+        speak("ViaVox. Teste de voz. Você está na Rua Aristides Rocha.", forceRepeat = true)
+    }
+
     private fun speakLocally(text: String) {
         if (!isInitialized) {
-            pendingUtteranceBeforeInit = text
+            if (initFailed) {
+                reportVoiceIssue("Voz Android não inicializada. Verifique as configurações de síntese de voz.")
+            } else {
+                pendingUtteranceBeforeInit = text
+            }
             return
         }
         francisca.stop()
         tts?.stop()
         requestAudioFocus()
         val utteranceId = "viavox_${System.currentTimeMillis()}"
-        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+        try {
+            val result = tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+            if (result != TextToSpeech.SUCCESS) {
+                releaseAudioFocus()
+                reportVoiceIssue("Não foi possível iniciar a fala. Verifique a voz e o volume de mídia.")
+                onSpeakingStateChanged(false)
+            } else {
+                reportVoiceIssue(null)
+            }
+        } catch (e: Exception) {
+            releaseAudioFocus()
+            reportVoiceIssue("Falha ao usar o mecanismo de voz do Android.")
+            Log.w("ViaVoxTTS", "Android voice playback error", e)
+        }
     }
 
     fun stop() {
