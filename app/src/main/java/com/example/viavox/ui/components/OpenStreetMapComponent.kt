@@ -109,6 +109,7 @@ fun OpenStreetMapComponent(
     isActive: Boolean,
     route: NavigationRoute? = null,
     destination: MapPlace? = null,
+    favorites: List<MapPlace> = emptyList(),
     savedTrack: List<TripPoint> = emptyList(),
     liveTrack: List<TripPoint> = emptyList(),
     onMapLongPress: (Double, Double) -> Unit = { _, _ -> },
@@ -132,6 +133,7 @@ fun OpenStreetMapComponent(
     var mapCameraBearing by remember { mutableStateOf(0f) }
     var marker by remember { mutableStateOf<Marker?>(null) }
     var destMarker by remember { mutableStateOf<Marker?>(null) }
+    val favoriteMarkers = remember { mutableListOf<Marker>() }
     val compassHeading = rememberDeviceCompassHeading(isActive, latitude, longitude)
 
     // Resume following user whenever tracking starts
@@ -279,7 +281,7 @@ fun OpenStreetMapComponent(
         )
     }
 
-    LaunchedEffect(map, isStyleReady, route, destination, savedTrack, liveTrack) {
+    LaunchedEffect(map, isStyleReady, route, destination, favorites, savedTrack, liveTrack) {
         val mapRef = map ?: return@LaunchedEffect
         if (!isStyleReady) return@LaunchedEffect
         val style = mapRef.style ?: return@LaunchedEffect
@@ -289,6 +291,14 @@ fun OpenStreetMapComponent(
         updateLine(style, "viavox-track", recordedPoints.map { it.latitude to it.longitude })
         destMarker?.let { mapRef.removeMarker(it) }
         destMarker = null
+        favoriteMarkers.forEach { mapRef.removeMarker(it) }
+        favoriteMarkers.clear()
+        favorites.take(80).forEach { favorite ->
+            favoriteMarkers.add(mapRef.addMarker(
+                MarkerOptions().position(LatLng(favorite.latitude,favorite.longitude))
+                    .title(favorite.name)
+            ))
+        }
         if (destination != null) {
             destMarker = mapRef.addMarker(
                 MarkerOptions().position(LatLng(destination.latitude,destination.longitude))
