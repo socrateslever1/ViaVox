@@ -79,6 +79,10 @@ class ViaVoxViewModel(application: Application) : AndroidViewModel(application) 
         saveAndApplyConfig(newConfig)
     }
 
+    fun updateFranciscaAccessToken(token: String) {
+        saveAndApplyConfig(state.value.config.copy(franciscaAccessToken = token.trim()))
+    }
+
     fun togglePoiCategory(category: PoiCategory, enabled: Boolean) {
         val current = state.value.config
         val newConfig = when (category) {
