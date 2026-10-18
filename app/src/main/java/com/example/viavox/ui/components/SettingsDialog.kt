@@ -4,6 +4,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -14,6 +15,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.OutlinedTextField
@@ -26,6 +30,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -35,6 +40,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -44,6 +50,8 @@ import androidx.compose.ui.window.Dialog
 import com.example.viavox.R
 import com.example.viavox.model.PoiCategory
 import com.example.viavox.model.ViaVoxConfig
+import com.example.viavox.service.AndroidVoiceOption
+import com.example.viavox.service.AndroidVoiceCatalog
 
 private val accent = Color(0xFF38DFCA)
 private val panel = Color(0xFF0B1D33)
@@ -54,6 +62,7 @@ private val muted = Color(0xFFA9BED1)
 fun SettingsDialog(
     config: ViaVoxConfig,
     onSpeedChanged: (Float) -> Unit,
+    onVoiceSelectionChanged: (String, String) -> Unit,
     onIntervalChanged: (Int) -> Unit,
     onPoiCategoryToggled: (PoiCategory, Boolean) -> Unit,
     onFranciscaBrokerUrlChanged: (String) -> Unit = {},
@@ -64,6 +73,24 @@ fun SettingsDialog(
     var accessToken by remember(config.franciscaAccessToken) { mutableStateOf(config.franciscaAccessToken) }
     val invalidUrl = voiceUrl.isNotBlank() && !voiceUrl.trim().startsWith("https://")
     val uriHandler = LocalUriHandler.current
+    val context = LocalContext.current
+    var availableVoices by remember { mutableStateOf<List<AndroidVoiceOption>>(emptyList()) }
+    var isVoiceLoading by remember { mutableStateOf(true) }
+    var voiceCatalog by remember { mutableStateOf<AndroidVoiceCatalog?>(null) }
+    var voiceMenuExpanded by remember { mutableStateOf(false) }
+    var advancedFranciscaExpanded by remember { mutableStateOf(false) }
+
+    DisposableEffect(context) {
+        val catalog = AndroidVoiceCatalog(context) { voices ->
+            availableVoices = voices
+            isVoiceLoading = false
+        }
+        voiceCatalog = catalog
+        onDispose {
+            catalog.close()
+            voiceCatalog = null
+        }
+    }
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
@@ -93,7 +120,98 @@ fun SettingsDialog(
                         modifier = Modifier.padding(top = 3.dp, bottom = 19.dp)
                     )
 
-                    SectionTitle("Narração")
+                    SectionTitle("Voz da navegação")
+                    Text(
+                        text = "Escolha entre as vozes em português disponíveis no seu celular.",
+                        color = muted,
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp,
+                        modifier = Modifier.padding(top = 5.dp, bottom = 8.dp)
+                    )
+
+                    val selectedVoiceName = when {
+                        config.voiceProvider == "francisca" -> "Francisca · Microsoft (online)"
+                        config.nativeVoiceId.isEmpty() -> "Padrão do Android"
+                        else -> availableVoices.find { it.id == config.nativeVoiceId }?.label
+                            ?: "Voz do Android (indisponível no aparelho)"
+                    }
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        OutlinedButton(
+                            onClick = { voiceMenuExpanded = true },
+                            modifier = Modifier.fillMaxWidth().testTag("voice_picker_button"),
+                            border = BorderStroke(1.dp, accent.copy(alpha = 0.65f)),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text(
+                                text = selectedVoiceName,
+                                color = white,
+                                fontSize = 13.sp,
+                                maxLines = 2
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = voiceMenuExpanded,
+                            onDismissRequest = { voiceMenuExpanded = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Padrão do Android · sem API") },
+                                onClick = {
+                                    onVoiceSelectionChanged("android", "")
+                                    voiceMenuExpanded = false
+                                }
+                            )
+                            availableVoices.forEach { voice ->
+                                DropdownMenuItem(
+                                    text = { Text(voice.label) },
+                                    onClick = {
+                                        onVoiceSelectionChanged("android", voice.id)
+                                        voiceMenuExpanded = false
+                                    }
+                                )
+                            }
+                            DropdownMenuItem(
+                                text = { Text("Francisca · Microsoft (exige API)") },
+                                onClick = {
+                                    onVoiceSelectionChanged("francisca", config.nativeVoiceId)
+                                    voiceMenuExpanded = false
+                                    advancedFranciscaExpanded = true
+                                }
+                            )
+                        }
+                    }
+                    if (isVoiceLoading) {
+                        Text(
+                            "Buscando vozes instaladas...",
+                            color = muted,
+                            fontSize = 12.sp
+                        )
+                    } else if (availableVoices.isEmpty()) {
+                        Text(
+                            "Nenhuma voz adicional em português encontrada. A voz padrão continua disponível.",
+                            color = muted,
+                            fontSize = 12.sp,
+                            lineHeight = 17.sp
+                        )
+                    }
+                    if (config.voiceProvider == "android") {
+                        TextButton(
+                            onClick = { voiceCatalog?.preview(config.nativeVoiceId, config.speechRate) },
+                            enabled = !isVoiceLoading,
+                            modifier = Modifier.testTag("preview_voice_button")
+                        ) {
+                            Text("▶ Ouvir exemplo", color = accent)
+                        }
+                    } else {
+                        Text(
+                            "Francisca precisa de uma API Microsoft configurada. Sem ela, a narração volta para o Android.",
+                            color = muted,
+                            fontSize = 12.sp,
+                            lineHeight = 17.sp,
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
+                    }
+
+                    Spacer(Modifier.height(7.dp))
                     Text(
                         text = stringResource(R.string.settings_voice_rate, config.speechRate),
                         color = white,
@@ -112,65 +230,79 @@ fun SettingsDialog(
                         )
                     )
 
-                    Spacer(Modifier.height(10.dp))
-                    Text("Voz Microsoft Francisca", color = white, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                    Text(
-                        "Opcional. Informe a URL HTTPS de seu serviço de voz; sem ela, o Android continua falando normalmente.",
-                        color = muted,
-                        fontSize = 12.sp,
-                        lineHeight = 17.sp,
-                        modifier = Modifier.padding(top = 4.dp, bottom = 6.dp)
-                    )
-                    OutlinedTextField(
-                        value = voiceUrl,
-                        onValueChange = { voiceUrl = it },
-                        label = { Text("Endereço da API de voz (HTTPS)") },
-                        placeholder = { Text("https://seu-dominio/tts") },
-                        isError = invalidUrl,
-                        supportingText = {
-                            if (invalidUrl) Text("O endereço precisa começar com https://")
-                        },
-                        singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = white,
-                            unfocusedTextColor = white,
-                            focusedBorderColor = accent,
-                            unfocusedBorderColor = Color(0xFF38516B),
-                            focusedLabelColor = accent,
-                            unfocusedLabelColor = muted,
-                            cursorColor = accent
-                        ),
-                        modifier = Modifier.fillMaxWidth().testTag("francisca_broker_input")
-                    )
-                    OutlinedTextField(
-                        value = accessToken,
-                        onValueChange = { accessToken = it },
-                        label = { Text("Token de acesso do seu servidor") },
-                        placeholder = { Text("Token configurado no Cloudflare Worker") },
-                        visualTransformation = PasswordVisualTransformation(),
-                        singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = white,
-                            unfocusedTextColor = white,
-                            focusedBorderColor = accent,
-                            unfocusedBorderColor = Color(0xFF38516B),
-                            focusedLabelColor = accent,
-                            unfocusedLabelColor = muted,
-                            cursorColor = accent
-                        ),
-                        modifier = Modifier.fillMaxWidth().testTag("francisca_token_input")
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        "Como configurar a API Microsoft Speech ↗",
-                        color = accent,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.padding(top = 7.dp, bottom = 14.dp)
-                            .clickable {
-                                uriHandler.openUri("https://learn.microsoft.com/pt-br/azure/ai-services/speech-service/rest-text-to-speech")
-                            }
-                    )
+                    TextButton(
+                        onClick = { advancedFranciscaExpanded = !advancedFranciscaExpanded },
+                        modifier = Modifier.testTag("francisca_settings_toggle")
+                    ) {
+                        Text(
+                            if (advancedFranciscaExpanded) "Ocultar configuração da Francisca"
+                            else "Configurar Francisca (opcional)",
+                            color = accent,
+                            fontSize = 12.sp
+                        )
+                    }
+                    if (advancedFranciscaExpanded) {
+                        Spacer(Modifier.height(10.dp))
+                        Text("Voz Microsoft Francisca", color = white, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "Opcional. Informe a URL HTTPS de seu serviço de voz; sem ela, o Android continua falando normalmente.",
+                            color = muted,
+                            fontSize = 12.sp,
+                            lineHeight = 17.sp,
+                            modifier = Modifier.padding(top = 4.dp, bottom = 6.dp)
+                        )
+                        OutlinedTextField(
+                            value = voiceUrl,
+                            onValueChange = { voiceUrl = it },
+                            label = { Text("Endereço da API de voz (HTTPS)") },
+                            placeholder = { Text("https://seu-dominio/tts") },
+                            isError = invalidUrl,
+                            supportingText = {
+                                if (invalidUrl) Text("O endereço precisa começar com https://")
+                            },
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = white,
+                                unfocusedTextColor = white,
+                                focusedBorderColor = accent,
+                                unfocusedBorderColor = Color(0xFF38516B),
+                                focusedLabelColor = accent,
+                                unfocusedLabelColor = muted,
+                                cursorColor = accent
+                            ),
+                            modifier = Modifier.fillMaxWidth().testTag("francisca_broker_input")
+                        )
+                        OutlinedTextField(
+                            value = accessToken,
+                            onValueChange = { accessToken = it },
+                            label = { Text("Token de acesso do seu servidor") },
+                            placeholder = { Text("Token configurado no Cloudflare Worker") },
+                            visualTransformation = PasswordVisualTransformation(),
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = white,
+                                unfocusedTextColor = white,
+                                focusedBorderColor = accent,
+                                unfocusedBorderColor = Color(0xFF38516B),
+                                focusedLabelColor = accent,
+                                unfocusedLabelColor = muted,
+                                cursorColor = accent
+                            ),
+                            modifier = Modifier.fillMaxWidth().testTag("francisca_token_input")
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "Como configurar a API Microsoft Speech ↗",
+                            color = accent,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(top = 7.dp, bottom = 14.dp)
+                                .clickable {
+                                    uriHandler.openUri("https://learn.microsoft.com/pt-br/azure/ai-services/speech-service/rest-text-to-speech")
+                                }
+                        )
+
+                    }
                     HorizontalDivider(color = Color.White.copy(alpha = 0.09f))
                     Spacer(Modifier.height(14.dp))
 
