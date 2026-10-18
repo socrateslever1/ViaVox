@@ -55,6 +55,10 @@ object TrackingRepository {
         _state.update { it.copy(isSpeaking = isSpeaking) }
     }
 
+    fun updateVoiceIssue(issue: String?) {
+        _state.update { it.copy(voiceIssue = issue) }
+    }
+
     fun updatePermission(granted: Boolean) {
         _state.update { it.copy(hasLocationPermission = granted) }
     }
