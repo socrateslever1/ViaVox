@@ -40,6 +40,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -56,6 +57,9 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.example.viavox.model.MapPlace
+import com.example.viavox.model.NavigationRoute
+import com.example.viavox.model.TripPoint
 import com.example.viavox.ui.theme.ViaVoxHeader
 import com.example.viavox.ui.theme.ViaVoxTeal
 import org.maplibre.android.MapLibre
@@ -70,6 +74,9 @@ import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
 import org.maplibre.android.style.layers.FillExtrusionLayer
 import org.maplibre.android.style.layers.LineLayer
+import org.maplibre.android.style.sources.GeoJsonSource
+import org.maplibre.geojson.LineString
+import org.maplibre.geojson.Point
 import org.maplibre.android.style.layers.PropertyFactory
 import org.maplibre.android.style.expressions.Expression
 import kotlin.math.abs
@@ -100,10 +107,16 @@ fun OpenStreetMapComponent(
     bearing: Float = 0f,
     hasBearing: Boolean = false,
     isActive: Boolean,
+    route: NavigationRoute? = null,
+    destination: MapPlace? = null,
+    savedTrack: List<TripPoint> = emptyList(),
+    liveTrack: List<TripPoint> = emptyList(),
+    onMapLongPress: (Double, Double) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val longPressCallback by rememberUpdatedState(onMapLongPress)
     val mapView = remember {
         MapLibre.getInstance(context)
         MapView(context)
@@ -118,6 +131,7 @@ fun OpenStreetMapComponent(
     var threeDView by remember { mutableStateOf(true) }
     var mapCameraBearing by remember { mutableStateOf(0f) }
     var marker by remember { mutableStateOf<Marker?>(null) }
+    var destMarker by remember { mutableStateOf<Marker?>(null) }
     val compassHeading = rememberDeviceCompassHeading(isActive, latitude, longitude)
 
     // Resume following user whenever tracking starts
@@ -156,6 +170,10 @@ fun OpenStreetMapComponent(
             readyMap.uiSettings.isRotateGesturesEnabled = true
             readyMap.uiSettings.isTiltGesturesEnabled = true
             readyMap.uiSettings.isScrollGesturesEnabled = true
+            readyMap.addOnMapLongClickListener { location ->
+                longPressCallback(location.latitude, location.longitude)
+                true
+            }
 
             readyMap.addOnCameraIdleListener {
                 mapCameraBearing = readyMap.cameraPosition.bearing.toFloat()
@@ -169,6 +187,7 @@ fun OpenStreetMapComponent(
             readyMap.setStyle(Style.Builder().fromUri(mapStyleUrl(selectedMapStyle))) { style ->
                 enhanceRealRoadContrast(style, selectedMapStyle == "dark")
                 if (threeDView) addBuildings3DIfAvailable(style)
+                ensureNavigationLayers(style)
                 isStyleReady = true
             }
             mapView.addOnDidFailLoadingMapListener {
@@ -176,6 +195,7 @@ fun OpenStreetMapComponent(
                     readyMap.setStyle(Style.Builder().fromUri(FALLBACK_MAP_STYLE)) { style ->
                         enhanceRealRoadContrast(style, false)
                         if (threeDView) addBuildings3DIfAvailable(style)
+                        ensureNavigationLayers(style)
                         isStyleReady = true
                     }
                 }
@@ -259,6 +279,37 @@ fun OpenStreetMapComponent(
         )
     }
 
+    LaunchedEffect(map, isStyleReady, route, destination, savedTrack, liveTrack) {
+        val mapRef = map ?: return@LaunchedEffect
+        if (!isStyleReady) return@LaunchedEffect
+        val style = mapRef.style ?: return@LaunchedEffect
+        ensureNavigationLayers(style)
+        updateLine(style, "viavox-route", route?.coordinates.orEmpty())
+        val recordedPoints = if (liveTrack.isNotEmpty()) liveTrack else savedTrack
+        updateLine(style, "viavox-track", recordedPoints.map { it.latitude to it.longitude })
+        destMarker?.let { mapRef.removeMarker(it) }
+        destMarker = null
+        if (destination != null) {
+            destMarker = mapRef.addMarker(
+                MarkerOptions().position(LatLng(destination.latitude,destination.longitude))
+                    .title(destination.name)
+            )
+        }
+    }
+
+    // When a destination changes, frame the trip's actual route instead of
+    // merely drawing a straight line. The regular GPS camera follows during navigation.
+    LaunchedEffect(map, route) {
+        val mapRef = map ?: return@LaunchedEffect
+        if (route != null && route.coordinates.isNotEmpty()) {
+            followUser = false
+            val midPoint = route.coordinates[route.coordinates.size / 2]
+            mapRef.animateCamera(
+                CameraUpdateFactory.newLatLngZoom(LatLng(midPoint.first,midPoint.second), 13.6), 600
+            )
+        }
+    }
+
     Box(modifier = modifier.fillMaxSize().testTag("map_view")) {
         AndroidView(factory = { mapView }, modifier = Modifier.fillMaxSize())
 
@@ -306,6 +357,7 @@ fun OpenStreetMapComponent(
                                 current.setStyle(Style.Builder().fromUri(mapStyleUrl(key))) { style ->
                                     if (key == "dark") enhanceRealRoadContrast(style, true)
                                     if (threeDView) addBuildings3DIfAvailable(style)
+                                    ensureNavigationLayers(style)
                                     isStyleReady = true
                                 }
                             }
@@ -381,6 +433,36 @@ fun OpenStreetMapComponent(
             }
         }
     }
+}
+
+/** Route and recorded trip use separate GPU line layers on top of real map tiles. */
+private fun ensureNavigationLayers(style: Style) {
+    val specs = listOf(
+        Triple("viavox-route", android.graphics.Color.rgb(20, 112, 249), 8f),
+        Triple("viavox-track", android.graphics.Color.rgb(20, 204, 160), 5f)
+    )
+    for ((id, color, width) in specs) {
+        if (style.getSource(id) == null) {
+            style.addSource(GeoJsonSource(id,
+                LineString.fromLngLats(listOf(Point.fromLngLat(0.0,0.0),Point.fromLngLat(0.0,0.0)))
+            ))
+        }
+        if (style.getLayer("$id-line") == null) {
+            style.addLayer(LineLayer("$id-line",id).withProperties(
+                PropertyFactory.lineColor(color),
+                PropertyFactory.lineWidth(width),
+                PropertyFactory.lineOpacity(0.88f)
+            ))
+        }
+    }
+}
+
+private fun updateLine(style: Style, id: String, route: List<Pair<Double,Double>>) {
+    val source = style.getSource(id) as? GeoJsonSource ?: return
+    val positions = if (route.size >= 2) route else listOf(0.0 to 0.0,0.0 to 0.0)
+    source.setGeoJson(LineString.fromLngLats(
+        positions.map { (lat,lon) -> Point.fromLngLat(lon,lat) }
+    ))
 }
 
 /**
