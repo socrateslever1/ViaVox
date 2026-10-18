@@ -263,23 +263,33 @@ class ViaVoxTrackingService : Service() {
 
     private fun tryAnnouncePendingPoi(location: Location) {
         if (!isTrackingRunning) return
+        // Use the *latest* accepted GPS fix, not coordinates captured before
+        // a potentially slow HTTP query. A car can cover 50m while waiting.
+        val position = TrackingRepository.state.value
+        val latitude = if (position.hasLocationFix) position.latitude else location.latitude
+        val longitude = if (position.hasLocationFix) position.longitude else location.longitude
+        val speedMps = if (position.hasLocationFix) position.speedKmh / 3.6f else 0f
+        val accuracyMeters = position.accuracyMeters?.toFloat() ?: 100f
+        val bearingDegrees = position.bearing.takeIf { position.hasBearing }
         val poi = poiAnnouncements.ready(
             nowMs = System.currentTimeMillis(),
             poiIntervalSeconds = currentConfig.minIntervalSeconds,
-            ttsBusy = TrackingRepository.state.value.isSpeaking,
-            voiceEnabled = TrackingRepository.state.value.isVoiceEnabled,
-            latitude = location.latitude,
-            longitude = location.longitude,
-            accuracyMeters = if (location.hasAccuracy()) location.accuracy else 100f,
-            speedMps = if (location.hasSpeed()) location.speed else 0f,
-            bearingDegrees = if (location.hasBearing()) location.bearing else null
+            ttsBusy = position.isSpeaking,
+            voiceEnabled = position.isVoiceEnabled,
+            latitude = latitude,
+            longitude = longitude,
+            accuracyMeters = accuracyMeters,
+            speedMps = speedMps,
+            bearingDegrees = bearingDegrees
         ) ?: return
 
-        val relativeDir = if (location.hasBearing() && location.hasSpeed() &&
-            location.speed >= 2.5f && location.accuracy <= 20f
+        // Polygon/relation centroid is not precise enough to claim a particular
+        // side of the road. Side announcements are restricted to true OSM nodes.
+        val relativeDir = if (poi.id.startsWith("osm_node_") &&
+            bearingDegrees != null && speedMps >= 2.5f && accuracyMeters <= 20f
         ) {
             poi.calculateRelativeDirection(
-                location.latitude, location.longitude, location.bearing, location.speed
+                latitude, longitude, bearingDegrees, speedMps
             )
         } else RelativeDirection.NEARBY
 
