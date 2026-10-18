@@ -22,6 +22,7 @@ object TrackingRepository {
     fun updateCoordinates(lat: Double, lon: Double, accuracy: Int?, speedKmh: Float, bearing: Float, hasBearing: Boolean) {
         _state.update {
             it.copy(
+                hasLocationFix = true,
                 latitude = lat,
                 longitude = lon,
                 accuracyMeters = accuracy,
