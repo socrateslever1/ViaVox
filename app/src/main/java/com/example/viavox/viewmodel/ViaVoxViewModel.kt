@@ -52,6 +52,10 @@ class ViaVoxViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun testVoice() {
+        ViaVoxTrackingService.testVoice(getApplication())
+    }
+
     fun repeatCurrentLocationSpeech() {
         ViaVoxTrackingService.repeatSpeech(getApplication())
     }
