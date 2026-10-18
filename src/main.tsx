@@ -1,17 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { MapContainer, TileLayer, Marker, useMap, useMapEvents } from 'react-leaflet';
-import type { LatLngExpression } from 'leaflet';
-import 'leaflet/dist/leaflet.css';
-import L from 'leaflet';
-import './style.css';
+import { Map as MapLibreMap, Marker, NavigationControl, setWorkerUrl } from 'maplibre-gl';
+import type { LngLatLike } from 'maplibre-gl';
+import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
+import 'maplibre-gl/dist/maplibre-gl.css';
 
-const marker = L.divIcon({
-  html: '<span class="dot"></span>',
-  className: 'pin',
-  iconSize: [22, 22],
-  iconAnchor: [11, 11]
-});
+setWorkerUrl(workerUrl);
+import './style.css';
 
 type Place = {
   road: string;
@@ -41,34 +36,82 @@ function normalizeComparison(name: string): string {
     .replace(/[^a-z0-9]/g, '');
 }
 
-function MapController({
+
+type Coordinates = { lat: number; lon: number };
+
+const MAP_STYLE = 'https://tiles.openfreemap.org/styles/dark';
+
+function MapCanvas({
   position,
   followUser,
+  heading,
   onUserDrag
 }: {
-  position: LatLngExpression;
+  position: Coordinates | null;
   followUser: boolean;
+  heading: number | null;
   onUserDrag: () => void;
 }) {
-  const map = useMap();
-  useMapEvents({
-    dragstart: () => onUserDrag()
-  });
+  const container = useRef<HTMLDivElement>(null);
+  const map = useRef<MapLibreMap | null>(null);
+  const locationMarker = useRef<Marker | null>(null);
+  const onDrag = useRef(onUserDrag);
+  onDrag.current = onUserDrag;
+
   useEffect(() => {
-    if (followUser) {
-      map.setView(position, 17, { animate: true });
+    if (!container.current) return;
+    const instance = new MapLibreMap({
+      container: container.current,
+      style: MAP_STYLE,
+      center: [-60.0235, -3.1025],
+      zoom: 12,
+      pitch: 45,
+      attributionControl: true
+    });
+    map.current = instance;
+    instance.addControl(new NavigationControl({ showZoom: false, showCompass: true }), 'top-right');
+    instance.on('dragstart', () => onDrag.current());
+    return () => {
+      locationMarker.current?.remove();
+      locationMarker.current = null;
+      instance.remove();
+      map.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!position || !map.current) return;
+    const point: LngLatLike = [position.lon, position.lat];
+    if (!locationMarker.current) {
+      const dot = document.createElement('div');
+      dot.className = 'gps-pin';
+      dot.setAttribute('aria-label', 'Sua localização');
+      locationMarker.current = new Marker({ element: dot }).setLngLat(point).addTo(map.current);
+    } else {
+      locationMarker.current.setLngLat(point);
     }
-  }, [map, position, followUser]);
-  return null;
+    if (followUser) {
+      map.current.easeTo({
+        center: point,
+        zoom: 16.7,
+        pitch: 48,
+        bearing: heading ?? map.current.getBearing(),
+        duration: 650
+      });
+    }
+  }, [position, heading, followUser]);
+
+  return <div ref={container} className="map-surface" aria-label="Mapa interativo ViaVox" />;
 }
 
 function App() {
-  const [position, setPosition] = useState<LatLngExpression>([-3.1025, -60.0235]);
+  const [position, setPosition] = useState<Coordinates | null>(null);
   const [place, setPlace] = useState<Place | null>(null);
   const [status, setStatus] = useState('Obtendo localização GPS…');
   const [active, setActive] = useState(false);
   const [followUser, setFollowUser] = useState(true);
   const [accuracy, setAccuracy] = useState<number | null>(null);
+  const [heading, setHeading] = useState<number | null>(null);
   const [voice, setVoice] = useState(() => localStorage.getItem('viavox.voice') !== 'false');
   const [voiceRate, setVoiceRate] = useState(() => Number(localStorage.getItem('viavox.rate') || '0.95'));
   const [brokerUrl, setBrokerUrl] = useState(() => localStorage.getItem('viavox.broker') || '');
@@ -222,9 +265,14 @@ function App() {
 
   function stop() {
     session.current++;
+    lastLookup.current = 0;
+    lastPoint.current = null;
+    confirmedRoad.current = '';
+    pending.current = { road: '', count: 0 };
     if (watch.current !== null) navigator.geolocation.clearWatch(watch.current);
     watch.current = null;
     setActive(false);
+    setPlace(null);
     setStatus('Acompanhamento pausado');
     window.speechSynthesis?.cancel();
   }
@@ -242,7 +290,8 @@ function App() {
     watch.current = navigator.geolocation.watchPosition(
       p => {
         const { latitude: lat, longitude: lon, accuracy: acc } = p.coords;
-        setPosition([lat, lon]);
+        setPosition({ lat, lon });
+        setHeading(Number.isFinite(p.coords.heading) ? p.coords.heading : null);
         setAccuracy(Math.round(acc));
         setActive(true);
         if (acc > 70) {
@@ -278,11 +327,13 @@ function App() {
     );
   }
 
-  // Automatically start tracking on application open
+  // StrictMode safe: release the watch before the next effect instance.
   useEffect(() => {
     start();
     return () => {
+      session.current++;
       if (watch.current !== null) navigator.geolocation.clearWatch(watch.current);
+      watch.current = null;
       window.speechSynthesis?.cancel();
     };
   }, []);
@@ -296,23 +347,12 @@ function App() {
   return (
     <div className="viewport">
       <div className="map-layer">
-        <MapContainer
-          center={position}
-          zoom={17}
-          zoomControl={false}
-          style={{ height: '100%', width: '100%' }}
-        >
-          <TileLayer
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          />
-          <Marker position={position} icon={marker} />
-          <MapController
-            position={position}
-            followUser={followUser}
-            onUserDrag={() => setFollowUser(false)}
-          />
-        </MapContainer>
+        <MapCanvas
+          position={position}
+          followUser={followUser}
+          heading={heading}
+          onUserDrag={() => setFollowUser(false)}
+        />
       </div>
 
       <header className="top-bar">
