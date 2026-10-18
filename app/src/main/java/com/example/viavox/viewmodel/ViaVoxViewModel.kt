@@ -64,6 +64,15 @@ class ViaVoxViewModel(application: Application) : AndroidViewModel(application) 
         _isSettingsDialogOpen.value = false
     }
 
+    fun updateVoiceSelection(provider: String, nativeVoiceId: String) {
+        saveAndApplyConfig(
+            state.value.config.copy(
+                voiceProvider = if (provider == "francisca") "francisca" else "android",
+                nativeVoiceId = nativeVoiceId
+            )
+        )
+    }
+
     fun updateSpeechRate(rate: Float) {
         val newConfig = state.value.config.copy(speechRate = rate)
         saveAndApplyConfig(newConfig)
