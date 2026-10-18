@@ -43,6 +43,10 @@ object TrackingRepository {
         }
     }
 
+    fun updatePoiStatus(message: String) {
+        _state.update { it.copy(poiStatus = message) }
+    }
+
     fun updateStatus(message: String) {
         _state.update { it.copy(statusMessage = message) }
     }
