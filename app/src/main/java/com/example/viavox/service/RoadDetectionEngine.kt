@@ -267,7 +267,7 @@ class RoadDetectionEngine(
         previous != null && normalizeForComparison(previous) == normalizeForComparison(current)
 
     companion object {
-        const val MAX_ACCEPTABLE_ACCURACY_METERS = 70f
+        const val MAX_ACCEPTABLE_ACCURACY_METERS = 45f
 
         fun calculateMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
             val dLat = (lat2 - lat1) * 111000.0
