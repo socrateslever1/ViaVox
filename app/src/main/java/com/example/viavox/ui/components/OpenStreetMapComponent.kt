@@ -57,6 +57,9 @@ import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
+import org.maplibre.android.style.layers.FillExtrusionLayer
+import org.maplibre.android.style.layers.PropertyFactory
+import org.maplibre.android.style.expressions.Expression
 
 private const val INITIAL_ZOOM = 16.8
 private const val DARK_MAP_STYLE = "https://tiles.openfreemap.org/styles/dark"
@@ -114,12 +117,14 @@ fun OpenStreetMapComponent(
                 }
             }
 
-            readyMap.setStyle(Style.Builder().fromUri(DARK_MAP_STYLE)) {
+            readyMap.setStyle(Style.Builder().fromUri(DARK_MAP_STYLE)) { style ->
+                addBuildings3DIfAvailable(style)
                 isStyleReady = true
             }
             mapView.addOnDidFailLoadingMapListener {
                 if (!isStyleReady) {
-                    readyMap.setStyle(Style.Builder().fromUri(FALLBACK_MAP_STYLE)) {
+                    readyMap.setStyle(Style.Builder().fromUri(FALLBACK_MAP_STYLE)) { style ->
+                        addBuildings3DIfAvailable(style)
                         isStyleReady = true
                     }
                 }
@@ -202,7 +207,10 @@ fun OpenStreetMapComponent(
                     isStyleReady = false
                     current.setStyle(
                         Style.Builder().fromUri(if (darkStyle) DARK_MAP_STYLE else FALLBACK_MAP_STYLE)
-                    ) { isStyleReady = true }
+                    ) { style ->
+                        addBuildings3DIfAvailable(style)
+                        isStyleReady = true
+                    }
                 }
             }
 
@@ -325,5 +333,34 @@ private fun MapControlButton(
         ) {
             Icon(icon, contentDescription = label, tint = Color.White, modifier = Modifier.size(23.dp))
         }
+    }
+}
+
+/**
+ * Use real OpenStreetMap building heights where available in OpenFreeMap tiles.
+ * Never synthesizes geometry: no building data simply means no extrusion.
+ */
+private fun addBuildings3DIfAvailable(style: Style) {
+    val sourceId = listOf("openmaptiles", "openfreemap").firstOrNull { style.getSource(it) != null }
+        ?: return
+    if (style.getLayer("viavox-3d-buildings") != null) return
+    try {
+        val layer = FillExtrusionLayer("viavox-3d-buildings", sourceId).apply {
+            sourceLayer = "building"
+            minZoom = 15f
+            setFilter(Expression.all(
+                Expression.has("render_height"),
+                Expression.has("render_min_height")
+            ))
+            setProperties(
+                PropertyFactory.fillExtrusionColor(android.graphics.Color.rgb(73, 94, 119)),
+                PropertyFactory.fillExtrusionHeight(Expression.get("render_height")),
+                PropertyFactory.fillExtrusionBase(Expression.get("render_min_height")),
+                PropertyFactory.fillExtrusionOpacity(0.83f)
+            )
+        }
+        style.addLayer(layer)
+    } catch (_: Exception) {
+        // Rendering the road map is more important than an optional 3D effect.
     }
 }
