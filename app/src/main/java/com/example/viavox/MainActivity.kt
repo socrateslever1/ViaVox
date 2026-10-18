@@ -75,6 +75,7 @@ class MainActivity : ComponentActivity() {
                     onIntervalChanged = { viewModel.updateInterval(it) },
                     onPoiCategoryToggled = { cat, enabled -> viewModel.togglePoiCategory(cat, enabled) },
                     onFranciscaBrokerUrlChanged = { url -> viewModel.updateFranciscaBrokerUrl(url) },
+                    onFranciscaAccessTokenChanged = { token -> viewModel.updateFranciscaAccessToken(token) },
                     onStartTracking = {
                         val fine = ContextCompat.checkSelfPermission(
                             this@MainActivity,
