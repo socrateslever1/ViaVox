@@ -110,6 +110,17 @@ class ViaVoxTrackingService : Service() {
             ACTION_STOP -> stopForegroundTracking()
             ACTION_REPEAT_SPEECH -> repeatCurrentSpeech()
             ACTION_TEST_VOICE -> ttsManager.testVoice()
+            ACTION_NAV_GUIDANCE -> {
+                val instruction = intent?.getStringExtra(EXTRA_NAV_TEXT).orEmpty().trim()
+                if (instruction.isNotBlank() && isTrackingRunning) {
+                    serviceScope.launch {
+                        // A street/neighborhood announcement is never interrupted by routing.
+                        val waitMs = (lastSpeechTimestamp + 3_500L - System.currentTimeMillis()).coerceAtLeast(0L)
+                        if (waitMs > 0) delay(waitMs)
+                        if (isTrackingRunning) speakIfAllowed(instruction,forceRepeat = true)
+                    }
+                }
+            }
             ACTION_UPDATE_CONFIG -> {
                 val prefs = getSharedPreferences("viavox_prefs", Context.MODE_PRIVATE)
                 currentConfig = ViaVoxConfig.loadFrom(prefs)
@@ -409,6 +420,8 @@ class ViaVoxTrackingService : Service() {
         const val ACTION_STOP = "com.example.viavox.ACTION_STOP"
         const val ACTION_REPEAT_SPEECH = "com.example.viavox.ACTION_REPEAT_SPEECH"
         const val ACTION_TEST_VOICE = "com.example.viavox.ACTION_TEST_VOICE"
+        const val ACTION_NAV_GUIDANCE = "com.example.viavox.ACTION_NAV_GUIDANCE"
+        private const val EXTRA_NAV_TEXT = "navigation_text"
         const val ACTION_UPDATE_CONFIG = "com.example.viavox.ACTION_UPDATE_CONFIG"
 
         fun start(context: Context) {
@@ -434,6 +447,13 @@ class ViaVoxTrackingService : Service() {
                 action = ACTION_REPEAT_SPEECH
             }
             context.startService(intent)
+        }
+
+        fun announceGuidance(context: Context, text: String) {
+            context.startService(Intent(context,ViaVoxTrackingService::class.java).apply {
+                action = ACTION_NAV_GUIDANCE
+                putExtra(EXTRA_NAV_TEXT,text.take(350))
+            })
         }
 
         fun testVoice(context: Context) {
