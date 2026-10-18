@@ -13,12 +13,27 @@ android {
         applicationId = "com.socrateslever.viavox"
         minSdk = 26
         targetSdk = 35
-        versionCode = 5
-        versionName = "0.3.0"
+        versionCode = 6
+        versionName = "0.3.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
+        }
+    }
+
+    // CI explicitly supplies its cached development keystore.
+    // Local Android Studio builds continue to use their usual debug keystore.
+    signingConfigs {
+        getByName("debug") {
+            providers.gradleProperty("viavoxDebugKeystore").orNull?.let { path ->
+                val keyFile = file(path)
+                require(keyFile.isFile) { "ViaVox debug keystore not found: $path" }
+                storeFile = keyFile
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
         }
     }
 
