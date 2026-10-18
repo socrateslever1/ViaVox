@@ -39,7 +39,7 @@ class AndroidVoiceCatalog(
                     (it.locale.country == "BR" || it.locale.country.isBlank())
             }
             val numbered = portuguese
-                .distinctBy(Voice::getName)
+                .distinctBy { it.name }
                 .sortedWith(compareBy<Voice> { it.isNetworkConnectionRequired }.thenBy { it.name })
             numbered.mapIndexed { index, voice ->
                 val origin = if (voice.isNetworkConnectionRequired) "precisa de internet" else "no aparelho"
