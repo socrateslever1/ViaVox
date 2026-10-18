@@ -291,7 +291,7 @@ function App() {
       p => {
         const { latitude: lat, longitude: lon, accuracy: acc } = p.coords;
         setPosition({ lat, lon });
-        setHeading(Number.isFinite(p.coords.heading) ? p.coords.heading : null);
+        setHeading(typeof p.coords.heading === 'number' && Number.isFinite(p.coords.heading) ? p.coords.heading : null);
         setAccuracy(Math.round(acc));
         setActive(true);
         if (acc > 70) {
