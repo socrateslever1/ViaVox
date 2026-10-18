@@ -91,6 +91,7 @@ fun OpenStreetMapComponent(
     var isStyleReady by remember { mutableStateOf(false) }
     var followUser by remember { mutableStateOf(true) }
     var darkStyle by remember { mutableStateOf(false) }
+    var mapCameraBearing by remember { mutableStateOf(0f) }
     var marker by remember { mutableStateOf<Marker?>(null) }
     val compassHeading = rememberDeviceCompassHeading(isActive)
 
@@ -114,6 +115,9 @@ fun OpenStreetMapComponent(
             readyMap.uiSettings.isTiltGesturesEnabled = true
             readyMap.uiSettings.isScrollGesturesEnabled = true
 
+            readyMap.addOnCameraIdleListener {
+                mapCameraBearing = readyMap.cameraPosition.bearing.toFloat()
+            }
             readyMap.addOnCameraMoveStartedListener { reason ->
                 if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) {
                     followUser = false
@@ -187,7 +191,7 @@ fun OpenStreetMapComponent(
     // In heading-up mode the arrow faces screen top, rather than double-rotating.
     LaunchedEffect(
         map, isStyleReady, marker, compassHeading, bearing, hasBearing,
-        speedKmh, followUser, hasLocationFix
+        speedKmh, followUser, hasLocationFix, mapCameraBearing
     ) {
         val currentMap = map ?: return@LaunchedEffect
         val currentMarker = marker ?: return@LaunchedEffect
@@ -198,7 +202,7 @@ fun OpenStreetMapComponent(
         val relative = if (heading == null) 0f else if (gpsHeadingReliable && followUser) {
             0f
         } else {
-            ((heading - currentMap.cameraPosition.bearing.toFloat()) % 360f + 360f) % 360f
+            ((heading - mapCameraBearing) % 360f + 360f) % 360f
         }
         val icon = IconFactory.getInstance(context).fromBitmap(
             createBlueLocationMarkerBitmap(relative, heading != null)
