@@ -3,6 +3,7 @@ package com.example.viavox.ui.components
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -40,7 +41,7 @@ fun HeaderBar(
     modifier: Modifier = Modifier
 ) {
     Row(
-        modifier = modifier.padding(horizontal = 14.dp, vertical = 10.dp).testTag("app_header"),
+        modifier = modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp).testTag("app_header"),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
