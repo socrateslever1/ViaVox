@@ -72,6 +72,7 @@ class MainActivity : ComponentActivity() {
                     onOpenSettings = { viewModel.openSettings() },
                     onCloseSettings = { viewModel.closeSettings() },
                     onSpeedChanged = { viewModel.updateSpeechRate(it) },
+                    onVoiceSelectionChanged = { provider, voiceId -> viewModel.updateVoiceSelection(provider, voiceId) },
                     onIntervalChanged = { viewModel.updateInterval(it) },
                     onPoiCategoryToggled = { cat, enabled -> viewModel.togglePoiCategory(cat, enabled) },
                     onFranciscaBrokerUrlChanged = { url -> viewModel.updateFranciscaBrokerUrl(url) },
