@@ -157,7 +157,7 @@ fun StatusPanel(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        state.voiceIssue,
+                        state.voiceIssue.orEmpty(),
                         color = Color(0xFFFFD5B3),
                         fontSize = 11.sp,
                         lineHeight = 14.sp,
