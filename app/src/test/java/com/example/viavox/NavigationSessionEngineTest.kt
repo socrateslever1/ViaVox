@@ -32,10 +32,14 @@ class NavigationSessionEngineTest {
         assertTrue(first.speech.single().startsWith("Em "))
         val repeat = session.update(-3.1000,-60.0000,9f,26f,11_000L)!!
         assertTrue(repeat.speech.isEmpty())
-        val turn = session.update(-3.1017,-60.0000,9f,26f,20_000L)!!
+        // Advance through plausible intermediate GPS fixes. Jumping almost
+        // 190m in nine seconds at 26 km/h is correctly rejected as GPS noise.
+        val middle = session.update(-3.1008,-60.0000,9f,26f,20_000L)!!
+        assertTrue(middle.speech.isEmpty())
+        val turn = session.update(-3.1017,-60.0000,9f,26f,34_000L)!!
         assertEquals(1,turn.speech.size)
         assertTrue(turn.speech.single().contains("Vire à esquerda"))
-        val again = session.update(-3.1017,-60.0000,9f,26f,22_000L)!!
+        val again = session.update(-3.1017,-60.0000,9f,26f,35_000L)!!
         assertTrue(again.speech.isEmpty())
     }
 
