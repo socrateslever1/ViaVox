@@ -24,6 +24,12 @@ object DestinationSearchPolicy {
         if (cicom != null) {
             val number = cicom.groupValues[1].ifBlank { cicom.groupValues[2] }
             val qualifier = cicom.groupValues[3].takeIf { it.isNotBlank() }.orEmpty()
+            // 24th unit: published address in SSP-AM public list (2018),
+            // corroborated by government reporting (2024). Geocode the address;
+            // never substitute an unverified hard-coded GPS coordinate.
+            if (number == "24") {
+                options += "Avenida Lourenço da Silva Braga com Rua Lima Bacuri Centro Manaus"
+            }
             // Alternative names help Photon/Nominatim find indexed OSM features.
             options += "${number} Companhia Interativa Comunitária Manaus ${qualifier}".trim()
             options += "CICOM ${number} Polícia Militar Manaus ${qualifier}".trim()
