@@ -24,6 +24,7 @@ class PoiDiscoveryService(
         .build()
 ) {
     private val cachedPois = mutableListOf<PointOfInterest>()
+    private val municipalReferences = ArcGisManausPlacesService(client)
     private val announced = mutableMapOf<String, Long>()
     private var lastQueryLat = Double.NaN
     private var lastQueryLon = Double.NaN
@@ -112,11 +113,20 @@ class PoiDiscoveryService(
                     );
                     out center 100;
                 """.trimIndent()
-                // A 502 at one Overpass instance must not disable landmark
-                // discovery for the whole trip. One alternate server max;
-                // spatial cache and 35-second backoff are retained.
-                var newPois: List<PointOfInterest>? = null
-                for (server in OVERPASS_ENDPOINTS) {
+                // Use the published Manaus ArcGIS points as the first source
+                // for important landmarks; this also works when Overpass returns 502.
+                val municipalPois = if (ManausArcGisLayer.inCoverage(lat,lon)) {
+                    municipalReferences.loadVisible(
+                        GisBounds(lon-0.0034,lat-0.0034,lon+0.0034,lat+0.0034),
+                        16.0
+                    ).mapNotNull { it.asSpokenReference() }
+                        .filter { it.distanceTo(lat,lon) <= 420.0 }
+                } else emptyList()
+                // Do not query both public GIS services if enough landmarks
+                // are already available in the local dataset.
+                var newPois: List<PointOfInterest>? =
+                    municipalPois.takeIf { it.size >= 4 }
+                if (newPois == null) for (server in OVERPASS_ENDPOINTS) {
                     try {
                         val request = Request.Builder()
                             .url(server)
@@ -136,11 +146,12 @@ class PoiDiscoveryService(
                     }
                     if (newPois != null) break
                 }
-                if (newPois == null) {
+                if (newPois == null && municipalPois.isEmpty()) {
                     lastFailure = "Referências indisponíveis no momento"
                     return@withContext
                 }
-                val found = newPois ?: emptyList()
+                val found = (municipalPois + newPois.orEmpty())
+                    .distinctBy { "${it.category}:${it.name.trim().lowercase(Locale.ROOT)}" }
                 synchronized(cachedPois) {
                     cachedPois.clear()
                     cachedPois.addAll(found)
