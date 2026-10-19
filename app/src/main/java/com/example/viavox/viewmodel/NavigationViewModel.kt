@@ -45,6 +45,8 @@ data class NavigationUiState(
     val nextInstruction: String = "",
     val remainingDistanceMeters: Double = 0.0,
     val metersUntilTurn: Double = 0.0,
+    val pendingSavePlace: MapPlace? = null,
+    val pendingSaveId: Long? = null,
     val savedPlaces: List<Pair<Long, MapPlace>> = emptyList(),
     val savedRoutes: List<StoredRoute> = emptyList(),
     val trips: List<SavedTrip> = emptyList(),
@@ -346,26 +348,92 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    /** Open a true editable bookmark dialog instead of silently inserting. */
     fun saveCurrentPoint() {
         val location = TrackingRepository.state.value
         if (!location.hasLocationFix || (location.accuracyMeters ?: 100) > 45) {
             _ui.update { it.copy(error = "Aguarde uma localização GPS mais precisa.") }
             return
         }
-        val name = location.place?.road?.takeIf { it.isNotBlank() } ?: "Local salvo"
-        saveFavorite(MapPlace(name,location.latitude,location.longitude,
-            location.place?.neighbourhood.orEmpty()))
+        val existing = _ui.value.savedPlaces.filter {
+            NavigationMath.meters(
+                it.second.latitude,it.second.longitude,
+                location.latitude,location.longitude
+            ) < 24.0
+        }.minByOrNull {
+            NavigationMath.meters(
+                it.second.latitude,it.second.longitude,
+                location.latitude,location.longitude
+            )
+        }
+        val defaultTitle = location.place?.road?.takeIf { it.isNotBlank() }
+            ?: "Meu local"
+        val point = existing?.second ?: MapPlace(
+            defaultTitle,location.latitude,location.longitude,
+            listOfNotNull(
+                location.place?.neighbourhood?.takeIf { it.isNotBlank() },
+                location.place?.city?.takeIf { it.isNotBlank() }
+            ).joinToString(" · ")
+        )
+        _ui.update { it.copy(
+            pendingSavePlace = point, pendingSaveId = existing?.first,
+            panel = "", suggestionsVisible = false, error = null
+        ) }
+    }
+
+    fun dismissSavePlace() {
+        _ui.update { it.copy(pendingSavePlace = null,pendingSaveId = null) }
+    }
+
+    fun confirmSavePlace(name: String) {
+        val point = _ui.value.pendingSavePlace ?: return
+        val title = name.trim()
+        if (title.isBlank() || title.length > 90) {
+            _ui.update { it.copy(error = "Escolha um nome de até 90 caracteres.") }
+            return
+        }
+        val savedId = _ui.value.pendingSaveId
+        viewModelScope.launch(Dispatchers.IO) {
+            if (savedId != null) db.renameFavorite(savedId,title)
+            else {
+                val exists = db.closestFavorite(point.latitude,point.longitude)
+                if (exists == null) db.addFavorite(point.copy(name = title))
+                else db.renameFavorite(exists.first,title)
+            }
+            refreshLists()
+            _ui.update { it.copy(pendingSavePlace = null,pendingSaveId = null,error = null) }
+        }
+    }
+
+    fun removeCurrentSavedPlace() {
+        val id = _ui.value.pendingSaveId ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            db.deleteFavorite(id)
+            refreshLists()
+            _ui.update { it.copy(pendingSavePlace = null,pendingSaveId = null) }
+        }
     }
 
     fun saveFavorite(place: MapPlace) {
         viewModelScope.launch(Dispatchers.IO) {
-            db.addFavorite(place)
+            db.closestFavorite(place.latitude,place.longitude)?.let {
+                db.renameFavorite(it.first,place.name)
+            } ?: db.addFavorite(place)
             refreshLists()
         }
     }
 
+    fun renameFavorite(id: Long,name: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val ok = db.renameFavorite(id,name)
+            refreshLists()
+            if (!ok) _ui.update { it.copy(error = "Não foi possível renomear o local.") }
+        }
+    }
+
     fun removeFavorite(id: Long) = viewModelScope.launch(Dispatchers.IO) {
-        db.deleteFavorite(id);refreshLists()
+        db.deleteFavorite(id)
+        refreshLists()
     }
 
     fun saveCurrentRoute() {
