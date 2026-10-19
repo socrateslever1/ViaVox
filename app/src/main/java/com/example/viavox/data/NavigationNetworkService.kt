@@ -31,6 +31,7 @@ class NavigationNetworkService(
     private val nominatimLock = Any()
     private var lastNominatimRequestAt = 0L
     private val cacheLock = Any()
+    private var lastAutocompleteRequestAt = 0L
     private val searchCache = mutableMapOf<String, Pair<Long, List<MapPlace>>>()
 
     suspend fun search(
@@ -53,21 +54,24 @@ class NavigationNetworkService(
                 return@runCatching listOf(MapPlace("Coordenadas informadas",lat,lon,cleaned))
             }
 
-            val local = DestinationSearchPolicy.localMatches(cleaned, savedPlaces)
+            val local = DestinationSearchPolicy.merge(
+                DestinationSearchPolicy.localMatches(cleaned, savedPlaces),
+                VerifiedManausLandmarks.find(cleaned)
+            )
             val searchKey = DestinationSearchPolicy.normalize(cleaned)
-            val isCicom = Regex("""(?:^|\\s)cicom(?:\\s|$)""").containsMatchIn(searchKey)
-            // First resolve Manaus police stations from real published GIS
-            // points, not fuzzy international search results (e.g. Cicomar).
-            val localGis = if (isCicom && (userLat == null || userLon == null ||
-                ManausArcGisLayer.inCoverage(userLat,userLon))) {
-                arcGis.search(cleaned)
-            } else emptyList()
-            if (localGis.isNotEmpty()) {
-                return@runCatching DestinationSearchPolicy.merge(local,localGis)
+            val isCicom = DestinationSearchPolicy.isCicomQuery(cleaned)
+            // Police-unit abbreviations are local identifiers, not world-wide
+            // business names. Never route "24 CICOM" to Cicomar in Romania.
+            if (isCicom) {
+                val fresh = arcGis.search(cleaned)
+                return@runCatching DestinationSearchPolicy.merge(fresh,local)
             }
+            val isManaus = userLat != null && userLon != null &&
+                ManausArcGisLayer.inCoverage(userLat,userLon)
+            val cityMatches = if (isManaus) arcGis.search(cleaned) else emptyList()
             val cached = synchronized(cacheLock) { searchCache[searchKey] }
             if (cached != null && System.currentTimeMillis() - cached.first < 600_000L) {
-                return@runCatching DestinationSearchPolicy.merge(local,cached.second)
+                return@runCatching DestinationSearchPolicy.merge(local + cityMatches,cached.second)
             }
             val variants = DestinationSearchPolicy.queryVariants(cleaned)
             var online = emptyList<MapPlace>()
@@ -125,7 +129,7 @@ class NavigationNetworkService(
                     )
                 }
             } else unfiltered
-            val combined = DestinationSearchPolicy.merge(local,trusted)
+            val combined = DestinationSearchPolicy.merge(local + cityMatches,trusted)
             if (combined.isNotEmpty()) return@runCatching combined
             if (lastError != null) {
                 throw IllegalStateException(
@@ -135,6 +139,57 @@ class NavigationNetworkService(
             }
             emptyList()
         }
+    }
+
+    /**
+     * Explicit, debounced autocomplete. The public Nominatim endpoint is NEVER
+     * used for autocomplete. Local ArcGIS records and user bookmarks come first.
+     */
+    suspend fun suggest(
+        query: String, userLat: Double?, userLon: Double?,
+        savedPlaces: List<MapPlace> = emptyList()
+    ): List<MapPlace> = withContext(Dispatchers.IO) {
+        val text = query.trim()
+        if (text.length < 3) return@withContext emptyList()
+        val local = DestinationSearchPolicy.merge(
+            DestinationSearchPolicy.localMatches(text,savedPlaces),
+            VerifiedManausLandmarks.find(text)
+        )
+        val isCicom = DestinationSearchPolicy.isCicomQuery(text)
+        val isManaus = userLat != null && userLon != null &&
+            ManausArcGisLayer.inCoverage(userLat,userLon)
+        val gis = if (isCicom || isManaus) {
+            runCatching { arcGis.search(text) }.getOrDefault(emptyList())
+        } else emptyList()
+        if (isCicom) return@withContext DestinationSearchPolicy.merge(gis,local).take(6)
+        val immediate = DestinationSearchPolicy.merge(local,gis)
+        if (immediate.size >= 5) return@withContext immediate.take(6)
+
+        val key = DestinationSearchPolicy.normalize(text)
+        val cached = synchronized(cacheLock) { searchCache[key] }
+        if (cached != null && System.currentTimeMillis() - cached.first < 600_000L)
+            return@withContext DestinationSearchPolicy.merge(immediate,cached.second).take(6)
+
+        // Throttle the public Photon demo endpoint to protect its resources.
+        val now = System.currentTimeMillis()
+        val shouldQuery = synchronized(cacheLock) {
+            if (now - lastAutocompleteRequestAt < 1_200L) false
+            else { lastAutocompleteRequestAt = now; true }
+        }
+        if (!shouldQuery) return@withContext immediate.take(6)
+        val candidates = runCatching {
+            searchPhoton(text,userLat,userLon)
+        }.getOrDefault(emptyList())
+        val ranked = if (isManaus) candidates.filter {
+            com.example.viavox.model.NavigationMath.meters(
+                userLat!!,userLon!!,it.latitude,it.longitude
+            ) < 120_000.0
+        } else candidates
+        if (ranked.isNotEmpty()) synchronized(cacheLock) {
+            if (searchCache.size >= 80) searchCache.clear()
+            searchCache[key] = System.currentTimeMillis() to ranked
+        }
+        DestinationSearchPolicy.merge(immediate,ranked).take(6)
     }
 
     private fun searchPhoton(
