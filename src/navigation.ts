@@ -80,8 +80,7 @@ function formatManeuver(type: string, modifier: string | undefined, name: string
   }
 }
 
-export function parseOsrmResponse(data: any, destination: SearchPlace): NavigationRoute {
-  const route = data?.routes?.[0];
+function parseOsrmRoute(route: any, destination: SearchPlace): NavigationRoute {
   const rawCoords: [number, number][] = route?.geometry?.coordinates;
   if (
     !Array.isArray(rawCoords) ||
@@ -125,13 +124,71 @@ export function parseOsrmResponse(data: any, destination: SearchPlace): Navigati
     });
   }
 
+  const distanceMeters = Number(route.distance);
+  const durationSeconds = Number(route.duration);
+  if (!Number.isFinite(distanceMeters) || distanceMeters < 0 || !Number.isFinite(durationSeconds) || durationSeconds < 0) {
+    throw new Error('Rota com dist\u00e2ncia ou dura\u00e7\u00e3o inv\u00e1lida');
+  }
+
   return {
     destination,
-    distanceMeters: route.distance || 0,
-    durationSeconds: route.duration || 0,
+    distanceMeters,
+    durationSeconds,
     coordinates,
     steps
   };
+}
+
+function geometryKey(route: NavigationRoute): string {
+  return route.coordinates.map(point => `${point.latitude},${point.longitude}`).join(';');
+}
+
+export function rankNavigationRoutes(routes: NavigationRoute[]): NavigationRoute[] {
+  const uniqueRoutes = new Map<string, NavigationRoute>();
+  for (const route of routes) {
+    if (
+      route.coordinates.length < 2 ||
+      !Number.isFinite(route.distanceMeters) || route.distanceMeters < 0 ||
+      !Number.isFinite(route.durationSeconds) || route.durationSeconds < 0
+    ) {
+      continue;
+    }
+
+    const key = geometryKey(route);
+    const existing = uniqueRoutes.get(key);
+    if (!existing || route.durationSeconds < existing.durationSeconds || (
+      route.durationSeconds === existing.durationSeconds && route.distanceMeters < existing.distanceMeters
+    )) {
+      uniqueRoutes.set(key, route);
+    }
+  }
+
+  return [...uniqueRoutes.values()].sort((first, second) =>
+    first.durationSeconds - second.durationSeconds || first.distanceMeters - second.distanceMeters
+  );
+}
+
+export function parseOsrmRoutes(data: any, destination: SearchPlace): NavigationRoute[] {
+  if (!Array.isArray(data?.routes)) {
+    throw new Error('Rota sem geometria v\u00e1lida');
+  }
+
+  const routes = data.routes.flatMap((route: any) => {
+    try {
+      return [parseOsrmRoute(route, destination)];
+    } catch {
+      return [];
+    }
+  });
+  const rankedRoutes = rankNavigationRoutes(routes);
+  if (rankedRoutes.length === 0) {
+    throw new Error('Rota sem geometria v\u00e1lida');
+  }
+  return rankedRoutes;
+}
+
+export function parseOsrmResponse(data: any, destination: SearchPlace): NavigationRoute {
+  return parseOsrmRoutes(data, destination)[0];
 }
 
 export function findRouteProgress(

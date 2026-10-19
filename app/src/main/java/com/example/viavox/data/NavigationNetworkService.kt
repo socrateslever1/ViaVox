@@ -8,6 +8,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
@@ -239,6 +240,15 @@ class NavigationNetworkService(
     }
 
     suspend fun route(startLat: Double, startLon: Double, destination: MapPlace): Result<NavigationRoute> =
+        routeAlternatives(startLat,startLon,destination).mapCatching { routes ->
+            routes.firstOrNull() ?: error("No route returned by routing service.")
+        }
+
+    suspend fun routeAlternatives(
+        startLat: Double,
+        startLon: Double,
+        destination: MapPlace
+    ): Result<List<NavigationRoute>> =
         withContext(Dispatchers.IO) {
             runCatching {
                 require(startLat in -90.0..90.0 && startLon in -180.0..180.0)
@@ -249,14 +259,14 @@ class NavigationNetworkService(
                     .addQueryParameter("overview", "full")
                     .addQueryParameter("geometries", "geojson")
                     .addQueryParameter("steps", "true")
-                    .addQueryParameter("alternatives", "false")
+                    .addQueryParameter("alternatives", "true")
                     .build()
                 http.newCall(
                     Request.Builder().url(endpoint)
                         .header("User-Agent", "ViaVox-Android/0.6 (routing)").build()
                 ).execute().use { response ->
                     require(response.isSuccessful) { "Serviço de rotas indisponível (${response.code})." }
-                    parseOsrm(response.body?.string().orEmpty(), destination)
+                    parseOsrmAlternatives(response.body?.string().orEmpty(), destination)
                 }
             }
         }
@@ -344,6 +354,25 @@ class NavigationNetworkService(
                 route.getDouble("duration"),
                 steps
             )
+        }
+
+        fun parseOsrmAlternatives(body: String, destination: MapPlace): List<NavigationRoute> {
+            val json = JSONObject(body)
+            require(json.optString("code") == "Ok") { "Route not found for the selected destination." }
+            val entries = json.optJSONArray("routes") ?: return emptyList()
+            val routes = mutableListOf<NavigationRoute>()
+            for (index in 0 until entries.length()) {
+                val route = entries.optJSONObject(index) ?: continue
+                val singleRouteResponse = JSONObject()
+                    .put("code", "Ok")
+                    .put("routes", JSONArray().put(route))
+                runCatching { parseOsrm(singleRouteResponse.toString(), destination) }
+                    .getOrNull()
+                    ?.let(routes::add)
+            }
+            return routes
+                .distinctBy { route -> route.coordinates.joinToString(";") { "${it.first},${it.second}" } }
+                .sortedWith(compareBy<NavigationRoute> { it.durationSeconds }.thenBy { it.distanceMeters })
         }
 
         fun maneuverText(type: String, modifier: String, road: String, exit: Int = 0): String {

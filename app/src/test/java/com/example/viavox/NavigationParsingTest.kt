@@ -44,6 +44,25 @@ class NavigationParsingTest {
     }
 
     @Test
+    fun ranksValidOsrmAlternativesAndSkipsDuplicatesOrMalformedEntries() {
+        val body = """
+        {"code":"Ok","routes":[
+          {"distance":2100.0,"duration":420.0,"geometry":{"coordinates":[[-60.03,-3.11],[-59.99,-3.12]]},"legs":[{"steps":[]}]},
+          {"distance":1600.0,"duration":360.0,"geometry":{"coordinates":[[-60.032,-3.11],[-59.99,-3.12]]},"legs":[{"steps":[]}]},
+          {"distance":1400.0,"duration":360.0,"geometry":{"coordinates":[[-60.031,-3.11],[-59.99,-3.12]]},"legs":[{"steps":[]}]},
+          {"distance":1400.0,"duration":360.0,"geometry":{"coordinates":[[-60.031,-3.11],[-59.99,-3.12]]},"legs":[{"steps":[]}]},
+          {"distance":1.0,"duration":1.0,"geometry":{"coordinates":[["invalid",null]]}}
+        ]}
+        """.trimIndent()
+        val routes = NavigationNetworkService.parseOsrmAlternatives(body,MapPlace("Destino",-3.12,-59.99))
+
+        assertEquals(3,routes.size)
+        assertEquals(1400.0,routes[0].distanceMeters,0.00001)
+        assertEquals(1600.0,routes[1].distanceMeters,0.00001)
+        assertEquals(2100.0,routes[2].distanceMeters,0.00001)
+    }
+
+    @Test
     fun failureCannotInventRoute() {
         var failed = false
         try {

@@ -7,7 +7,7 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import './style.css';
 import {
   createNavigationSession,
-  parseOsrmResponse,
+  parseOsrmRoutes,
   parsePhotonResponse,
   selectNavigationRoute,
   shouldApplyRequestResult,
@@ -15,6 +15,7 @@ import {
   stopNavigation,
   updateNavigationSession,
   type NavigationSession,
+  type NavigationRoute,
   type SearchPlace
 } from './navigation';
 
@@ -169,7 +170,7 @@ function MapCanvas({
   showCicomsLayer = false,
   showSedesLayer = true,
   onUserDrag,
-  onMapLongPress,
+  onMapSelect,
   onSelectPolygon = () => {}
 }: {
   position: Coordinates | null;
@@ -184,7 +185,7 @@ function MapCanvas({
   showCicomsLayer?: boolean;
   showSedesLayer?: boolean;
   onUserDrag: () => void;
-  onMapLongPress: (latitude: number, longitude: number) => void;
+  onMapSelect: (latitude: number, longitude: number) => void;
   onSelectPolygon?: (info: { title: string; desc: string }) => void;
 }) {
   const container = useRef<HTMLDivElement>(null);
@@ -194,8 +195,8 @@ function MapCanvas({
   const cameraMarkers = useRef<Marker[]>([]);
   const onDrag = useRef(onUserDrag);
   onDrag.current = onUserDrag;
-  const onLongPress = useRef(onMapLongPress);
-  onLongPress.current = onMapLongPress;
+  const onMapSelection = useRef(onMapSelect);
+  onMapSelection.current = onMapSelect;
 
   // Initialize MapLibre
   useEffect(() => {
@@ -211,7 +212,8 @@ function MapCanvas({
 
     instance.addControl(new NavigationControl({ showZoom: false, showCompass: true }), 'top-right');
     instance.on('dragstart', () => onDrag.current());
-    instance.on('contextmenu', event => onLongPress.current(event.lngLat.lat, event.lngLat.lng));
+    instance.on('click', event => onMapSelection.current(event.lngLat.lat, event.lngLat.lng));
+    instance.on('contextmenu', event => onMapSelection.current(event.lngLat.lat, event.lngLat.lng));
 
     instance.on('load', () => {
       // Add Route line layer
@@ -556,6 +558,8 @@ export function App() {
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [destination, setDestination] = useState<Coordinates | null>(null);
+  const [pendingDestination, setPendingDestination] = useState<SearchPlace | null>(null);
+  const [routeOptions, setRouteOptions] = useState<NavigationRoute[]>([]);
   const [activeRoute, setActiveRoute] = useState<NavRoute | null>(null);
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
   const [navigationSession, setNavigationSession] = useState<NavigationSession>(() => createNavigationSession());
@@ -713,6 +717,27 @@ export function App() {
     });
   }
 
+  function previewRoute(domainRoute: NavigationRoute) {
+    const navRoute: NavRoute = {
+      coordinates: domainRoute.coordinates.map(point => [point.longitude, point.latitude]),
+      distanceMeters: domainRoute.distanceMeters,
+      durationSeconds: domainRoute.durationSeconds,
+      steps: domainRoute.steps.map(step => ({
+        instruction: step.instruction,
+        distance: step.distanceMeters,
+        location: [step.longitude, step.latitude],
+        type: 'turn',
+        name: ''
+      }))
+    };
+    setActiveRoute(navRoute);
+    setCurrentStepIndex(0);
+    setFollowUser(true);
+    const preview = selectNavigationRoute(navigationSessionRef.current, domainRoute);
+    navigationSessionRef.current = preview;
+    setNavigationSession(preview);
+  }
+
   // --- Calculate Route with OSRM (Public, Zero Cost) ---
   async function calculateRoute(start: Coordinates, target: SearchPlace) {
     routeAbort.current?.abort();
@@ -723,33 +748,18 @@ export function App() {
     setNavigationError('');
     setStatus('Calculando melhor rota…');
     try {
-      const url = `https://router.project-osrm.org/route/v1/driving/${start.lon},${start.lat};${target.longitude},${target.latitude}?overview=full&geometries=geojson&steps=true`;
+      const url = `https://router.project-osrm.org/route/v1/driving/${start.lon},${start.lat};${target.longitude},${target.latitude}?overview=full&geometries=geojson&steps=true&alternatives=true`;
       const res = await fetch(url, { signal: controller.signal });
       if (!res.ok) throw new Error('Falha ao traçar rota.');
       const data = await res.json();
       if (!shouldApplyRequestResult(requestId, routeRequestId.current, controller.signal.aborted)) return;
       if (!data.routes || data.routes.length === 0) throw new Error('Nenhuma rota encontrada.');
 
-      const domainRoute = parseOsrmResponse(data, target);
-      const navRoute: NavRoute = {
-        coordinates: domainRoute.coordinates.map(point => [point.longitude, point.latitude]),
-        distanceMeters: domainRoute.distanceMeters,
-        durationSeconds: domainRoute.durationSeconds,
-        steps: domainRoute.steps.map(step => ({
-          instruction: step.instruction,
-          distance: step.distanceMeters,
-          location: [step.longitude, step.latitude],
-          type: 'turn',
-          name: ''
-        }))
-      };
-
-      setActiveRoute(navRoute);
-      setCurrentStepIndex(0);
-      setFollowUser(true);
-      const preview = selectNavigationRoute(navigationSessionRef.current, domainRoute);
-      navigationSessionRef.current = preview;
-      setNavigationSession(preview);
+      const routes = parseOsrmRoutes(data, target);
+      const domainRoute = routes[0];
+      previewRoute(domainRoute);
+      setRouteOptions(routes);
+      setPendingDestination(null);
       setStatus('Rota pronta para iniciar');
     } catch (err: any) {
       if (controller.signal.aborted) return;
@@ -779,6 +789,8 @@ export function App() {
     setNavigationSession(nextSession);
     selectedDestinationRef.current = null;
     setActiveRoute(null);
+    setRouteOptions([]);
+    setPendingDestination(null);
     setDestination(null);
     setCurrentStepIndex(0);
     setNavigationError('');
@@ -842,13 +854,20 @@ export function App() {
   function selectDestination(result: SearchResult) {
     selectedDestinationRef.current = result;
     setDestination({ lat: result.latitude, lon: result.longitude });
+    setPendingDestination(result);
     setSearchQuery(result.name);
     setSearchResults([]);
+    setNavigationError('');
+    setStatus('Destino selecionado. Confirme para calcular a rota.');
+  }
+
+  function confirmDestination() {
+    if (!pendingDestination) return;
     if (!position) {
       setNavigationError('Aguarde a localização GPS para calcular a rota.');
       return;
     }
-    void calculateRoute(position, result);
+    void calculateRoute(position, pendingDestination);
   }
 
   function selectMapDestination(latitude: number, longitude: number) {
@@ -859,7 +878,6 @@ export function App() {
       latitude,
       longitude
     };
-    setSearchQuery(result.name);
     selectDestination(result);
   }
 
@@ -1123,7 +1141,7 @@ export function App() {
           showCicomsLayer={showCicomsLayer}
           showSedesLayer={showSedesLayer}
           onUserDrag={() => setFollowUser(false)}
-          onMapLongPress={selectMapDestination}
+          onMapSelect={selectMapDestination}
           onSelectPolygon={setSelectedPolygonInfo}
         />
       </div>
@@ -1232,6 +1250,19 @@ export function App() {
         </div>
       )}
 
+      {pendingDestination && (
+        <section className="route-preview-card" aria-label="Destino selecionado">
+          <div>
+            <strong>{pendingDestination.name}</strong>
+            <span>Toque em “Navegar até aqui” para calcular a rota.</span>
+          </div>
+          <div className="route-preview-actions">
+            <button type="button" className="route-cancel-btn" onClick={() => endNavigation(false)}>Cancelar</button>
+            <button type="button" className="route-start-btn" onClick={confirmDestination} disabled={isRouting}>Navegar até aqui</button>
+          </div>
+        </section>
+      )}
+
       {navigationSession.status === 'preview' && navigationSession.route && (
         <section className="route-preview-card" aria-label="Prévia da rota">
           <div>
@@ -1249,6 +1280,16 @@ export function App() {
               Iniciar navegação
             </button>
           </div>
+          {routeOptions.length > 1 && (
+            <div className="route-preview-actions" aria-label="Alternativas de rota">
+              {routeOptions.map((route, index) => (
+                <button key={`${route.distanceMeters}-${index}`} type="button" className="route-cancel-btn" onClick={() => previewRoute(route)}>
+                  {index === 0 ? 'Melhor rota' : `Alternativa ${index + 1}`} · {Math.max(1, Math.round(route.durationSeconds / 60))} min
+                </button>
+              ))}
+            </div>
+          )}
+          <small>Trânsito em tempo real e zonas de risco verificadas não estão disponíveis nesta rota gratuita.</small>
         </section>
       )}
 

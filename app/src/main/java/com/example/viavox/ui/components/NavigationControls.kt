@@ -307,13 +307,13 @@ fun NavigationRouteCard(
                     }
                 } else {
                     Button(
-                        onClick = onStart,enabled = route != null,
+                        onClick = onStart,enabled = route != null || (destination != null && !ui.calculating),
                         colors = ButtonDefaults.buttonColors(containerColor = aqua,contentColor = Color(0xFF06273A)),
                         modifier = Modifier.testTag("start_navigation_button")
                     ) {
                         Icon(Icons.Default.Navigation,null,modifier = Modifier.size(17.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("Navegar",fontSize = 13.sp)
+                        Text(if (route == null) "Navegar atÃ© aqui" else "Navegar",fontSize = 13.sp)
                     }
                     OutlinedButton(
                         onClick = onSaveRoute,enabled = route != null,

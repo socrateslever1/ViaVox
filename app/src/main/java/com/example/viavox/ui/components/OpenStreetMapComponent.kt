@@ -236,7 +236,10 @@ fun OpenStreetMapComponent(
                     "viavox-arcgis-labels"
                 )
                 val hit = features.firstOrNull()
-                if (hit == null) false
+                if (hit == null) {
+                    longPressCallback(coordinate.latitude, coordinate.longitude)
+                    true
+                }
                 else {
                     val name = hit.getStringProperty("name") ?: ""
                     val label = hit.getStringProperty("label") ?: ""

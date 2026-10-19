@@ -136,7 +136,10 @@ fun ViaVoxMainScreen(
                 (navigationUi.selected != null || navigationUi.route != null)) {
                 NavigationRouteCard(
                     ui = navigationUi,
-                    onStart = navigation::startNavigation,
+                    onStart = {
+                        if (navigationUi.route == null) navigation.confirmSelectedDestination()
+                        else navigation.startNavigation()
+                    },
                     onStop = navigation::stopNavigation,
                     onSaveRoute = navigation::saveCurrentRoute,
                     vehicleIsMotorcycle = state.config.isMotorcycle(),

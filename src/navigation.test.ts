@@ -5,6 +5,7 @@ import {
   isArrival,
   shouldApplyRequestResult,
   isSustainedDeviation,
+  parseOsrmRoutes,
   parseOsrmResponse,
   parsePhotonResponse,
   selectNavigationRoute,
@@ -54,6 +55,46 @@ describe('parsePhotonResponse', () => {
 });
 
 describe('parseOsrmResponse', () => {
+  it('parses, ranks, and deduplicates valid route alternatives', () => {
+    const routes = parseOsrmRoutes({
+      code: 'Ok',
+      routes: [
+        {
+          distance: 2100,
+          duration: 420,
+          geometry: { coordinates: [[-60.03, -3.11], [-60.0234, -3.1303]] },
+          legs: [{ steps: [] }]
+        },
+        {
+          distance: 1600,
+          duration: 360,
+          geometry: { coordinates: [[-60.032, -3.11], [-60.0234, -3.1303]] },
+          legs: [{ steps: [] }]
+        },
+        {
+          distance: 1400,
+          duration: 360,
+          geometry: { coordinates: [[-60.031, -3.11], [-60.0234, -3.1303]] },
+          legs: [{ steps: [] }]
+        },
+        {
+          distance: 1400,
+          duration: 360,
+          geometry: { coordinates: [[-60.031, -3.11], [-60.0234, -3.1303]] },
+          legs: [{ steps: [] }]
+        },
+        { distance: 1, duration: 1, geometry: { coordinates: [['invalid', null]] } }
+      ]
+    }, destination);
+
+    expect(routes).toHaveLength(3);
+    expect(routes.map(route => [route.durationSeconds, route.distanceMeters])).toEqual([
+      [360, 1400],
+      [360, 1600],
+      [420, 2100]
+    ]);
+  });
+
   it('parses route geometry and Portuguese maneuver instructions', () => {
     const route = parseOsrmResponse({
       code: 'Ok',

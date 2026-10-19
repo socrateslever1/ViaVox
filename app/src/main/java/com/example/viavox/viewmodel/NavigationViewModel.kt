@@ -234,9 +234,17 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
         calculateRoute(place)
     }
 
-    fun selectMapPoint(latitude: Double, longitude: Double) =
-        select(MapPlace("Ponto escolhido no mapa",latitude,longitude,
-            "${"%.5f".format(java.util.Locale.US,latitude)}, ${"%.5f".format(java.util.Locale.US,longitude)}"))
+    fun selectMapPoint(latitude: Double, longitude: Double) {
+        val place = MapPlace("Ponto escolhido no mapa",latitude,longitude,
+            "${"%.5f".format(java.util.Locale.US,latitude)}, ${"%.5f".format(java.util.Locale.US,longitude)}")
+        _ui.update { it.copy(selected = place, route = null, navigating = false,
+            query = place.name, results = emptyList(), suggestionsVisible = false,
+            suggesting = false, showingTrip = null, panel = "", error = null) }
+    }
+
+    fun confirmSelectedDestination() {
+        _ui.value.selected?.let(::calculateRoute)
+    }
 
     private fun calculateRoute(destination: MapPlace) {
         val tracking = TrackingRepository.state.value
