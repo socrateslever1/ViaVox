@@ -85,7 +85,7 @@ object PoliceCircumscriptionService {
         }
 
         // Manaus official DIP/CICOM lookup
-        if (city.equals("Manaus", ignoreCase = true) || ManausDistrictResolver.DISTRICTS.any { it.name.equals(neighbourhood, ignoreCase = true) }) {
+        if (city.equals("Manaus", ignoreCase = true)) {
             val direct = MANAUS_POLICE_DISTRICTS[neighbourhood]
             if (direct != null) return direct
             val matchedKey = MANAUS_POLICE_DISTRICTS.keys.firstOrNull { it.equals(neighbourhood.trim(), ignoreCase = true) }
