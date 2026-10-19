@@ -254,6 +254,7 @@ fun NavigationRouteCard(
     onStart: () -> Unit,
     onStop: () -> Unit,
     onSaveRoute: () -> Unit,
+    vehicleIsMotorcycle: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val route = ui.route
@@ -284,7 +285,8 @@ fun NavigationRouteCard(
             } else if (route != null) {
                 val etaMinutes = (route.durationSeconds / 60.0).toInt().coerceAtLeast(1)
                 Text(
-                    "${NavigationMath.formatDistance(route.distanceMeters)} · aproximadamente $etaMinutes min · carro",
+                    "${NavigationMath.formatDistance(route.distanceMeters)} · aproximadamente $etaMinutes min · " +
+                        if (vehicleIsMotorcycle) "rota de carro (moto não suportada)" else "carro",
                     color = hint,fontSize = 12.sp
                 )
             } else {
