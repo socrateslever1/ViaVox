@@ -24,7 +24,7 @@
 
 ## Aceite do lote de correções
 - Pesquisa por ruas e estabelecimentos: Photon responde sem parâmetro `lang=pt` forçado; fallback quando 400/502; nomes do SQLite podem ser encontrados offline.
-- Alias `24 CICOM`: apenas expandir busca; não atribuir coordenadas sem fonte real. Locais favoritos com nome `24ª CICOM` devem aparecer.
+- Alias `24 CICOM`: tentar também o endereço publicado na listagem SSP-AM, **Avenida Lourenço da Silva Braga com Rua Lima Bacuri, Centro, Manaus**; fonte: https://www.ssp.am.gov.br/wp-content/uploads/2018/05/Geral-3.pdf (documento histórico), com notícia 2024 https://amazoniaonline.com.br/amazonas/videomonitoramento-e-inaugurada-para-reforcar-combate-a-criminalidade-no-centro-de-manaus/. Não atribuir coordenadas sem retorno real do geocodificador; localização da unidade pode mudar. Locais favoritos com nome `24ª CICOM` devem aparecer.
 - HUD: rua destacada; bairro e cidade legíveis; detalhes policiais e diagnóstico técnico somente ao expandir; POIs reais continuam identificados.
 - Nenhuma regressão de voz de mudança de via/bairro.
 - APK compilado, testes unitários e verificação da assinatura; validação de campo ainda necessária.
