@@ -28,7 +28,7 @@ class AzureFranciscaSpeech(
     var endpoint: String? = null
     var accessToken: String? = null
 
-    fun speak(text: String, onUnavailable: () -> Unit) {
+    fun speak(text: String, onUnavailable: () -> Unit, onFinished: () -> Unit = {}) {
         val url = endpoint?.takeIf { it.startsWith("https://") }
         if (url == null) {
             onUnavailable()
@@ -82,12 +82,14 @@ class AzureFranciscaSpeech(
                             if (player === it) player = null
                             audioFile.delete()
                             onSpeakingChanged(false)
+                            onFinished()
                         }
                         mp.setOnErrorListener { p, _, _ ->
                             p.release()
                             if (player === p) player = null
                             audioFile.delete()
                             onSpeakingChanged(false)
+                            onUnavailable()
                             true
                         }
                         mp.prepare()
