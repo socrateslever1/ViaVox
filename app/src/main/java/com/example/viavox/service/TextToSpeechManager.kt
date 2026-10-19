@@ -87,6 +87,7 @@ class TextToSpeechManager(
     private var currentSpeechRate = 0.95f
     private var queuedBeforeInit: String? = null
     private var completionCallback: (() -> Unit)? = null
+    private var managedTimeout: Runnable? = null
 
     private var activeUtteranceId = ""
     private var activeText = ""
@@ -115,6 +116,8 @@ class TextToSpeechManager(
         stopAll = {
             queuedBeforeInit = null
             completionCallback = null
+            managedTimeout?.let { mainHandler.removeCallbacks(it) }
+            managedTimeout = null
             activeUtteranceId = ""
             francisca.stop()
             tts?.stop()
@@ -263,13 +266,31 @@ class TextToSpeechManager(
     fun speakManaged(text: String, onFinished: () -> Unit) {
         // A serialized queue must be the sole owner of managed playback.
         // Generation checks in SpeechOrchestrator reject obsolete completions.
+        managedTimeout?.let { mainHandler.removeCallbacks(it) }
         completionCallback = onFinished
+        val watchdog = Runnable {
+            if (completionCallback === onFinished) {
+                Log.e(TAG,"Managed speech timed out; recovering serialized queue")
+                reportVoiceIssue("A voz demorou demais para responder. Tente novamente.")
+                francisca.stop()
+                tts?.stop()
+                onSpeakingStateChanged(false)
+                onManagedFinished()
+            }
+        }
+        managedTimeout = watchdog
+        // Cloud synthesis can take a few seconds; the bound prevents an
+        // offline/remote engine that never emits onDone from blocking all speech.
+        val timeoutMs = (text.length * 150L + 10_000L).coerceIn(16_000L,45_000L)
+        mainHandler.postDelayed(watchdog,timeoutMs)
         if (!router.speak(text, forceRepeat = true)) onManagedFinished()
     }
 
     private fun onManagedFinished() {
         val callback = completionCallback ?: return
         completionCallback = null
+        managedTimeout?.let { mainHandler.removeCallbacks(it) }
+        managedTimeout = null
         mainHandler.post { callback() }
     }
 
