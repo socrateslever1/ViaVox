@@ -10,6 +10,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.DisposableEffect
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -37,13 +38,18 @@ class MainActivity : ComponentActivity() {
                 val state by viewModel.state.collectAsState()
                 val isSettingsOpen by viewModel.isSettingsDialogOpen.collectAsState()
                 val lifecycleOwner = LocalLifecycleOwner.current
+                val currentNavigation by rememberUpdatedState(navigationUi)
+                val currentTracking by rememberUpdatedState(state)
                 DisposableEffect(lifecycleOwner, viewModel) {
                     val observer = LifecycleEventObserver { _, event ->
                         when (event) {
                             Lifecycle.Event.ON_START -> viewModel.onAppVisible()
                             Lifecycle.Event.ON_STOP -> {
+                                val activeJourney = currentNavigation.navigating ||
+                                    currentNavigation.recording ||
+                                    currentTracking.config.backgroundVoiceEnabled
                                 navigation.onAppHidden()
-                                viewModel.onAppHidden()
+                                viewModel.onAppHidden(activeJourney)
                             }
                             else -> Unit
                         }
@@ -100,6 +106,7 @@ class MainActivity : ComponentActivity() {
                     onIntervalChanged = { viewModel.updateInterval(it) },
                     onPoiCategoryToggled = { cat, enabled -> viewModel.togglePoiCategory(cat, enabled) },
                     onPoiNarrationToggled = { viewModel.togglePoiNarration(it) },
+                    onBackgroundVoiceToggled = { viewModel.toggleBackgroundVoice(it) },
                     onFranciscaBrokerUrlChanged = { url -> viewModel.updateFranciscaBrokerUrl(url) },
                     onFranciscaAccessTokenChanged = { token -> viewModel.updateFranciscaAccessToken(token) },
                     onVehicleTypeChanged = { viewModel.updateVehicleType(it) },
