@@ -28,6 +28,7 @@ data class NavigationUiState(
     val query: String = "",
     val results: List<MapPlace> = emptyList(),
     val searching: Boolean = false,
+    val searchNotice: String? = null,
     val calculating: Boolean = false,
     val error: String? = null,
     val selected: MapPlace? = null,
@@ -100,22 +101,32 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
             _ui.update { it.copy(error = "Informe pelo menos três letras para pesquisar.") }
             return
         }
-        _ui.update { it.copy(searching = true, error = null, panel = "search") }
+        _ui.update { it.copy(searching = true, error = null, searchNotice = null, results = emptyList(), panel = "search") }
         val location = TrackingRepository.state.value
         searchJob = viewModelScope.launch {
-            val result = network.search(query,
+            // Personal bookmarks remain available even when public geocoders fail.
+            val saved = _ui.value.savedPlaces.map { it.second }
+            val result = network.search(
+                query,
                 location.latitude.takeIf { location.hasLocationFix },
-                location.longitude.takeIf { location.hasLocationFix })
+                location.longitude.takeIf { location.hasLocationFix },
+                saved
+            )
             result.fold(
                 onSuccess = { items ->
                     _ui.update { it.copy(
                         results = items, searching = false,
-                        error = if (items.isEmpty()) "Nenhum local encontrado." else null
+                        error = if (items.isEmpty())
+                            "Destino não encontrado. Experimente o nome completo ou selecione um ponto no mapa."
+                            else null,
+                        searchNotice = if (items.isNotEmpty())
+                            "${items.size} destino(s) encontrado(s). Escolha um para traçar a rota."
+                            else null
                     ) }
                 },
                 onFailure = { error ->
-                    _ui.update { it.copy(searching = false,
-                        error = error.message ?: "Não foi possível consultar os endereços.") }
+                    _ui.update { it.copy(searching = false, results = emptyList(), searchNotice = null,
+                        error = error.message ?: "Busca online indisponível. Escolha o destino no mapa.") }
                 }
             )
         }
