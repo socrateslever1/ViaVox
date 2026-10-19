@@ -4,29 +4,21 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -41,12 +33,17 @@ import com.example.viavox.R
 import com.example.viavox.model.TrackingState
 import com.example.viavox.service.VoiceDataInstaller
 
-private val aqua = Color(0xFF42E6D1)
-private val text = Color(0xFFF5F8FF)
-private val subdued = Color(0xFFC0D0DF)
-private val base = Color(0xF009172C)
+private val teal = Color(0xFF50DECA)
+private val white = Color(0xFFF4F8FF)
+private val muted = Color(0xFFB7CDDC)
+private val navy = Color(0xF20A2035)
+private val warning = Color(0xFFFFCEA5)
 
-/** A compact navigation HUD over a real map, not a full-height dashboard. */
+/**
+ * Primary street card deliberately contains only navigational information.
+ * Technical HTTP codes, long police jurisdiction names and network retry
+ * states belong in optional diagnostics, not on the driving HUD.
+ */
 @Composable
 fun StatusPanel(
     state: TrackingState,
@@ -58,54 +55,80 @@ fun StatusPanel(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    var detailsExpanded by rememberSaveable { mutableStateOf(false) }
+    val place = state.place
+    val road = place?.takeIf { it.hasValidRoad() }?.road
+        ?: stringResource(R.string.where_are_you)
+    val contextLine = listOfNotNull(
+        place?.neighbourhood?.takeIf { place.hasValidNeighbourhood() },
+        place?.city?.takeIf(String::isNotBlank)
+    ).distinct().joinToString(" · ").ifBlank {
+        stringResource(R.string.empty_address_hint)
+    }
+    val policeLabel = place?.policeDistrict?.takeIf(String::isNotBlank)
+    val voiceIssue = when {
+        state.config.voiceProvider == "francisca" && !state.config.hasFranciscaSettings() ->
+            "Francisca não está configurada. A voz Android continua disponível."
+        else -> state.voiceIssue
+    }
+    val poiSummary = when {
+        state.poiStatus.startsWith("Referência detectada:") ->
+            state.poiStatus
+        state.poiStatus.startsWith("Enviando à voz:") ->
+            state.poiStatus.replace("Enviando à voz:", "Referência:")
+        else -> null
+    }
+
     Surface(
         modifier = modifier.testTag("status_panel"),
-        shape = RoundedCornerShape(25.dp),
-        color = base,
-        shadowElevation = 18.dp,
-        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.18f))
+        shape = RoundedCornerShape(26.dp),
+        color = navy,
+        shadowElevation = 12.dp,
+        border = BorderStroke(1.dp, Color(0x553F6484))
     ) {
-        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                Box(
-                    Modifier.size(7.dp).background(
-                        if (state.isActive) aqua else Color(0xFF8CA2B7), CircleShape
-                    )
-                )
+        Column(
+            modifier = Modifier.padding(horizontal = 15.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(5.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Box(Modifier.size(7.dp).background(
+                    if (state.isActive) teal else muted, CircleShape
+                ))
+                Spacer(Modifier.width(7.dp))
                 Text(
-                    if (state.isActive) "Localização ativa" else "Localização pausada",
-                    color = if (state.isActive) aqua else subdued,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold
+                    if (state.isActive) "GPS ativo" else "GPS pausado",
+                    color = if (state.isActive) teal else muted,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 12.sp
                 )
                 state.accuracyMeters?.let { accuracy ->
-                    Text("±$accuracy m", color = if (accuracy > 25) Color(0xFFFFCA91) else subdued, fontSize = 11.sp)
+                    Text(
+                        "  ±$accuracy m",
+                        color = if (accuracy > 25) warning else muted,
+                        fontSize = 11.sp
+                    )
                 }
                 Spacer(Modifier.weight(1f))
                 TextButton(
                     onClick = { if (state.isActive) onStopTracking() else onStartTracking() },
-                    modifier = Modifier.height(31.dp).testTag("tracking_toggle")
+                    contentPadding = PaddingValues(horizontal = 8.dp,vertical = 0.dp),
+                    modifier = Modifier.height(29.dp).testTag("tracking_toggle")
                 ) {
-                    Text(if (state.isActive) "Pausar" else "Iniciar", color = subdued, fontSize = 12.sp)
+                    Text(if (state.isActive) "Pausar" else "Iniciar", color = muted, fontSize = 12.sp)
                 }
             }
-            Spacer(Modifier.height(7.dp))
+
             Row(
-                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(11.dp)
+                horizontalArrangement = Arrangement.spacedBy(11.dp),
+                modifier = Modifier.fillMaxWidth()
             ) {
                 Box(
-                    modifier = Modifier.size(54.dp)
-                        .background(aqua.copy(alpha = 0.12f), CircleShape)
+                    modifier = Modifier.size(48.dp)
+                        .background(teal.copy(alpha = 0.10f), CircleShape)
                         .border(
                             1.5.dp,
-                            if (state.isVoiceEnabled) aqua else Color(0xFF738BA2),
-                            CircleShape
+                            if (state.isVoiceEnabled) teal else muted, CircleShape
                         )
                         .clickable { onToggleVoice(!state.isVoiceEnabled) }
                         .testTag("voice_toggle"),
@@ -113,96 +136,128 @@ fun StatusPanel(
                 ) {
                     Icon(
                         if (state.isVoiceEnabled) Icons.Default.VolumeUp else Icons.Default.VolumeOff,
-                        if (state.isVoiceEnabled) "Desativar voz" else "Ativar voz",
-                        tint = if (state.isVoiceEnabled) aqua else subdued,
-                        modifier = Modifier.size(27.dp)
+                        contentDescription = if (state.isVoiceEnabled) "Desativar voz" else "Ativar voz",
+                        tint = if (state.isVoiceEnabled) teal else muted,
+                        modifier = Modifier.size(25.dp)
                     )
                 }
-                Column(modifier = Modifier.weight(1f)) {
+                Column(Modifier.weight(1f),verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Text(
-                        state.place?.takeIf { it.hasValidRoad() }?.road
-                            ?: stringResource(R.string.where_are_you),
-                        color = text,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 18.sp,
-                        lineHeight = 21.sp,
-                        maxLines = 2,
+                        road,
+                        fontSize = 20.sp, lineHeight = 23.sp, color = white,
+                        fontWeight = FontWeight.Bold, maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.testTag("road_title")
                     )
-                    Spacer(Modifier.height(3.dp))
                     Text(
-                        state.place?.toDisplaySubtitle()?.takeIf { it.isNotBlank() }
-                            ?: stringResource(R.string.empty_address_hint),
-                        color = subdued,
-                        fontSize = 12.sp,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
+                        contextLine,
+                        fontSize = 12.sp, color = muted,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis
                     )
                 }
                 IconButton(
                     onClick = onRepeatSpeech,
-                    enabled = state.place?.hasValidRoad() == true && state.isVoiceEnabled,
+                    enabled = state.isVoiceEnabled && place?.hasValidRoad() == true,
                     modifier = Modifier.size(43.dp)
-                        .background(Color(0xFF25425E), CircleShape)
+                        .background(Color(0xFF24445E), CircleShape)
                         .testTag("repeat_button")
                 ) {
-                    Icon(Icons.Default.Replay, "Repetir rua", tint = text)
+                    Icon(Icons.Default.Replay, contentDescription = "Repetir rua", tint = white)
                 }
             }
 
-            // Visible diagnostics: the user can tell whether nearby places are
-            // missing from OSM, waiting for GPS, detected, or announced.
-            Spacer(Modifier.height(7.dp))
-            Text(
-                text = state.poiStatus,
-                color = if (state.poiStatus.startsWith("Enviando à voz:")) aqua else subdued,
-                fontSize = 11.sp,
-                lineHeight = 14.sp,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.fillMaxWidth().testTag("poi_discovery_status")
-            )
-
-            val voiceNotice = when {
-                state.config.voiceProvider == "francisca" && !state.config.hasFranciscaSettings() ->
-                    "Francisca não configurada. A voz Android será usada até instalar o serviço de voz."
-                else -> state.voiceIssue
-            }
-            if (voiceNotice != null) {
-                Spacer(Modifier.height(8.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth()
-                        .background(Color(0x332C4159), RoundedCornerShape(12.dp))
-                        .padding(start = 9.dp, end = 2.dp, top = 3.dp, bottom = 3.dp),
-                    verticalAlignment = Alignment.CenterVertically
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                place?.zone?.takeIf(String::isNotBlank)?.let { zone ->
+                    TinyLabel(zone)
+                }
+                if (policeLabel != null) TinyLabel("Área policial")
+                if (voiceIssue != null) {
+                    Text("Voz requer atenção", fontSize = 10.sp, color = warning, maxLines = 1)
+                }
+                Spacer(Modifier.weight(1f))
+                TextButton(
+                    onClick = { detailsExpanded = !detailsExpanded },
+                    contentPadding = PaddingValues(horizontal = 3.dp,vertical = 0.dp),
+                    modifier = Modifier.height(29.dp).testTag("street_more_details")
                 ) {
+                    Icon(Icons.Default.Info, null, tint = teal, modifier = Modifier.size(15.dp))
+                    Spacer(Modifier.width(3.dp))
+                    Text(if (detailsExpanded) "Ocultar" else "Detalhes", color = teal, fontSize = 11.sp)
+                }
+            }
+
+            // Real nearby POIs are useful driving information; raw backend errors aren't.
+            if (poiSummary != null) {
+                Text(
+                    poiSummary,
+                    color = teal,
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.testTag("poi_summary")
+                )
+            }
+
+            if (detailsExpanded) {
+                HorizontalDivider(color = Color.White.copy(alpha = 0.13f))
+                if (policeLabel != null) {
                     Text(
-                        voiceNotice,
-                        color = Color(0xFFFFD5B3),
-                        fontSize = 11.sp,
-                        lineHeight = 14.sp,
-                        modifier = Modifier.weight(1f).testTag("voice_diagnostic"),
-                        maxLines = 3,
-                        overflow = TextOverflow.Ellipsis
+                        "Circunscrição (estimativa): $policeLabel",
+                        fontSize = 11.sp, lineHeight = 15.sp, color = muted,
+                        maxLines = 3, overflow = TextOverflow.Ellipsis
                     )
-                    Column(horizontalAlignment = Alignment.End) {
-                        TextButton(onClick = onTestVoice, modifier = Modifier.testTag("test_voice_button")) {
-                            Icon(Icons.Default.PlayArrow, null, tint = aqua, modifier = Modifier.size(18.dp))
-                            Text("Testar", fontSize = 11.sp, color = aqua)
-                        }
-                        if (voiceNotice?.contains("instalad", ignoreCase = true) == true ||
-                            voiceNotice?.contains("erro -9") == true) {
-                            TextButton(
-                                onClick = { VoiceDataInstaller.open(context) },
-                                modifier = Modifier.testTag("install_voice_button")
-                            ) {
-                                Text("Instalar voz", fontSize = 11.sp, color = aqua)
-                            }
+                }
+                Text(
+                    PoiStatusPresenter.display(state.poiStatus),
+                    color = muted,
+                    fontSize = 11.sp, lineHeight = 15.sp,
+                    modifier = Modifier.testTag("poi_discovery_status"),
+                    maxLines = 2
+                )
+                if (voiceIssue != null) {
+                    Text(
+                        voiceIssue,
+                        color = warning, fontSize = 11.sp,
+                        modifier = Modifier.testTag("voice_diagnostic")
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                    TextButton(
+                        onClick = onTestVoice,
+                        modifier = Modifier.testTag("test_voice_button")
+                    ) {
+                        Icon(Icons.Default.PlayArrow, null, tint = teal, modifier = Modifier.size(17.dp))
+                        Text("Testar voz", color = teal, fontSize = 12.sp)
+                    }
+                    if (voiceIssue?.contains("instalad",ignoreCase = true) == true ||
+                        voiceIssue?.contains("erro -9") == true
+                    ) {
+                        TextButton(
+                            onClick = { VoiceDataInstaller.open(context) },
+                            modifier = Modifier.testTag("install_voice_button")
+                        ) {
+                            Text("Instalar voz", color = teal, fontSize = 12.sp)
                         }
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun TinyLabel(label: String) {
+    Surface(
+        color = Color(0xFF263F54),
+        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier.height(23.dp)
+    ) {
+        Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 8.dp)) {
+            Text(label,fontSize = 10.sp,color = muted,maxLines = 1)
         }
     }
 }
