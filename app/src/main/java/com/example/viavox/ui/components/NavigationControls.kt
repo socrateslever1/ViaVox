@@ -18,6 +18,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -428,11 +432,15 @@ fun NavigationLibraryDialog(
     onSelectDestination: (MapPlace) -> Unit,
     onSelectSavedRoute: (StoredRoute) -> Unit,
     onSelectTrip: (SavedTrip) -> Unit,
+    onRenameFavorite: (Long, String) -> Unit,
     onDeleteFavorite: (Long) -> Unit,
     onDeleteRoute: (Long) -> Unit,
     onDeleteTrip: (Long) -> Unit
 ) {
     if (ui.panel.isBlank() || ui.panel == "search") return
+    var editFavoriteId by remember { mutableStateOf<Long?>(null) }
+    var editedName by remember { mutableStateOf("") }
+    var pendingDelete by remember { mutableStateOf<Pair<String,Long>?>(null) }
     val title = when(ui.panel) {
         "search" -> "Pesquisar destinos"
         "saved" -> "Lugares salvos"
@@ -489,14 +497,18 @@ fun NavigationLibraryDialog(
                         "saved" -> items(ui.savedPlaces,key = { it.first }) { (id, point) ->
                             LibraryRow(point.name,point.subtitle,Icons.Default.Bookmark,
                                 action = { onSelectDestination(point) },
-                                onDelete = { onDeleteFavorite(id) })
+                                onEdit = {
+                                    editFavoriteId = id
+                                    editedName = point.name
+                                },
+                                onDelete = { pendingDelete = "saved" to id })
                         }
                         "routes" -> items(ui.savedRoutes,key = { it.id }) { route ->
                             LibraryRow(
                                 route.title, "${NavigationMath.formatDistance(route.route.distanceMeters)} · ${date(route.createdAt)}",
                                 Icons.Default.Route,
                                 action = { onSelectSavedRoute(route) },
-                                onDelete = { onDeleteRoute(route.id) }
+                                onDelete = { pendingDelete = "routes" to route.id }
                             )
                         }
                         else -> items(ui.trips,key = { it.id }) { trip ->
@@ -505,7 +517,7 @@ fun NavigationLibraryDialog(
                                 "${NavigationMath.formatDistance(trip.distanceMeters)} · ${trip.points.size} registros",
                                 Icons.Default.Timeline,
                                 action = { onSelectTrip(trip) },
-                                onDelete = { onDeleteTrip(trip.id) }
+                                onDelete = { pendingDelete = "history" to trip.id }
                             )
                         }
                     }
@@ -532,6 +544,56 @@ fun NavigationLibraryDialog(
             }
         }
     }
+    if (editFavoriteId != null) {
+        val id = editFavoriteId!!
+        AlertDialog(
+            onDismissRequest = { editFavoriteId = null },
+            containerColor = Color(0xFF11263D),
+            title = { Text("Renomear lugar",color = pale) },
+            text = {
+                OutlinedTextField(
+                    value = editedName,
+                    onValueChange = { if (it.length <= 90) editedName = it },
+                    label = { Text("Nome do local") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().testTag("rename_saved_place_field")
+                )
+            },
+            confirmButton = { TextButton(
+                enabled = editedName.trim().isNotBlank(),
+                onClick = {
+                    onRenameFavorite(id,editedName.trim())
+                    editFavoriteId = null
+                }
+            ) { Text("Salvar",color = aqua) } },
+            dismissButton = { TextButton(onClick = { editFavoriteId = null }) {
+                Text("Cancelar",color = hint)
+            } }
+        )
+    }
+    if (pendingDelete != null) {
+        val (type,id) = pendingDelete!!
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            containerColor = Color(0xFF11263D),
+            title = { Text("Confirmar exclusão",color = pale) },
+            text = { Text(
+                "Remover este item dos dados locais do ViaVox? Esta ação não pode ser desfeita.",
+                color = hint
+            ) },
+            confirmButton = { TextButton(onClick = {
+                when (type) {
+                    "saved" -> onDeleteFavorite(id)
+                    "routes" -> onDeleteRoute(id)
+                    "history" -> onDeleteTrip(id)
+                }
+                pendingDelete = null
+            }) { Text("Remover",color = Color(0xFFFFB4A3)) } },
+            dismissButton = { TextButton(onClick = { pendingDelete = null }) {
+                Text("Cancelar",color = hint)
+            } }
+        )
+    }
 }
 
 @Composable
@@ -539,6 +601,7 @@ private fun LibraryRow(
     title: String,subtitle: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     action: () -> Unit,
+    onEdit: (() -> Unit)? = null,
     onDelete: (() -> Unit)? = null
 ) {
     Surface(color = Color(0xFF1C354E),shape = RoundedCornerShape(13.dp),
@@ -552,6 +615,11 @@ private fun LibraryRow(
                     maxLines = 2,overflow = TextOverflow.Ellipsis)
                 if(subtitle.isNotBlank()) Text(subtitle,color = hint,fontSize = 11.sp,
                     maxLines = 2,overflow = TextOverflow.Ellipsis)
+            }
+            if (onEdit != null) {
+                IconButton(onClick = onEdit,modifier = Modifier.size(37.dp)) {
+                    Icon(Icons.Default.Edit,"Renomear",tint = aqua)
+                }
             }
             if(onDelete != null) {
                 IconButton(onClick = onDelete,modifier = Modifier.size(37.dp)) {
