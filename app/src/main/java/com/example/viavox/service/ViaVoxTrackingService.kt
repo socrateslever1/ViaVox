@@ -182,6 +182,12 @@ class ViaVoxTrackingService : Service() {
             }
             ACTION_NAV_START -> {
                 startForegroundTracking()
+                if (!isTrackingRunning) {
+                    ActiveNavigationRepository.publish(ActiveNavigationState(
+                        status = "Permita o GPS para iniciar a navegação"
+                    ))
+                    return START_NOT_STICKY
+                }
                 val requestEpoch = ++navigationEpoch
                 serviceScope.launch {
                     val saved = withContext(Dispatchers.IO) { navigationStore.read() }
