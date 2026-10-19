@@ -8,6 +8,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -45,6 +48,9 @@ fun NavigationSearchAndActions(
     onQueryChanged: (String) -> Unit,
     onSearch: () -> Unit,
     onOpenSearch: () -> Unit,
+    onShowSuggestions: () -> Unit,
+    onDismissSuggestions: () -> Unit,
+    onSelectSuggestion: (MapPlace) -> Unit,
     onOpenSaved: () -> Unit,
     onOpenRoutes: () -> Unit,
     onOpenHistory: () -> Unit,
@@ -53,23 +59,34 @@ fun NavigationSearchAndActions(
     onStopRecording: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Column(modifier = modifier.padding(horizontal = 14.dp),verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    val keyboard = LocalSoftwareKeyboardController.current
+    Column(
+        modifier = modifier.padding(horizontal = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(7.dp)
+    ) {
         Surface(
-            color = navy,
-            shape = RoundedCornerShape(22.dp),
-            shadowElevation = 8.dp,
-            border = BorderStroke(1.dp,Color.White.copy(alpha = 0.16f)),
+            color = Color(0xF5091D31),
+            shape = RoundedCornerShape(19.dp),
+            shadowElevation = 9.dp,
+            border = BorderStroke(1.dp,Color.White.copy(alpha = 0.15f)),
             modifier = Modifier.fillMaxWidth()
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 12.dp,end = 6.dp)) {
-                Icon(Icons.Default.Search,null,tint = aqua,modifier = Modifier.size(24.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.heightIn(min = 55.dp).padding(start = 12.dp,end = 4.dp)
+            ) {
+                Icon(Icons.Default.Search,null,tint = aqua,modifier = Modifier.size(22.dp))
                 TextField(
                     value = ui.query,
                     onValueChange = onQueryChanged,
-                    modifier = Modifier.weight(1f).testTag("navigation_search_field"),
-                    placeholder = { Text("Pesquisar destino ou endereço",color = hint,fontSize = 13.sp) },
+                    modifier = Modifier.weight(1f)
+                        .onFocusChanged { if (it.isFocused) onShowSuggestions() }
+                        .testTag("navigation_search_field"),
+                    placeholder = { Text("Para onde vamos?",color = hint,fontSize = 14.sp) },
                     singleLine = true,
-                    textStyle = androidx.compose.ui.text.TextStyle(color = pale,fontSize = 14.sp),
+                    textStyle = androidx.compose.ui.text.TextStyle(
+                        color = pale,fontSize = 14.sp,fontWeight = FontWeight.Medium
+                    ),
                     colors = TextFieldDefaults.colors(
                         focusedContainerColor = Color.Transparent,
                         unfocusedContainerColor = Color.Transparent,
@@ -78,36 +95,110 @@ fun NavigationSearchAndActions(
                         cursorColor = aqua
                     ),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    keyboardActions = KeyboardActions(onSearch = { onSearch() })
+                    keyboardActions = KeyboardActions(onSearch = { keyboard?.hide();onSearch() })
                 )
-                IconButton(onClick = onSearch,modifier = Modifier.testTag("run_search_button")) {
-                    Icon(Icons.Default.ArrowForward,"Buscar local",tint = aqua)
+                if (ui.query.isNotEmpty()) {
+                    IconButton(
+                        onClick = { onQueryChanged("");onDismissSuggestions() },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(Icons.Default.Close,"Limpar pesquisa",tint = hint,
+                            modifier = Modifier.size(17.dp))
+                    }
+                } else {
+                    IconButton(onClick = onSaveCurrentPosition,modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Default.BookmarkAdd,"Salvar localização",tint = hint,
+                            modifier = Modifier.size(19.dp))
+                    }
+                }
+                IconButton(onClick = { keyboard?.hide();onSearch() },
+                    modifier = Modifier.size(40.dp).testTag("run_search_button")) {
+                    Icon(Icons.Default.ArrowForward,"Pesquisar destino",tint = aqua)
                 }
             }
         }
-
-        Row(
-            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(7.dp)
-        ) {
-            NavChip("Buscar",Icons.Default.Search,onOpenSearch)
-            NavChip("Salvos",Icons.Default.Bookmark,onOpenSaved)
-            NavChip("Rotas",Icons.Default.Route,onOpenRoutes)
-            NavChip("Percursos",Icons.Default.History,onOpenHistory)
-            NavChip("Salvar aqui",Icons.Default.AddLocation,onSaveCurrentPosition)
-            NavChip(
-                if (ui.recording) "Parar gravação" else "Gravar",
-                if (ui.recording) Icons.Default.Stop else Icons.Default.FiberManualRecord,
-                if (ui.recording) onStopRecording else onStartRecording,
-                urgent = ui.recording
-            )
-        }
-        if (ui.recording) {
-            Surface(color = Color(0xF0802631),shape = RoundedCornerShape(10.dp)) {
+        if (ui.suggestionsVisible && ui.query.trim().length >= 3) {
+            Surface(
+                color = Color(0xFA10283F),
+                shape = RoundedCornerShape(17.dp),shadowElevation = 12.dp,
+                border = BorderStroke(1.dp,Color.White.copy(alpha = 0.14f)),
+                modifier = Modifier.fillMaxWidth().testTag("autocomplete_dropdown")
+            ) {
+                Column(modifier = Modifier.padding(horizontal = 12.dp,vertical = 7.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("DESTINOS",fontSize = 10.sp,fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.sp,color = aqua,modifier = Modifier.weight(1f))
+                        if (ui.suggesting || ui.searching) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(14.dp),strokeWidth = 1.5.dp,color = aqua
+                            )
+                        }
+                        TextButton(
+                            onClick = { keyboard?.hide();onDismissSuggestions() },
+                            modifier = Modifier.height(28.dp),
+                            contentPadding = PaddingValues(horizontal = 7.dp,vertical = 0.dp)
+                        ) { Text("Fechar",fontSize = 11.sp,color = hint) }
+                    }
+                    ui.results.take(5).forEach { place ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth()
+                                .clickable { keyboard?.hide();onSelectSuggestion(place) }
+                                .padding(vertical = 7.dp).testTag("suggestion_result"),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier.size(34.dp)
+                                    .background(Color(0xFF23465D),CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Default.Place,null,tint = aqua,
+                                    modifier = Modifier.size(19.dp))
+                            }
+                            Spacer(Modifier.width(9.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(place.name,color = pale,fontWeight = FontWeight.SemiBold,
+                                    fontSize = 13.sp,maxLines = 1,overflow = TextOverflow.Ellipsis)
+                                if (place.subtitle.isNotBlank()) Text(
+                                    place.subtitle,color = hint,fontSize = 11.sp,
+                                    maxLines = 1,overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Icon(Icons.Default.ChevronRight,null,tint = hint,
+                                modifier = Modifier.size(17.dp))
+                        }
+                    }
+                    if (ui.results.isEmpty()) {
+                        Text(
+                            when {
+                                ui.error != null -> ui.error
+                                ui.searching || ui.suggesting -> "Procurando locais próximos..."
+                                else -> "Sem resultados próximos. Escolha um ponto no mapa."
+                            },
+                            color = if (ui.error == null) hint else Color(0xFFFFC5B2),
+                            fontSize = 12.sp,modifier = Modifier.padding(vertical = 8.dp)
+                        )
+                    }
+                }
+            }
+        } else {
+            Row(modifier = Modifier.fillMaxWidth(),horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                QuickAction("Salvos",Icons.Default.Bookmark,onOpenSaved,Modifier.weight(1f))
+                QuickAction("Rotas",Icons.Default.Route,onOpenRoutes,Modifier.weight(1f))
+                QuickAction("Percursos",Icons.Default.History,onOpenHistory,Modifier.weight(1f))
+                QuickAction(
+                    if (ui.recording) "Parar" else "Gravar",
+                    if (ui.recording) Icons.Default.Stop else Icons.Default.FiberManualRecord,
+                    if (ui.recording) onStopRecording else onStartRecording,
+                    Modifier.weight(1f),ui.recording
+                )
+            }
+            if (ui.recording) Surface(
+                color = Color(0xDD6E2B38),shape = RoundedCornerShape(9.dp)
+            ) {
                 Text(
-                    "● Gravando: ${NavigationMath.formatDistance(ui.recordedMeters)} · ${ui.recordedCount} pontos",
-                    modifier = Modifier.padding(horizontal = 11.dp,vertical = 7.dp),
-                    color = pale,fontSize = 12.sp
+                    "● Gravando · ${NavigationMath.formatDistance(ui.recordedMeters)} · ${ui.recordedCount} pontos",
+                    color = pale,fontSize = 11.sp,
+                    modifier = Modifier.padding(horizontal = 10.dp,vertical = 5.dp)
                 )
             }
         }
@@ -115,21 +206,30 @@ fun NavigationSearchAndActions(
 }
 
 @Composable
-private fun NavChip(label: String,icon: androidx.compose.ui.graphics.vector.ImageVector,
-                    action: () -> Unit,urgent: Boolean = false) {
+private fun QuickAction(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    active: Boolean = false
+) {
     Surface(
-        color = if (urgent) Color(0xE58E2637) else navy,
-        shape = RoundedCornerShape(15.dp),
-        border = BorderStroke(1.dp,Color.White.copy(alpha = 0.15f)),
-        modifier = Modifier.clickable(onClick = action)
+        modifier = modifier.clickable(onClick = onClick),
+        color = if (active) Color(0xEF702D40) else Color(0xEE0A2035),
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp,Color.White.copy(alpha = 0.11f))
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 11.dp,vertical = 8.dp),
+            modifier = Modifier.fillMaxWidth().height(38.dp)
+                .padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(5.dp)
+            horizontalArrangement = Arrangement.Center
         ) {
-            Icon(icon,null,tint = if (urgent) Color(0xFFFFB5B5) else aqua,modifier = Modifier.size(16.dp))
-            Text(label,color = pale,fontWeight = FontWeight.Medium,fontSize = 12.sp,maxLines = 1)
+            Icon(icon,null,
+                tint = if (active) Color(0xFFFFB4BA) else aqua,
+                modifier = Modifier.size(15.dp))
+            Spacer(Modifier.width(3.dp))
+            Text(label,color = pale,fontSize = 10.sp,maxLines = 1)
         }
     }
 }
@@ -226,7 +326,7 @@ fun NavigationLibraryDialog(
     onDeleteRoute: (Long) -> Unit,
     onDeleteTrip: (Long) -> Unit
 ) {
-    if (ui.panel.isBlank()) return
+    if (ui.panel.isBlank() || ui.panel == "search") return
     val title = when(ui.panel) {
         "search" -> "Pesquisar destinos"
         "saved" -> "Lugares salvos"
