@@ -68,6 +68,7 @@ fun SettingsDialog(
     onIntervalChanged: (Int) -> Unit,
     onPoiCategoryToggled: (PoiCategory, Boolean) -> Unit,
     onPoiNarrationToggled: (Boolean) -> Unit = {},
+    onBackgroundVoiceToggled: (Boolean) -> Unit = {},
     onFranciscaBrokerUrlChanged: (String) -> Unit = {},
     onFranciscaAccessTokenChanged: (String) -> Unit = {},
     onVehicleTypeChanged: (String) -> Unit = {},
@@ -426,6 +427,20 @@ fun SettingsDialog(
                     HorizontalDivider(color = Color.White.copy(alpha = 0.09f))
                     Spacer(Modifier.height(15.dp))
 
+                    SectionTitle("Tela bloqueada e segundo plano")
+                    CategoryToggle(
+                        "Continuar narrando em segundo plano",
+                        config.backgroundVoiceEnabled
+                    ) { onBackgroundVoiceToggled(it) }
+                    Text(
+                        "Quando habilitado, mantém GPS e voz por notificação persistente " +
+                            "mesmo ao sair do aplicativo. Aumenta o consumo de bateria. " +
+                            "Navegação e gravação ativas continuam automaticamente.",
+                        color = muted, fontSize = 11.sp, lineHeight = 15.sp,
+                        modifier = Modifier.padding(bottom = 12.dp)
+                    )
+                    HorizontalDivider(color = Color.White.copy(alpha = 0.09f))
+                    Spacer(Modifier.height(12.dp))
                     SectionTitle("Pontos de referência")
                     CategoryToggle("Narrar pontos de referência", config.narratePoiEnabled) {
                         onPoiNarrationToggled(it)
