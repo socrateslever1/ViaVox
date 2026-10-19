@@ -264,7 +264,15 @@ fun NavigationLibraryDialog(
                     if (ui.searching) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 }
                 if (ui.error != null) {
-                    Text(ui.error,color = Color(0xFFFFBFA9),fontSize = 12.sp)
+                    Text(
+                        ui.error, color = Color(0xFFFFBFA9), fontSize = 12.sp,
+                        lineHeight = 17.sp
+                    )
+                } else if (ui.panel == "search" && ui.searchNotice != null) {
+                    Text(
+                        ui.searchNotice, color = aqua, fontSize = 12.sp,
+                        modifier = Modifier.testTag("search_feedback")
+                    )
                 }
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(7.dp)) {
                     when(ui.panel) {
@@ -308,7 +316,9 @@ fun NavigationLibraryDialog(
                             "saved" -> "Nenhum lugar salvo. Use Salvar aqui quando estiver no local."
                             "routes" -> "Nenhuma rota salva. Selecione um destino e toque em Salvar rota."
                             "history" -> "Nenhum percurso gravado. Use Gravar no mapa para iniciar."
-                            else -> "Pesquise um destino para visualizar resultados."
+                            else -> if (ui.error != null)
+                                "Você também pode segurar um ponto no mapa para escolher o destino."
+                                else "Pesquise uma rua, comércio, local salvo ou coordenadas."
                         },color = hint,fontSize = 13.sp,
                         modifier = Modifier.padding(vertical = 12.dp)
                     )
