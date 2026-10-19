@@ -50,11 +50,16 @@ class ViaVoxViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun onAppHidden() {
-        // Normal free-mode tracking is screen-only, not a background recorder.
+    fun onAppHidden(keepSessionActive: Boolean = false) {
+        // Only explicitly active navigation / recording / background narration
+        // may hold the GPS foreground service after the UI is hidden.
+        if (keepSessionActive) return
         val app = getApplication<Application>()
-        app.stopService(Intent(app, ViaVoxTrackingService::class.java))
-        TrackingRepository.updateActive(false)
+        ViaVoxTrackingService.stop(app)
+    }
+
+    fun toggleBackgroundVoice(enabled: Boolean) {
+        saveAndApplyConfig(state.value.config.copy(backgroundVoiceEnabled = enabled))
     }
 
     fun stopTracking() {
