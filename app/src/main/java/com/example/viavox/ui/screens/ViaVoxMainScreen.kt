@@ -237,7 +237,8 @@ fun ViaVoxMainScreen(
             onRenameFavorite = navigation::renameFavorite,
             onDeleteFavorite = { navigation.removeFavorite(it) },
             onDeleteRoute = { navigation.removeRoute(it) },
-            onDeleteTrip = { navigation.removeTrip(it) }
+            onDeleteTrip = { navigation.removeTrip(it) },
+            onExportTrip = navigation::exportTrip
         )
 
         if (isSettingsDialogOpen) {
