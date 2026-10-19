@@ -122,7 +122,7 @@ class NavigationNetworkService(
         }
         val request = Request.Builder().url(builder.build())
             .header("User-Agent","ViaVox/0.7 (https://github.com/socrateslever1/ViaVox)")
-            .header("Accept-Language","pt-BR,pt;q=0.9,en;q=0.5")
+            // Avoid forcing unsupported Photon languages on demo instances.
             .build()
         http.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw IllegalStateException("Photon HTTP ${response.code}")
