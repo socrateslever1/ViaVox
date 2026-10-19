@@ -18,6 +18,8 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.example.viavox.MainActivity
 import com.example.viavox.R
+import com.example.viavox.data.NavigationNetworkService
+import com.example.viavox.model.NavigationRoute
 import com.example.viavox.data.NominatimService
 import com.example.viavox.data.PoiDiscoveryService
 import com.example.viavox.data.TrackingRepository
@@ -53,6 +55,12 @@ class ViaVoxTrackingService : Service() {
     private lateinit var roadEngine: RoadDetectionEngine
     private lateinit var safetyAlertEngine: SafetyAlertEngine
     private var safetyJob: Job? = null
+    private lateinit var navigationStore: NavigationSessionStore
+    private val navigationNetwork = NavigationNetworkService()
+    private var navigationEngine: NavigationSessionEngine? = null
+    private var rerouteJob: Job? = null
+    private var navigationEpoch = 0L
+    private var lastNavFixAt = 0L
 
     private var currentConfig = ViaVoxConfig()
     private var isTrackingRunning = false
@@ -64,6 +72,7 @@ class ViaVoxTrackingService : Service() {
         val prefs = getSharedPreferences("viavox_prefs", Context.MODE_PRIVATE)
         currentConfig = ViaVoxConfig.loadFrom(prefs)
         val initialVoiceEnabled = prefs.getBoolean("voice_enabled", true)
+        navigationStore = NavigationSessionStore(this)
         tripRecorder = ServiceTripRecorder(this)
         recorderReady = serviceScope.async(Dispatchers.IO) { tripRecorder.restore() }
 
@@ -131,6 +140,16 @@ class ViaVoxTrackingService : Service() {
         )
 
         createNotificationChannel()
+        // Navigation ownership is in this foreground service. Restoring an
+        // interrupted activity must never create two competing voices.
+        val startupEpoch = navigationEpoch
+        serviceScope.launch {
+            val previous = withContext(Dispatchers.IO) { navigationStore.read() }
+            if (startupEpoch == navigationEpoch && navigationEngine == null &&
+                previous != null) {
+                installNavigation(previous)
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -149,6 +168,17 @@ class ViaVoxTrackingService : Service() {
                 recorderReady.await()
                 tripRecorder.finish()
             }
+            ACTION_NAV_START -> {
+                startForegroundTracking()
+                val requestEpoch = ++navigationEpoch
+                serviceScope.launch {
+                    val saved = withContext(Dispatchers.IO) { navigationStore.read() }
+                    if (requestEpoch != navigationEpoch) return@launch
+                    if (saved != null) installNavigation(saved)
+                    else TrackingRepository.updateStatus("Não foi possível recuperar a rota solicitada.")
+                }
+            }
+            ACTION_NAV_STOP -> finishNavigationSession()
             ACTION_STOP -> stopForegroundTracking()
             ACTION_REPEAT_SPEECH -> repeatCurrentSpeech()
             ACTION_TEST_VOICE -> speakIfAllowed(
@@ -240,6 +270,7 @@ class ViaVoxTrackingService : Service() {
         Log.d(TAG, "Stopping foreground tracking")
         isTrackingRunning = false
         locationTracker.stopTracking()
+        finishNavigationSession()
         speechQueue.cancelAll()
         ttsManager.stop()
         roadEngine.reset()
@@ -298,6 +329,8 @@ class ViaVoxTrackingService : Service() {
             }
         }
 
+        // A route keeps advancing on the GPS service even if Compose is hidden.
+        onNavigationFix(location)
         // Identify current street or street transition
         roadEngine.onLocationUpdate(location)
 
@@ -356,6 +389,99 @@ class ViaVoxTrackingService : Service() {
                     enabled = currentConfig.enableSafetyAlerts
                 )
                 TrackingRepository.updateSafetyFeatures(features)
+            }
+        }
+    }
+
+    private fun installNavigation(route: NavigationRoute) {
+        if (route.coordinates.size < 2) return
+        rerouteJob?.cancel()
+        navigationEngine = NavigationSessionEngine(route)
+        ActiveNavigationRepository.publish(ActiveNavigationState(
+            navigating = true,route = route,
+            instruction = "Siga pela rota indicada",
+            metersRemaining = route.distanceMeters,status = "Navegação ativa"
+        ))
+        lastNavFixAt = 0L
+        updateNotification(
+            TrackingRepository.state.value.place?.road.orEmpty(),
+            TrackingRepository.state.value.place?.neighbourhood.orEmpty()
+        )
+    }
+
+    private fun finishNavigationSession() {
+        navigationEpoch++
+        rerouteJob?.cancel()
+        rerouteJob = null
+        navigationEngine = null
+        ActiveNavigationRepository.publish(ActiveNavigationState())
+        // A stop action must revoke the old route even if the app is closed.
+        serviceScope.launch(Dispatchers.IO) { navigationStore.clear() }
+        updateNotification(
+            TrackingRepository.state.value.place?.road.orEmpty(),
+            TrackingRepository.state.value.place?.neighbourhood.orEmpty()
+        )
+    }
+
+    private fun onNavigationFix(location: Location) {
+        val engine = navigationEngine ?: return
+        if (!isTrackingRunning || !location.hasAccuracy()) return
+        val now = System.currentTimeMillis()
+        if (now - lastNavFixAt < 1_000L) return
+        lastNavFixAt = now
+        val tick = engine.update(
+            location.latitude,location.longitude,location.accuracy,
+            if (location.hasSpeed()) location.speed * 3.6f else 0f,now
+        ) ?: return
+        ActiveNavigationRepository.publish(tick.state)
+        tick.speech.forEach { instruction ->
+            speakIfAllowed(instruction,true,SpeechKind.NAVIGATION,
+                "nav:${instruction.lowercase()}")
+        }
+        if (tick.arrived) {
+            finishNavigationSession()
+            return
+        }
+        if (tick.requestReroute && rerouteJob?.isActive != true) {
+            val epoch = navigationEpoch
+            val previous = engine.route
+            ActiveNavigationRepository.publish(tick.state.copy(
+                rerouting = true,status = "Recalculando rota"
+            ))
+            rerouteJob = serviceScope.launch {
+                val result = navigationNetwork.route(
+                    location.latitude,location.longitude,previous.destination
+                )
+                if (epoch != navigationEpoch || navigationEngine !== engine) return@launch
+                result.onSuccess { next ->
+                    // Persist new geometry before exposing it to UI.
+                    try {
+                        withContext(Dispatchers.IO) { navigationStore.write(next) }
+                        if (epoch != navigationEpoch) return@onSuccess
+                        engine.replaceRoute(next)
+                        ActiveNavigationRepository.publish(ActiveNavigationState(
+                            navigating = true,route = next,
+                            instruction = "Siga pela rota recalculada",
+                            metersRemaining = next.distanceMeters,
+                            status = "Rota recalculada"
+                        ))
+                        speakIfAllowed("Rota recalculada.",true,
+                            SpeechKind.NAVIGATION,"nav:rerouted:$epoch")
+                        updateNotification(
+                            TrackingRepository.state.value.place?.road.orEmpty(),
+                            TrackingRepository.state.value.place?.neighbourhood.orEmpty()
+                        )
+                    } catch (e: Exception) {
+                        Log.w(TAG,"Cannot persist recalculated route",e)
+                        ActiveNavigationRepository.publish(tick.state.copy(
+                            status = "Falha ao salvar a rota recalculada"
+                        ))
+                    }
+                }.onFailure {
+                    ActiveNavigationRepository.publish(tick.state.copy(
+                        status = "Sem conexão para recalcular; seguindo a última rota"
+                    ))
+                }
             }
         }
     }
@@ -458,13 +584,16 @@ class ViaVoxTrackingService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val content = if (neighbourhood.isNotBlank() && neighbourhood != "Bairro não identificado") {
+        val nav = ActiveNavigationRepository.state.value
+        val content = if (nav.navigating && nav.route != null) {
+            "Navegando para ${nav.route.destination.name}"
+        } else if (neighbourhood.isNotBlank() && neighbourhood != "Bairro não identificado") {
             "$road · $neighbourhood"
         } else {
             road
         }
 
-        return NotificationCompat.Builder(this, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle(getString(R.string.notification_title))
             .setContentText(content)
@@ -476,7 +605,24 @@ class ViaVoxTrackingService : Service() {
                 getString(R.string.notification_stop_action),
                 stopPendingIntent
             )
-            .build()
+        if (ActiveNavigationRepository.state.value.navigating) {
+            val finish = PendingIntent.getService(
+                this, 3,Intent(this,ViaVoxTrackingService::class.java).apply {
+                    action = ACTION_NAV_STOP
+                },PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            builder.addAction(android.R.drawable.ic_menu_close_clear_cancel,
+                "Encerrar rota",finish)
+        }
+        if (TripRecordingRepository.state.value.recording) {
+            val finishTrack = PendingIntent.getService(
+                this, 4,Intent(this,ViaVoxTrackingService::class.java).apply {
+                    action = ACTION_RECORD_STOP
+                },PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            builder.addAction(android.R.drawable.ic_media_pause,"Finalizar percurso",finishTrack)
+        }
+        return builder.build()
     }
 
     private fun updateNotification(road: String, neighbourhood: String) {
@@ -510,6 +656,8 @@ class ViaVoxTrackingService : Service() {
         const val ACTION_START = "com.example.viavox.ACTION_START"
         const val ACTION_RECORD_START = "com.example.viavox.ACTION_RECORD_START"
         const val ACTION_RECORD_STOP = "com.example.viavox.ACTION_RECORD_STOP"
+        const val ACTION_NAV_START = "com.example.viavox.ACTION_NAV_START"
+        const val ACTION_NAV_STOP = "com.example.viavox.ACTION_NAV_STOP"
         const val ACTION_STOP = "com.example.viavox.ACTION_STOP"
         const val ACTION_REPEAT_SPEECH = "com.example.viavox.ACTION_REPEAT_SPEECH"
         const val ACTION_TEST_VOICE = "com.example.viavox.ACTION_TEST_VOICE"
@@ -526,6 +674,19 @@ class ViaVoxTrackingService : Service() {
             } else {
                 context.startService(intent)
             }
+        }
+
+        fun startNavigation(context: Context) {
+            start(context)
+            context.startService(Intent(context,ViaVoxTrackingService::class.java).apply {
+                action = ACTION_NAV_START
+            })
+        }
+
+        fun stopNavigation(context: Context) {
+            context.startService(Intent(context,ViaVoxTrackingService::class.java).apply {
+                action = ACTION_NAV_STOP
+            })
         }
 
         fun startRecording(context: Context) {
