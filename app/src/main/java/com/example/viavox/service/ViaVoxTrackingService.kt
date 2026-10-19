@@ -21,9 +21,14 @@ import com.example.viavox.R
 import com.example.viavox.data.NominatimService
 import com.example.viavox.data.PoiDiscoveryService
 import com.example.viavox.data.TrackingRepository
+import com.example.viavox.data.TripRecordingRepository
+import com.example.viavox.model.TripPoint
 import com.example.viavox.model.RelativeDirection
 import com.example.viavox.model.ViaVoxConfig
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -38,6 +43,8 @@ class ViaVoxTrackingService : Service() {
     private var lastPoiCheckTimestamp = 0L
     private val poiAnnouncements = PoiAnnouncementCoordinator()
 
+    private lateinit var tripRecorder: ServiceTripRecorder
+    private lateinit var recorderReady: Deferred<com.example.viavox.data.TripRecordingState>
     private lateinit var ttsManager: TextToSpeechManager
     private lateinit var speechQueue: SpeechOrchestrator
     private lateinit var locationTracker: LocationTrackingManager
@@ -57,6 +64,8 @@ class ViaVoxTrackingService : Service() {
         val prefs = getSharedPreferences("viavox_prefs", Context.MODE_PRIVATE)
         currentConfig = ViaVoxConfig.loadFrom(prefs)
         val initialVoiceEnabled = prefs.getBoolean("voice_enabled", true)
+        tripRecorder = ServiceTripRecorder(this)
+        recorderReady = serviceScope.async(Dispatchers.IO) { tripRecorder.restore() }
 
         ttsManager = TextToSpeechManager(
             context = this,
@@ -130,6 +139,16 @@ class ViaVoxTrackingService : Service() {
 
         when (action) {
             ACTION_START -> startForegroundTracking()
+            ACTION_RECORD_START -> {
+                if (isTrackingRunning) serviceScope.launch(Dispatchers.IO) {
+                    recorderReady.await()
+                    tripRecorder.start()
+                }
+            }
+            ACTION_RECORD_STOP -> serviceScope.launch(Dispatchers.IO) {
+                recorderReady.await()
+                tripRecorder.finish()
+            }
             ACTION_STOP -> stopForegroundTracking()
             ACTION_REPEAT_SPEECH -> repeatCurrentSpeech()
             ACTION_TEST_VOICE -> speakIfAllowed(
@@ -247,7 +266,18 @@ class ViaVoxTrackingService : Service() {
             Log.w(TAG, "Error stopping foreground: ${e.message}")
         }
 
-        stopSelf()
+        serviceScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    recorderReady.await()
+                    tripRecorder.finish()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG,"Could not finalize trip before stopping",e)
+            } finally {
+                stopSelf()
+            }
+        }
     }
 
     private fun onLocationUpdateReceived(location: Location) {
@@ -259,6 +289,14 @@ class ViaVoxTrackingService : Service() {
         val hasBearing = location.hasBearing()
 
         TrackingRepository.updateCoordinates(lat, lon, accuracy, speedKmh, bearing, hasBearing)
+        if (TripRecordingRepository.state.value.recording) {
+            val point = TripPoint(lat,lon,System.currentTimeMillis(),
+                if (location.hasAccuracy()) location.accuracy else 100f)
+            serviceScope.launch(Dispatchers.IO) {
+                recorderReady.await()
+                tripRecorder.append(point)
+            }
+        }
 
         // Identify current street or street transition
         roadEngine.onLocationUpdate(location)
@@ -455,6 +493,7 @@ class ViaVoxTrackingService : Service() {
         poiJob = null
         poiAnnouncements.reset()
         serviceScope.cancel()
+        tripRecorder.close()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -465,6 +504,8 @@ class ViaVoxTrackingService : Service() {
         const val CHANNEL_ID = "viavox_tracking_channel"
 
         const val ACTION_START = "com.example.viavox.ACTION_START"
+        const val ACTION_RECORD_START = "com.example.viavox.ACTION_RECORD_START"
+        const val ACTION_RECORD_STOP = "com.example.viavox.ACTION_RECORD_STOP"
         const val ACTION_STOP = "com.example.viavox.ACTION_STOP"
         const val ACTION_REPEAT_SPEECH = "com.example.viavox.ACTION_REPEAT_SPEECH"
         const val ACTION_TEST_VOICE = "com.example.viavox.ACTION_TEST_VOICE"
@@ -481,6 +522,18 @@ class ViaVoxTrackingService : Service() {
             } else {
                 context.startService(intent)
             }
+        }
+
+        fun startRecording(context: Context) {
+            context.startService(Intent(context,ViaVoxTrackingService::class.java).apply {
+                action = ACTION_RECORD_START
+            })
+        }
+
+        fun stopRecording(context: Context) {
+            context.startService(Intent(context,ViaVoxTrackingService::class.java).apply {
+                action = ACTION_RECORD_STOP
+            })
         }
 
         fun stop(context: Context) {
