@@ -99,6 +99,7 @@ class MainActivity : ComponentActivity() {
                     onVoiceSelectionChanged = { provider, voiceId -> viewModel.updateVoiceSelection(provider, voiceId) },
                     onIntervalChanged = { viewModel.updateInterval(it) },
                     onPoiCategoryToggled = { cat, enabled -> viewModel.togglePoiCategory(cat, enabled) },
+                    onPoiNarrationToggled = { viewModel.togglePoiNarration(it) },
                     onFranciscaBrokerUrlChanged = { url -> viewModel.updateFranciscaBrokerUrl(url) },
                     onFranciscaAccessTokenChanged = { token -> viewModel.updateFranciscaAccessToken(token) },
                     onVehicleTypeChanged = { viewModel.updateVehicleType(it) },
