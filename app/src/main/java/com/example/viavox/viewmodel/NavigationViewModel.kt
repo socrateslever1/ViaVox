@@ -223,6 +223,9 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun select(place: MapPlace) {
+        if (_ui.value.navigating || ActiveNavigationRepository.state.value.navigating) {
+            ViaVoxTrackingService.stopNavigation(getApplication())
+        }
         suggestionJob?.cancel()
         searchJob?.cancel()
         _ui.update { it.copy(selected = place, route = null, navigating = false,
@@ -383,6 +386,9 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun openSavedRoute(route: StoredRoute) {
+        if (_ui.value.navigating || ActiveNavigationRepository.state.value.navigating) {
+            ViaVoxTrackingService.stopNavigation(getApplication())
+        }
         _ui.update { it.copy(
             selected = route.route.destination, route = route.route,
             showingTrip = null, navigating = false, panel = "", error = null
@@ -414,6 +420,9 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun openTrip(trip: SavedTrip) {
+        if (_ui.value.navigating || ActiveNavigationRepository.state.value.navigating) {
+            ViaVoxTrackingService.stopNavigation(getApplication())
+        }
         _ui.update { it.copy(showingTrip = trip, route = null, navigating = false,
             selected = null, panel = "") }
     }
