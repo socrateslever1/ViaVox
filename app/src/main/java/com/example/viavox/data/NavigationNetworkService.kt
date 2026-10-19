@@ -29,6 +29,8 @@ class NavigationNetworkService(
     // explicit user-initiated searches, never autocomplete on every keystroke.
     private val nominatimLock = Any()
     private var lastNominatimRequestAt = 0L
+    private val cacheLock = Any()
+    private val searchCache = mutableMapOf<String, Pair<Long, List<MapPlace>>>()
 
     suspend fun search(
         query: String,
@@ -51,6 +53,11 @@ class NavigationNetworkService(
             }
 
             val local = DestinationSearchPolicy.localMatches(cleaned, savedPlaces)
+            val searchKey = DestinationSearchPolicy.normalize(cleaned)
+            val cached = synchronized(cacheLock) { searchCache[searchKey] }
+            if (cached != null && System.currentTimeMillis() - cached.first < 600_000L) {
+                return@runCatching DestinationSearchPolicy.merge(local,cached.second)
+            }
             val variants = DestinationSearchPolicy.queryVariants(cleaned)
             var online = emptyList<MapPlace>()
             var lastError: Exception? = null
@@ -83,7 +90,12 @@ class NavigationNetworkService(
                 } catch (e: Exception) { lastError = e }
             }
 
-            val combined = DestinationSearchPolicy.merge(local,online)
+            if (online.isNotEmpty()) synchronized(cacheLock) {
+                if (searchCache.size >= 80) searchCache.clear()
+                searchCache[searchKey] = System.currentTimeMillis() to online
+            }
+            val combined = DestinationSearchPolicy.merge(local,
+                if (online.isNotEmpty()) online else cached?.second.orEmpty())
             if (combined.isNotEmpty()) return@runCatching combined
             if (lastError != null) {
                 throw IllegalStateException(
