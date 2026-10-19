@@ -1,5 +1,10 @@
 package com.example.viavox.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -18,6 +23,8 @@ import com.example.viavox.model.PoiCategory
 import com.example.viavox.model.TrackingState
 import com.example.viavox.ui.components.NavigationSearchAndActions
 import com.example.viavox.ui.components.NavigationRouteCard
+import com.example.viavox.ui.components.ActiveNavigationBanner
+import com.example.viavox.ui.components.NavigationStreetStrip
 import com.example.viavox.ui.components.NavigationLibraryDialog
 import com.example.viavox.viewmodel.NavigationUiState
 import com.example.viavox.viewmodel.NavigationViewModel
@@ -91,14 +98,14 @@ fun ViaVoxMainScreen(
                 .safeDrawingPadding()
         ) {
             // Top essential controls bar
-            HeaderBar(
+            if (!navigationUi.navigating) HeaderBar(
                 onOpenSettings = onOpenSettings,
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .widthIn(max = 720.dp)
             )
 
-            NavigationSearchAndActions(
+            if (!navigationUi.navigating) NavigationSearchAndActions(
                 ui = navigationUi,
                 onQueryChanged = navigation::updateQuery,
                 onSearch = navigation::search,
@@ -119,7 +126,8 @@ fun ViaVoxMainScreen(
             )
 
             val searchOpen = navigationUi.suggestionsVisible && navigationUi.query.trim().length >= 3
-            if (!searchOpen && (navigationUi.selected != null || navigationUi.route != null)) {
+            if (!searchOpen && !navigationUi.navigating &&
+                (navigationUi.selected != null || navigationUi.route != null)) {
                 NavigationRouteCard(
                     ui = navigationUi,
                     onStart = navigation::startNavigation,
@@ -128,9 +136,43 @@ fun ViaVoxMainScreen(
                     modifier = Modifier
                         .align(if (isWide) Alignment.BottomEnd else Alignment.BottomCenter)
                         .padding(horizontal = 14.dp)
-                        .padding(bottom = if (navigationUi.navigating) 172.dp else 12.dp)
+                        .padding(bottom = 12.dp)
                         .widthIn(max = if (isWide) 430.dp else 560.dp)
                         .fillMaxWidth()
+                )
+            }
+
+            AnimatedVisibility(
+                visible = navigationUi.navigating,
+                modifier = Modifier.align(Alignment.TopCenter)
+                    .padding(horizontal = 12.dp, vertical = 10.dp)
+                    .widthIn(max = 720.dp),
+                enter = fadeIn() + slideInVertically { -it / 2 },
+                exit = fadeOut() + slideOutVertically { -it / 2 }
+            ) {
+                ActiveNavigationBanner(
+                    ui = navigationUi,
+                    onStop = navigation::stopNavigation,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+
+            AnimatedVisibility(
+                visible = navigationUi.navigating,
+                modifier = Modifier.align(Alignment.BottomCenter)
+                    .padding(horizontal = 12.dp,vertical = 12.dp)
+                    .widthIn(max = 720.dp),
+                enter = fadeIn() + slideInVertically { it / 2 },
+                exit = fadeOut() + slideOutVertically { it / 2 }
+            ) {
+                NavigationStreetStrip(
+                    street = state.place?.road?.takeIf { it.isNotBlank() } ?: "Localizando via...",
+                    neighborhood = state.place?.neighbourhood.orEmpty(),
+                    accuracyMeters = state.accuracyMeters,
+                    voiceEnabled = state.isVoiceEnabled,
+                    onToggleVoice = onToggleVoice,
+                    onRepeat = onRepeatSpeech,
+                    modifier = Modifier.fillMaxWidth()
                 )
             }
 
@@ -153,7 +195,7 @@ fun ViaVoxMainScreen(
 
             // Route preview replaces the street card; searching hides it entirely
             // so autocomplete and the keyboard never cover the whole map.
-            if (!searchOpen && (navigationUi.selected == null || navigationUi.navigating)) {
+            if (!navigationUi.navigating && !searchOpen && navigationUi.selected == null) {
             StatusPanel(
                 state = state,
                 onStartTracking = onStartTracking,
