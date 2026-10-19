@@ -60,7 +60,7 @@ fun StatusPanel(
     val road = place?.takeIf { it.hasValidRoad() }?.road
         ?: stringResource(R.string.where_are_you)
     val contextLine = listOfNotNull(
-        place?.neighbourhood?.takeIf { place.hasValidNeighbourhood() },
+        place?.takeIf { it.hasValidNeighbourhood() }?.neighbourhood,
         place?.city?.takeIf(String::isNotBlank)
     ).distinct().joinToString(" · ").ifBlank {
         stringResource(R.string.empty_address_hint)
