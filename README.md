@@ -2,6 +2,33 @@
 
 > **Sua localização ganha voz.** Aplicativo funcional em Kotlin e Jetpack Compose que narra automaticamente ao motorista o nome da rua, o bairro e pontos de referência relevantes durante o deslocamento em tempo real, sem necessidade de definir destino, com suporte a operação contínua com tela bloqueada.
 
+O projeto também possui uma interface web responsiva com mapa, pesquisa de destino, prévia de rota e navegação por voz. Ela funciona sem login e utiliza serviços públicos baseados em OpenStreetMap, sem chave de API paga.
+
+## 🌐 Executar a versão web
+
+Requer Node.js 22 ou superior. Na primeira execução, instale as dependências antes de iniciar o Vite:
+
+```powershell
+npm install
+npm run dev
+```
+
+Abra o endereço exibido pelo Vite. No navegador:
+
+1. permita o acesso à localização;
+2. digite um destino e pressione **Buscar**;
+3. escolha um resultado para visualizar distância e tempo;
+4. pressione **Iniciar navegação**.
+
+Também é possível clicar com o botão direito ou manter pressionado um ponto no mapa para escolhê-lo como destino. A voz utiliza o sintetizador local do navegador/aparelho. A busca usa Photon, a rota usa OSRM e o mapa usa OpenFreeMap/MapLibre; nenhum login ou chave paga é necessário.
+
+Para validar a versão web:
+
+```powershell
+npm test
+npm run build
+```
+
 ---
 
 ## 📱 Recursos e Arquitetura Android Nativa

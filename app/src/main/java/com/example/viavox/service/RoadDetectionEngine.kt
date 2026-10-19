@@ -39,6 +39,7 @@ class RoadDetectionEngine(
     private var lastQuerySucceeded = false
 
     private var currentConfirmedRoad: String? = null
+    private var currentConfirmedVenue: String? = null
     private var lastAnnouncedNeighbourhood: String? = null
     private var pendingNeighbourhood: String? = null
     private var pendingNeighbourhoodCount = 0
@@ -48,12 +49,16 @@ class RoadDetectionEngine(
     private var pendingCandidateStartLat = 0.0
     private var pendingCandidateStartLon = 0.0
 
+    var enablePoliceCircumscription: Boolean = true
+
     fun getCurrentConfirmedRoad(): String? = currentConfirmedRoad
+    fun getCurrentConfirmedVenue(): String? = currentConfirmedVenue
 
     fun reset() {
         activeQueryJob?.cancel()
         activeQueryJob = null
         currentConfirmedRoad = null
+        currentConfirmedVenue = null
         lastAnnouncedNeighbourhood = null
         pendingNeighbourhood = null
         pendingNeighbourhoodCount = 0
@@ -103,21 +108,23 @@ class RoadDetectionEngine(
 
         val speedMps = fix.speedMps
         val minInterval = when {
-            !lastQuerySucceeded -> 3_000L
-            pendingCandidateRoad != null || pendingNeighbourhood != null -> 4_000L
-            speedMps > 8.3f -> 6_000L
-            else -> 8_000L
+            !lastQuerySucceeded -> 2_500L
+            pendingCandidateRoad != null || pendingNeighbourhood != null -> 2_500L
+            speedMps > 8.3f -> 3_500L // > 30 km/h: fast response on avenues
+            speedMps > 3.0f -> 3_000L // 11-30 km/h: urban neighborhood streets
+            else -> 6_000L           // Stationary / parking speed
         }
         val minDistance = when {
-            pendingCandidateRoad != null || pendingNeighbourhood != null -> 10.0
-            speedMps > 8.3f -> 20.0
-            else -> 14.0
+            pendingCandidateRoad != null || pendingNeighbourhood != null -> 8.0
+            speedMps > 8.3f -> 14.0
+            speedMps > 3.0f -> 9.0
+            else -> 12.0
         }
 
         val isFirstLookup = lastQueryTimestamp == 0L
         val hasUnconfirmedInitialRoad = currentConfirmedRoad == null && (now - lastQueryTimestamp >= minInterval)
         val hasMovedEnough = (now - lastQueryTimestamp >= minInterval) &&
-                (metersMoved >= minDistance || now - lastQueryTimestamp >= 45_000L)
+                (metersMoved >= minDistance || now - lastQueryTimestamp >= 40_000L)
 
         if (isFirstLookup || hasUnconfirmedInitialRoad || hasMovedEnough) {
             lastQueryTimestamp = now
@@ -202,7 +209,7 @@ class RoadDetectionEngine(
                     pendingNeighbourhood = null
                     pendingNeighbourhoodCount = 0
                     onRoadAnnounceNeeded(
-                        normalizedPlace.toSpeechMessage(isTransition = true, includeNeighbourhood = true),
+                        normalizedPlace.toNeighbourhoodTransitionMessage(includePolice = enablePoliceCircumscription),
                         false
                     )
                 }
@@ -210,6 +217,28 @@ class RoadDetectionEngine(
                 pendingNeighbourhood = null
                 pendingNeighbourhoodCount = 0
             }
+            return
+        }
+
+        // VENUE / NOTABLE BUILDING RECOGNITION & SHIELD:
+        // If the user arrived at or is inside a notable landmark/building/complex (hospital, college, mall, public building):
+        if (normalizedPlace.hasVenue()) {
+            if (currentConfirmedVenue != normalizedPlace.venueName) {
+                currentConfirmedVenue = normalizedPlace.venueName
+                onRoadAnnounceNeeded(normalizedPlace.toSpeechMessage(isTransition = false), false)
+            }
+            pendingCandidateRoad = null
+            pendingCandidatePlace = null
+            pendingCandidateCount = 0
+            return
+        }
+
+        // If the user entered from a confirmed road and is now stationary or crawling (< 2.2 m/s, e.g. parking lot,
+        // deep inside a store or condo), DO NOT switch to a parallel/back street. A car does not hop fences.
+        if (fix.speedMps < 2.2f) {
+            pendingCandidateRoad = null
+            pendingCandidatePlace = null
+            pendingCandidateCount = 0
             return
         }
 
@@ -225,12 +254,12 @@ class RoadDetectionEngine(
                 fix.longitude
             )
 
-            // Confirm street change if:
-            // - 2+ consecutive readings with >= 10m displacement along the new street, OR
-            // - Moving cleanly (speed >= 5 m/s) with >= 22m displacement on the new street, OR
-            // - 3+ consecutive readings on the new street
+            // Fast transition:
+            // - 2+ readings with >= 10m displacement along the new street, OR
+            // - Clean vehicle driving (speed >= 3.5 m/s or ~12 km/h) with >= 14m displacement, OR
+            // - 3+ consecutive readings
             val isConfirmed = (pendingCandidateCount >= 2 && distOnCandidate >= 10.0) ||
-                    (fix.speedMps >= 5.0f && distOnCandidate >= 22.0) ||
+                    (fix.speedMps >= 3.5f && distOnCandidate >= 14.0) ||
                     (pendingCandidateCount >= 3)
 
             if (isConfirmed) {

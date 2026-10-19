@@ -83,7 +83,16 @@ function formatManeuver(type: string, modifier: string | undefined, name: string
 export function parseOsrmResponse(data: any, destination: SearchPlace): NavigationRoute {
   const route = data?.routes?.[0];
   const rawCoords: [number, number][] = route?.geometry?.coordinates;
-  if (!rawCoords || rawCoords.length === 0) {
+  if (
+    !Array.isArray(rawCoords) ||
+    rawCoords.length === 0 ||
+    rawCoords.some(point =>
+      !Array.isArray(point) ||
+      point.length < 2 ||
+      !Number.isFinite(point[0]) ||
+      !Number.isFinite(point[1])
+    )
+  ) {
     throw new Error('Rota sem geometria válida');
   }
 
@@ -93,7 +102,7 @@ export function parseOsrmResponse(data: any, destination: SearchPlace): Navigati
   const rawSteps = route.legs?.[0]?.steps || [];
   for (const st of rawSteps) {
     const loc = st.maneuver?.location;
-    if (!loc) continue;
+    if (!Array.isArray(loc) || !Number.isFinite(loc[0]) || !Number.isFinite(loc[1])) continue;
     const [lon, lat] = loc;
 
     // Find closest index in coordinates
@@ -170,4 +179,171 @@ export function isSustainedDeviation(distances: number[], threshold: number): bo
 
 export function isArrival(distMeters: number): boolean {
   return distMeters <= 35.0;
+}
+
+export type NavigationSessionStatus = 'idle' | 'preview' | 'navigating' | 'arrived';
+
+export interface NavigationSession {
+  status: NavigationSessionStatus;
+  route: NavigationRoute | null;
+  geometryIndex: number;
+  stepIndex: number;
+  nextInstruction: string;
+  deviationSamples: number[];
+  lastRerouteAt: number;
+  lastAnnouncedStep: number;
+  arrivalAnnounced: boolean;
+}
+
+export interface NavigationUpdate {
+  session: NavigationSession;
+  announcement: string | null;
+  shouldReroute: boolean;
+}
+
+export function createNavigationSession(): NavigationSession {
+  return {
+    status: 'idle',
+    route: null,
+    geometryIndex: 0,
+    stepIndex: 0,
+    nextInstruction: '',
+    deviationSamples: [],
+    lastRerouteAt: 0,
+    lastAnnouncedStep: -1,
+    arrivalAnnounced: false
+  };
+}
+
+export function selectNavigationRoute(
+  _current: NavigationSession,
+  route: NavigationRoute
+): NavigationSession {
+  return {
+    ...createNavigationSession(),
+    status: 'preview',
+    route,
+    nextInstruction: route.steps[0]?.instruction || 'Siga o percurso'
+  };
+}
+
+export function startNavigation(session: NavigationSession): NavigationSession {
+  if (!session.route) return session;
+  return {
+    ...session,
+    status: 'navigating',
+    geometryIndex: 0,
+    stepIndex: 0,
+    deviationSamples: [],
+    lastAnnouncedStep: -1,
+    arrivalAnnounced: false,
+    nextInstruction: session.route.steps[0]?.instruction || 'Siga o percurso'
+  };
+}
+
+export function stopNavigation(_session: NavigationSession): NavigationSession {
+  return createNavigationSession();
+}
+
+export function shouldApplyRequestResult(
+  requestId: number,
+  activeRequestId: number,
+  aborted: boolean
+): boolean {
+  return !aborted && requestId === activeRequestId;
+}
+
+export function updateNavigationSession(
+  session: NavigationSession,
+  position: { latitude: number; longitude: number },
+  accuracyMeters: number,
+  nowMs: number
+): NavigationUpdate {
+  const route = session.route;
+  if (!route || session.status === 'idle' || session.status === 'preview' || session.status === 'arrived') {
+    return { session, announcement: null, shouldReroute: false };
+  }
+
+  if (distanceMeters(position, route.destination) <= 35) {
+    return {
+      session: {
+        ...session,
+        status: 'arrived',
+        nextInstruction: 'Chegou ao destino',
+        deviationSamples: [],
+        arrivalAnnounced: true
+      },
+      announcement: session.arrivalAnnounced ? null : 'Você chegou ao destino.',
+      shouldReroute: false
+    };
+  }
+
+  const progress = findRouteProgress(route, position, session.geometryIndex, session.stepIndex);
+  const routeDistance = distanceToRouteMeters(position, route.coordinates);
+  const deviationSamples = [...session.deviationSamples, routeDistance].slice(-3);
+  const threshold = Math.max(65, Math.max(0, accuracyMeters) * 2 + 65);
+  const outsideCooldown = session.lastRerouteAt === 0 || nowMs - session.lastRerouteAt >= 45_000;
+  const shouldReroute = outsideCooldown && isSustainedDeviation(deviationSamples, threshold);
+  const step = route.steps[progress.stepIndex];
+  const metersUntilStep = step ? distanceMeters(position, step) : Number.POSITIVE_INFINITY;
+  const shouldAnnounceStep = metersUntilStep <= 70 && progress.stepIndex > session.lastAnnouncedStep;
+
+  return {
+    session: {
+      ...session,
+      geometryIndex: progress.geometryIndex,
+      stepIndex: progress.stepIndex,
+      nextInstruction: progress.nextInstruction,
+      deviationSamples: shouldReroute ? [] : deviationSamples,
+      lastRerouteAt: shouldReroute ? nowMs : session.lastRerouteAt,
+      lastAnnouncedStep: shouldAnnounceStep ? progress.stepIndex : session.lastAnnouncedStep
+    },
+    announcement: shouldAnnounceStep ? progress.nextInstruction : null,
+    shouldReroute
+  };
+}
+
+export function distanceMeters(
+  a: { latitude: number; longitude: number },
+  b: { latitude: number; longitude: number }
+): number {
+  const earthRadius = 6_371_000;
+  const lat1 = a.latitude * Math.PI / 180;
+  const lat2 = b.latitude * Math.PI / 180;
+  const dLat = (b.latitude - a.latitude) * Math.PI / 180;
+  const dLon = (b.longitude - a.longitude) * Math.PI / 180;
+  const h = Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+  return earthRadius * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+}
+
+function distanceToRouteMeters(
+  point: { latitude: number; longitude: number },
+  coordinates: { latitude: number; longitude: number }[]
+): number {
+  if (coordinates.length < 2) return coordinates[0] ? distanceMeters(point, coordinates[0]) : Infinity;
+  let best = Infinity;
+  for (let index = 0; index < coordinates.length - 1; index += 1) {
+    best = Math.min(best, distanceToSegmentMeters(point, coordinates[index], coordinates[index + 1]));
+  }
+  return best;
+}
+
+function distanceToSegmentMeters(
+  point: { latitude: number; longitude: number },
+  start: { latitude: number; longitude: number },
+  end: { latitude: number; longitude: number }
+): number {
+  const latScale = 111_320;
+  const lonScale = latScale * Math.cos(point.latitude * Math.PI / 180);
+  const ax = (start.longitude - point.longitude) * lonScale;
+  const ay = (start.latitude - point.latitude) * latScale;
+  const bx = (end.longitude - point.longitude) * lonScale;
+  const by = (end.latitude - point.latitude) * latScale;
+  const dx = bx - ax;
+  const dy = by - ay;
+  const lengthSquared = dx * dx + dy * dy;
+  const projection = lengthSquared === 0 ? 0 : -(ax * dx + ay * dy) / lengthSquared;
+  const t = Math.max(0, Math.min(1, projection));
+  return Math.hypot(ax + t * dx, ay + t * dy);
 }

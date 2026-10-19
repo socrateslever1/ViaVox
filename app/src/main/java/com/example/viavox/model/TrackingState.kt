@@ -21,5 +21,6 @@ data class TrackingState(
     val isSpeaking: Boolean = false,
     val voiceIssue: String? = null,
     val hasLocationPermission: Boolean = false,
-    val config: ViaVoxConfig = ViaVoxConfig()
+    val config: ViaVoxConfig = ViaVoxConfig(),
+    val safetyFeatures: List<com.example.viavox.service.SafetyAlertEngine.SafetyFeature> = emptyList()
 )

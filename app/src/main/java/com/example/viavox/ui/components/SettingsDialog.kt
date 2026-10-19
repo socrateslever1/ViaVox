@@ -69,10 +69,16 @@ fun SettingsDialog(
     onPoiCategoryToggled: (PoiCategory, Boolean) -> Unit,
     onFranciscaBrokerUrlChanged: (String) -> Unit = {},
     onFranciscaAccessTokenChanged: (String) -> Unit = {},
+    onVehicleTypeChanged: (String) -> Unit = {},
+    onSafetyAlertsToggled: (Boolean) -> Unit = {},
+    onPoliceCircumscriptionToggled: (Boolean) -> Unit = {},
+    onGoogleMapsApiKeyChanged: (String) -> Unit = {},
     onDismiss: () -> Unit
 ) {
     var voiceUrl by remember(config.franciscaBrokerUrl) { mutableStateOf(config.franciscaBrokerUrl) }
     var accessToken by remember(config.franciscaAccessToken) { mutableStateOf(config.franciscaAccessToken) }
+    var googleKey by remember(config.googleMapsApiKey) { mutableStateOf(config.googleMapsApiKey) }
+    var advancedGoogleExpanded by remember { mutableStateOf(config.hasGoogleMapsKey()) }
     val invalidUrl = voiceUrl.isNotBlank() && !voiceUrl.trim().startsWith("https://")
     val franciscaReady = config.hasFranciscaSettings()
     val uriHandler = LocalUriHandler.current
@@ -123,6 +129,50 @@ fun SettingsDialog(
                         fontSize = 12.sp,
                         modifier = Modifier.padding(top = 3.dp, bottom = 19.dp)
                     )
+
+                    SectionTitle("Tipo de Veículo")
+                    Text(
+                        text = "Personalize as instruções e a navegação para o seu transporte.",
+                        color = muted,
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        val isMoto = config.isMotorcycle()
+                        Button(
+                            onClick = { onVehicleTypeChanged("car") },
+                            modifier = Modifier.weight(1f).testTag("vehicle_car_btn"),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (!isMoto) accent else Color.White.copy(alpha = 0.08f)
+                            )
+                        ) {
+                            Text(
+                                "🚗 Carro",
+                                color = if (!isMoto) Color(0xFF07192D) else white,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp
+                            )
+                        }
+                        Button(
+                            onClick = { onVehicleTypeChanged("motorcycle") },
+                            modifier = Modifier.weight(1f).testTag("vehicle_moto_btn"),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isMoto) accent else Color.White.copy(alpha = 0.08f)
+                            )
+                        ) {
+                            Text(
+                                "🏍️ Moto",
+                                color = if (isMoto) Color(0xFF07192D) else white,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp
+                            )
+                        }
+                    }
 
                     SectionTitle("Voz da navegação")
                     Text(
@@ -391,6 +441,80 @@ fun SettingsDialog(
                     CategoryToggle(stringResource(R.string.category_public), config.enablePublicPoi) {
                         onPoiCategoryToggled(PoiCategory.PUBLIC, it)
                     }
+
+                    Spacer(Modifier.height(18.dp))
+                    HorizontalDivider(color = Color.White.copy(alpha = 0.09f))
+                    Spacer(Modifier.height(15.dp))
+
+                    SectionTitle("Circunscrição & Segurança Pública")
+                    Text(
+                        "Consciência situacional avançada para condutores, motoristas de app e cidadãos.",
+                        color = muted,
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp,
+                        modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
+                    )
+                    CategoryToggle("Circunscrição policial (DIPs e CICOMs)", config.enablePoliceCircumscription) {
+                        onPoliceCircumscriptionToggled(it)
+                    }
+                    CategoryToggle("Alertas de radares e pedágios", config.enableSafetyAlerts) {
+                        onSafetyAlertsToggled(it)
+                    }
+
+                    Spacer(Modifier.height(18.dp))
+                    HorizontalDivider(color = Color.White.copy(alpha = 0.09f))
+                    Spacer(Modifier.height(15.dp))
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { advancedGoogleExpanded = !advancedGoogleExpanded },
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            SectionTitle("Enriquecimento de locais (Google Places)")
+                            Text(
+                                if (advancedGoogleExpanded) "Toque para recolher" else "Opcional · toque para expandir",
+                                color = muted,
+                                fontSize = 12.sp
+                            )
+                        }
+                        Text(
+                            if (advancedGoogleExpanded) "▲" else "▼",
+                            color = accent,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(start = 8.dp)
+                        )
+                    }
+
+                    if (advancedGoogleExpanded) {
+                        Text(
+                            text = "Por padrão, o ViaVox funciona 100% gratuito com OpenStreetMap em Manaus, no Brasil e no mundo. Se desejar, insira uma chave Google Cloud Places para enriquecer nomes de estabelecimentos internos e condomínios.",
+                            color = muted,
+                            fontSize = 12.sp,
+                            lineHeight = 17.sp,
+                            modifier = Modifier.padding(top = 6.dp, bottom = 8.dp)
+                        )
+                        OutlinedTextField(
+                            value = googleKey,
+                            onValueChange = { googleKey = it },
+                            label = { Text("Chave da API Google Maps / Places") },
+                            placeholder = { Text("AIzaSy...") },
+                            visualTransformation = PasswordVisualTransformation(),
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = white,
+                                unfocusedTextColor = white,
+                                focusedBorderColor = accent,
+                                unfocusedBorderColor = Color(0xFF38516B),
+                                focusedLabelColor = accent,
+                                unfocusedLabelColor = muted,
+                                cursorColor = accent
+                            ),
+                            modifier = Modifier.fillMaxWidth().testTag("google_api_key_input")
+                        )
+                    }
                 }
 
                 HorizontalDivider(color = Color.White.copy(alpha = 0.10f))
@@ -407,6 +531,7 @@ fun SettingsDialog(
                         onClick = {
                             onFranciscaBrokerUrlChanged(voiceUrl.trim())
                             onFranciscaAccessTokenChanged(accessToken.trim())
+                            onGoogleMapsApiKeyChanged(googleKey.trim())
                             if (config.voiceProvider == "francisca" &&
                                 (voiceUrl.isBlank() || accessToken.isBlank())
                             ) {

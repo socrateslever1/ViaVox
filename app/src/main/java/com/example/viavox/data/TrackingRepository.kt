@@ -70,4 +70,8 @@ object TrackingRepository {
     fun updateConfig(config: ViaVoxConfig) {
         _state.update { it.copy(config = config) }
     }
+
+    fun updateSafetyFeatures(features: List<com.example.viavox.service.SafetyAlertEngine.SafetyFeature>) {
+        _state.update { it.copy(safetyFeatures = features) }
+    }
 }

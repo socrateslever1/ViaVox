@@ -38,9 +38,12 @@ fun ViaVoxMainScreen(
     onSpeedChanged: (Float) -> Unit,
     onVoiceSelectionChanged: (String, String) -> Unit,
     onIntervalChanged: (Int) -> Unit,
-    onPoiCategoryToggled: (PoiCategory, Boolean) -> Unit,
     onFranciscaBrokerUrlChanged: (String) -> Unit = {},
     onFranciscaAccessTokenChanged: (String) -> Unit = {},
+    onVehicleTypeChanged: (String) -> Unit = {},
+    onSafetyAlertsToggled: (Boolean) -> Unit = {},
+    onPoliceCircumscriptionToggled: (Boolean) -> Unit = {},
+    onGoogleMapsApiKeyChanged: (String) -> Unit = {},
     onStartTracking: () -> Unit,
     onStopTracking: () -> Unit,
     onToggleVoice: (Boolean) -> Unit,
@@ -71,6 +74,8 @@ fun ViaVoxMainScreen(
             favorites = navigationUi.savedPlaces.map { it.second },
             savedTrack = navigationUi.showingTrip?.points.orEmpty(),
             liveTrack = navigationUi.livePoints,
+            isMotorcycle = state.config.isMotorcycle(),
+            safetyFeatures = state.safetyFeatures,
             onMapLongPress = { lat, lon -> navigation.selectMapPoint(lat, lon) },
             modifier = Modifier.fillMaxSize()
         )
@@ -177,6 +182,10 @@ fun ViaVoxMainScreen(
                 onPoiCategoryToggled = onPoiCategoryToggled,
                 onFranciscaBrokerUrlChanged = onFranciscaBrokerUrlChanged,
                 onFranciscaAccessTokenChanged = onFranciscaAccessTokenChanged,
+                onVehicleTypeChanged = onVehicleTypeChanged,
+                onSafetyAlertsToggled = onSafetyAlertsToggled,
+                onPoliceCircumscriptionToggled = onPoliceCircumscriptionToggled,
+                onGoogleMapsApiKeyChanged = onGoogleMapsApiKeyChanged,
                 onDismiss = onCloseSettings
             )
         }

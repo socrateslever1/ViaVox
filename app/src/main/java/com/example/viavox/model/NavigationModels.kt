@@ -80,6 +80,42 @@ object NavigationMath {
         return best
     }
 
+    /**
+     * Projects GPS coordinates onto the calculated route polyline (Map Matching)
+     * if the vehicle is within threshold distance (default 28 meters).
+     */
+    fun snapToPolyline(
+        latitude: Double,
+        longitude: Double,
+        points: List<Pair<Double, Double>>,
+        maxSnapDistanceMeters: Double = 28.0
+    ): Pair<Double, Double> {
+        if (points.size < 2) return latitude to longitude
+        var bestDistance = Double.POSITIVE_INFINITY
+        var bestSnappedLat = latitude
+        var bestSnappedLon = longitude
+
+        for (i in 0 until points.size - 1) {
+            val a = points[i]
+            val b = points[i + 1]
+            val latDiff = b.first - a.first
+            val lonDiff = b.second - a.second
+            val lengthSq = latDiff * latDiff + lonDiff * lonDiff
+            val t = if (lengthSq < 1e-12) 0.0 else {
+                (((latitude - a.first) * latDiff + (longitude - a.second) * lonDiff) / lengthSq).coerceIn(0.0, 1.0)
+            }
+            val projLat = a.first + t * latDiff
+            val projLon = a.second + t * lonDiff
+            val d = meters(latitude, longitude, projLat, projLon)
+            if (d < bestDistance) {
+                bestDistance = d
+                bestSnappedLat = projLat
+                bestSnappedLon = projLon
+            }
+        }
+        return if (bestDistance <= maxSnapDistanceMeters) bestSnappedLat to bestSnappedLon else latitude to longitude
+    }
+
     fun formatDistance(meters: Double): String =
         if (meters >= 1000) String.format(java.util.Locale.forLanguageTag("pt-BR"), "%.1f km", meters / 1000.0)
         else "${meters.toInt()} m"

@@ -101,6 +101,10 @@ class MainActivity : ComponentActivity() {
                     onPoiCategoryToggled = { cat, enabled -> viewModel.togglePoiCategory(cat, enabled) },
                     onFranciscaBrokerUrlChanged = { url -> viewModel.updateFranciscaBrokerUrl(url) },
                     onFranciscaAccessTokenChanged = { token -> viewModel.updateFranciscaAccessToken(token) },
+                    onVehicleTypeChanged = { viewModel.updateVehicleType(it) },
+                    onSafetyAlertsToggled = { viewModel.updateSafetyAlerts(it) },
+                    onPoliceCircumscriptionToggled = { viewModel.updatePoliceCircumscription(it) },
+                    onGoogleMapsApiKeyChanged = { viewModel.updateGoogleMapsApiKey(it) },
                     onStartTracking = {
                         val fine = ContextCompat.checkSelfPermission(
                             this@MainActivity,

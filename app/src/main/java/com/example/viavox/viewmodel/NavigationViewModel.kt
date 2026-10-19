@@ -59,6 +59,7 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
     private var lastRecorded: TripPoint? = null
     private var distanceRecorded = 0.0
     private var lastGuidedStep = -1
+    private var lastAdvanceStep = -1
     private var lastRerouteAt = 0L
     private var offRouteFixes = 0
     private var previousFixTimestamp = 0L
@@ -143,6 +144,7 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
             result.fold(
                 onSuccess = { route ->
                     lastGuidedStep = -1
+                    lastAdvanceStep = -1
                     _ui.update { it.copy(route = route, calculating = false, error = null) }
                 },
                 onFailure = { error ->
@@ -156,6 +158,7 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
     fun startNavigation() {
         val route = _ui.value.route ?: return
         lastGuidedStep = -1
+        lastAdvanceStep = -1
         offRouteFixes = 0
         _ui.update { it.copy(navigating = true, nextInstruction = route.steps.firstOrNull()?.instruction.orEmpty()) }
     }
@@ -190,10 +193,21 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
             val (index,step) = upcoming
             val meters = NavigationMath.meters(lat,lon,step.latitude,step.longitude)
             _ui.update { it.copy(nextInstruction = step.instruction, metersUntilTurn = meters) }
-            if (meters <= 70.0 && index > lastGuidedStep && index > 0 && speedKmh > 2f) {
+
+            // Stage 1: Advance warning (120m to 320m ahead)
+            if (meters in 120.0..320.0 && index > lastAdvanceStep && speedKmh > 8f) {
+                lastAdvanceStep = index
+                val cleanInstruction = step.instruction.replaceFirstChar { it.lowercase() }
+                ViaVoxTrackingService.announceGuidance(
+                    getApplication(), "Em ${NavigationMath.formatDistance(meters)}, $cleanInstruction."
+                )
+            }
+
+            // Stage 2: Turn execution command (under 55m)
+            if (meters <= 55.0 && index > lastGuidedStep && index > 0 && speedKmh > 1.5f) {
                 lastGuidedStep = index
                 ViaVoxTrackingService.announceGuidance(
-                    getApplication(),"${step.instruction}. ${NavigationMath.formatDistance(meters)}."
+                    getApplication(), "${step.instruction}."
                 )
             }
         }

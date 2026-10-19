@@ -129,8 +129,9 @@ class NavigationNetworkService(
                     val loc = maneuver.optJSONArray("location") ?: continue
                     val type = maneuver.optString("type")
                     val modifier = maneuver.optString("modifier")
+                    val exit = maneuver.optInt("exit", 0)
                     val road = current.optString("name")
-                    val message = maneuverText(type, modifier, road)
+                    val message = maneuverText(type, modifier, road, exit)
                     if (message.isNotBlank()) {
                         steps += RouteStep(loc.getDouble(1), loc.getDouble(0),
                             message, current.optDouble("distance", 0.0))
@@ -145,7 +146,7 @@ class NavigationNetworkService(
             )
         }
 
-        fun maneuverText(type: String, modifier: String, road: String): String {
+        fun maneuverText(type: String, modifier: String, road: String, exit: Int = 0): String {
             val to = road.takeIf { it.isNotBlank() }?.let { " na $it" }.orEmpty()
             return when (type) {
                 "depart" -> "Siga em frente${to}"
@@ -156,8 +157,17 @@ class NavigationNetworkService(
                     "uturn" -> "Faça o retorno${to}"
                     else -> "Continue${to}"
                 }
-                "roundabout", "rotary", "roundabout turn" -> "Entre na rotatória${to}"
-                "merge", "on ramp", "off ramp" -> "Acesse${to}"
+                "fork" -> when (modifier) {
+                    "left", "slight left" -> "Mantenha-se à esquerda${to}"
+                    "right", "slight right" -> "Mantenha-se à direita${to}"
+                    else -> "Mantenha-se na pista${to}"
+                }
+                "roundabout", "rotary", "roundabout turn" -> if (exit > 0) {
+                    "Na rotatória, pegue a ${exit}ª saída${to}"
+                } else {
+                    "Entre na rotatória${to}"
+                }
+                "merge", "on ramp", "off ramp" -> "Acesse a via${to}"
                 "continue", "new name" -> "Continue${to}"
                 else -> ""
             }

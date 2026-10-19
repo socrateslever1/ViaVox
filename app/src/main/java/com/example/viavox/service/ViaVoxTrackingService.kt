@@ -43,6 +43,8 @@ class ViaVoxTrackingService : Service() {
     private lateinit var nominatimService: NominatimService
     private lateinit var poiService: PoiDiscoveryService
     private lateinit var roadEngine: RoadDetectionEngine
+    private lateinit var safetyAlertEngine: SafetyAlertEngine
+    private var safetyJob: Job? = null
 
     private var currentConfig = ViaVoxConfig()
     private var isTrackingRunning = false
@@ -68,7 +70,15 @@ class ViaVoxTrackingService : Service() {
         ttsManager.setVoiceSelection(currentConfig.voiceProvider, currentConfig.nativeVoiceId)
 
         nominatimService = NominatimService()
+        nominatimService.googleApiKey = currentConfig.googleMapsApiKey
         poiService = PoiDiscoveryService()
+        safetyAlertEngine = SafetyAlertEngine(
+            onAlert = { speechMessage ->
+                if (TrackingRepository.state.value.isVoiceEnabled && isTrackingRunning) {
+                    speakIfAllowed(speechMessage, forceRepeat = false)
+                }
+            }
+        )
 
         roadEngine = RoadDetectionEngine(
             nominatimService = nominatimService,
@@ -87,6 +97,7 @@ class ViaVoxTrackingService : Service() {
                 TrackingRepository.updateStatus(status)
             }
         )
+        roadEngine.enablePoliceCircumscription = currentConfig.enablePoliceCircumscription
 
         locationTracker = LocationTrackingManager(
             context = this,
@@ -130,6 +141,8 @@ class ViaVoxTrackingService : Service() {
                 ttsManager.franciscaEndpoint = currentConfig.franciscaBrokerUrl.ifBlank { null }
                 ttsManager.franciscaAccessToken = currentConfig.franciscaAccessToken.ifBlank { null }
                 ttsManager.setVoiceSelection(currentConfig.voiceProvider, currentConfig.nativeVoiceId)
+                nominatimService.googleApiKey = currentConfig.googleMapsApiKey
+                roadEngine.enablePoliceCircumscription = currentConfig.enablePoliceCircumscription
                 TrackingRepository.updateConfig(currentConfig)
                 TrackingRepository.updateVoiceEnabled(voiceEnabled)
             }
@@ -199,6 +212,9 @@ class ViaVoxTrackingService : Service() {
         poiJob?.cancel()
         poiJob = null
         poiAnnouncements.reset()
+        safetyJob?.cancel()
+        safetyJob = null
+        TrackingRepository.updateSafetyFeatures(emptyList())
         TrackingRepository.updatePoi(null, null)
         TrackingRepository.updatePoiStatus("Referências pausadas")
 
@@ -268,6 +284,20 @@ class ViaVoxTrackingService : Service() {
                         "Nenhum ponto cadastrado próximo no OpenStreetMap"
                     else "Procurando referências próximas na direção do percurso"
                 )
+            }
+        }
+
+        // 3. Safety camera & toll monitoring ahead on the road
+        if (currentConfig.enableSafetyAlerts && (safetyJob == null || safetyJob?.isActive == false)) {
+            safetyJob = serviceScope.launch {
+                val features = safetyAlertEngine.evaluate(
+                    userLat = lat,
+                    userLon = lon,
+                    bearing = bearing,
+                    speedKmh = speedKmh,
+                    enabled = currentConfig.enableSafetyAlerts
+                )
+                TrackingRepository.updateSafetyFeatures(features)
             }
         }
     }

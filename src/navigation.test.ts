@@ -1,10 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
+  createNavigationSession,
   findRouteProgress,
   isArrival,
+  shouldApplyRequestResult,
   isSustainedDeviation,
   parseOsrmResponse,
   parsePhotonResponse,
+  selectNavigationRoute,
+  startNavigation,
+  stopNavigation,
+  updateNavigationSession,
   type NavigationRoute,
   type SearchPlace
 } from './navigation';
@@ -75,6 +81,13 @@ describe('parseOsrmResponse', () => {
     expect(() => parseOsrmResponse({ code: 'Ok', routes: [{ geometry: { coordinates: [] } }] }, destination))
       .toThrow('Rota sem geometria válida');
   });
+
+  it('rejects non-numeric route coordinates instead of passing invalid data to the map', () => {
+    expect(() => parseOsrmResponse({
+      code: 'Ok',
+      routes: [{ geometry: { coordinates: [['invalid', null]] } }]
+    }, destination)).toThrow('Rota sem geometria válida');
+  });
 });
 
 describe('route progress', () => {
@@ -113,5 +126,67 @@ describe('route progress', () => {
   it('accepts arrival inside 35 meters and rejects a farther point', () => {
     expect(isArrival(34.9)).toBe(true);
     expect(isArrival(35.1)).toBe(false);
+  });
+});
+
+describe('navigation session', () => {
+  const route: NavigationRoute = {
+    destination,
+    distanceMeters: 1200,
+    durationSeconds: 300,
+    coordinates: [
+      { latitude: -3.12, longitude: -60.03 },
+      { latitude: -3.125, longitude: -60.026 },
+      destination
+    ],
+    steps: [{
+      latitude: -3.125,
+      longitude: -60.026,
+      instruction: 'Vire à direita',
+      distanceMeters: 400,
+      geometryIndex: 1
+    }]
+  };
+
+  it('moves from route preview to navigation and back to idle', () => {
+    const preview = selectNavigationRoute(createNavigationSession(), route);
+    expect(preview.status).toBe('preview');
+
+    const navigating = startNavigation(preview);
+    expect(navigating.status).toBe('navigating');
+    expect(navigating.nextInstruction).toBe('Vire à direita');
+
+    expect(stopNavigation(navigating)).toEqual(createNavigationSession());
+  });
+
+  it('rejects stale or aborted provider responses', () => {
+    expect(shouldApplyRequestResult(4, 4, false)).toBe(true);
+    expect(shouldApplyRequestResult(3, 4, false)).toBe(false);
+    expect(shouldApplyRequestResult(4, 4, true)).toBe(false);
+  });
+
+  it('requests rerouting only after sustained deviation and outside cooldown', () => {
+    let session = startNavigation(selectNavigationRoute(createNavigationSession(), route));
+    const farAway = { latitude: -3.2, longitude: -60.2 };
+
+    session = updateNavigationSession(session, farAway, 10, 100_000).session;
+    session = updateNavigationSession(session, farAway, 10, 101_000).session;
+    const deviation = updateNavigationSession(session, farAway, 10, 102_000);
+    expect(deviation.shouldReroute).toBe(true);
+
+    session = updateNavigationSession(deviation.session, farAway, 10, 103_000).session;
+    session = updateNavigationSession(session, farAway, 10, 104_000).session;
+    const cooldown = updateNavigationSession(session, farAway, 10, 105_000);
+    expect(cooldown.shouldReroute).toBe(false);
+  });
+
+  it('announces arrival once', () => {
+    const navigating = startNavigation(selectNavigationRoute(createNavigationSession(), route));
+    const arrived = updateNavigationSession(navigating, destination, 8, 200_000);
+    expect(arrived.session.status).toBe('arrived');
+    expect(arrived.announcement).toBe('Você chegou ao destino.');
+
+    const repeated = updateNavigationSession(arrived.session, destination, 8, 201_000);
+    expect(repeated.announcement).toBeNull();
   });
 });

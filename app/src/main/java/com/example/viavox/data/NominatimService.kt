@@ -14,8 +14,10 @@ class NominatimService(
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
-        .build()
+        .build(),
+    private val googlePlacesEnricher: GooglePlacesEnricher = GooglePlacesEnricher()
 ) {
+    var googleApiKey: String = ""
 
     private fun clean(value: String?): String {
         return value?.trim() ?: ""
@@ -40,51 +42,27 @@ class NominatimService(
                 )
             }
 
-            val body = response.body?.string() ?: ""
-            val json = JSONObject(body)
-            val address = json.optJSONObject("address") ?: JSONObject()
+            val body = response.body?.string().orEmpty()
+            val circ = GeneralCircumscriptionService.resolve(body, lat, lon)
+            val police = PoliceCircumscriptionService.resolve(circ.neighbourhood, circ.city, circ.zoneOrDistrict)?.label.orEmpty()
 
-            // Extract road matching original applet logic
-            val road = clean(address.optString("road")).ifEmpty {
-                clean(address.optString("pedestrian")).ifEmpty {
-                    clean(address.optString("residential")).ifEmpty {
-                        clean(address.optString("path")).ifEmpty {
-                            "Via não identificada"
-                        }
-                    }
+            var venue = circ.venueName
+            if (venue.isBlank() && googleApiKey.isNotBlank()) {
+                val enriched = googlePlacesEnricher.enrichLocation(lat, lon, googleApiKey)
+                if (enriched != null && enriched.name.isNotBlank()) {
+                    venue = enriched.name
                 }
             }
-
-            // Extract neighbourhood matching original logic
-            val neighbourhood = clean(address.optString("suburb")).ifEmpty {
-                clean(address.optString("neighbourhood")).ifEmpty {
-                    clean(address.optString("quarter")).ifEmpty {
-                        clean(address.optString("city_district")).ifEmpty {
-                            "Bairro não identificado"
-                        }
-                    }
-                }
-            }
-
-            // Extract city
-            val city = clean(address.optString("city")).ifEmpty {
-                clean(address.optString("town")).ifEmpty {
-                    clean(address.optString("municipality")).ifEmpty {
-                        clean(address.optString("village"))
-                    }
-                }
-            }
-
-            // Extract reference point
-            val rawName = clean(json.optString("name"))
-            val reference = if (rawName.isNotBlank() && rawName != road) rawName else ""
 
             Result.success(
                 Place(
-                    road = road,
-                    neighbourhood = neighbourhood,
-                    city = city,
-                    reference = reference
+                    road = circ.road,
+                    neighbourhood = circ.neighbourhood,
+                    city = circ.city,
+                    reference = circ.reference,
+                    zone = circ.zoneOrDistrict,
+                    venueName = venue,
+                    policeDistrict = police
                 )
             )
         } catch (e: Exception) {

@@ -73,6 +73,7 @@ import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
 import org.maplibre.android.style.layers.FillExtrusionLayer
+import org.maplibre.android.style.layers.FillLayer
 import org.maplibre.android.style.layers.LineLayer
 import org.maplibre.android.style.sources.GeoJsonSource
 import org.maplibre.geojson.LineString
@@ -113,6 +114,8 @@ fun OpenStreetMapComponent(
     favorites: List<MapPlace> = emptyList(),
     savedTrack: List<TripPoint> = emptyList(),
     liveTrack: List<TripPoint> = emptyList(),
+    isMotorcycle: Boolean = false,
+    safetyFeatures: List<com.example.viavox.service.SafetyAlertEngine.SafetyFeature> = emptyList(),
     onMapLongPress: (Double, Double) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
@@ -135,6 +138,7 @@ fun OpenStreetMapComponent(
     var marker by remember { mutableStateOf<Marker?>(null) }
     var destMarker by remember { mutableStateOf<Marker?>(null) }
     val favoriteMarkers = remember { mutableListOf<Marker>() }
+    val safetyMarkers = remember { mutableListOf<Marker>() }
     val compassHeading = rememberDeviceCompassHeading(isActive, latitude, longitude)
 
     // Resume following user whenever tracking starts
@@ -230,11 +234,16 @@ fun OpenStreetMapComponent(
     ) {
         val currentMap = map ?: return@LaunchedEffect
         if (!isStyleReady || !hasLocationFix) return@LaunchedEffect
-        val point = LatLng(latitude, longitude)
+        val effectiveCoords = if (navigating && route != null && route.coordinates.isNotEmpty()) {
+            com.example.viavox.model.NavigationMath.snapToPolyline(latitude, longitude, route.coordinates)
+        } else {
+            latitude to longitude
+        }
+        val point = LatLng(effectiveCoords.first, effectiveCoords.second)
         val previousMarker = marker
         if (previousMarker == null) {
             val defaultPuck = IconFactory.getInstance(context).fromBitmap(
-                createBlueLocationMarkerBitmap(0f, false)
+                createBlueLocationMarkerBitmap(0f, false, isMotorcycle)
             )
             marker = currentMap.addMarker(MarkerOptions().position(point).icon(defaultPuck))
         } else {
@@ -259,7 +268,7 @@ fun OpenStreetMapComponent(
     // In heading-up mode the arrow faces screen top, rather than double-rotating.
     LaunchedEffect(
         map, isStyleReady, marker, compassHeading, bearing, hasBearing,
-        speedKmh, followUser, hasLocationFix, mapCameraBearing, headingUp
+        speedKmh, followUser, hasLocationFix, mapCameraBearing, headingUp, isMotorcycle
     ) {
         val currentMap = map ?: return@LaunchedEffect
         val currentMarker = marker ?: return@LaunchedEffect
@@ -280,7 +289,7 @@ fun OpenStreetMapComponent(
             ((heading - mapCameraBearing) % 360f + 360f) % 360f
         }
         currentMarker.icon = IconFactory.getInstance(context).fromBitmap(
-            createBlueLocationMarkerBitmap(relative, heading != null)
+            createBlueLocationMarkerBitmap(relative, heading != null, isMotorcycle)
         )
     }
 
@@ -289,6 +298,7 @@ fun OpenStreetMapComponent(
         if (!isStyleReady) return@LaunchedEffect
         val style = mapRef.style ?: return@LaunchedEffect
         ensureNavigationLayers(style)
+        ensureCircumscriptionLayers(context, style)
         updateLine(style, "viavox-route", route?.coordinates.orEmpty())
         val recordedPoints = if (liveTrack.isNotEmpty()) liveTrack else savedTrack
         updateLine(style, "viavox-track", recordedPoints.map { it.latitude to it.longitude })
@@ -306,6 +316,32 @@ fun OpenStreetMapComponent(
             destMarker = mapRef.addMarker(
                 MarkerOptions().position(LatLng(destination.latitude,destination.longitude))
                     .title(destination.name)
+            )
+        }
+    }
+
+    LaunchedEffect(map, isStyleReady, safetyFeatures) {
+        val mapRef = map ?: return@LaunchedEffect
+        if (!isStyleReady) return@LaunchedEffect
+        safetyMarkers.forEach { mapRef.removeMarker(it) }
+        safetyMarkers.clear()
+
+        safetyFeatures.forEach { feature ->
+            val icon = IconFactory.getInstance(context).fromBitmap(
+                createSafetyMarkerBitmap(feature.type, feature.speedLimitKmh)
+            )
+            val title = when (feature.type) {
+                com.example.viavox.service.SafetyAlertEngine.SafetyFeature.Type.SPEED_CAMERA ->
+                    feature.speedLimitKmh?.let { "Radar $it km/h" } ?: "Radar de velocidade"
+                com.example.viavox.service.SafetyAlertEngine.SafetyFeature.Type.TOLL_BOOTH -> "Pedágio"
+            }
+            safetyMarkers.add(
+                mapRef.addMarker(
+                    MarkerOptions()
+                        .position(LatLng(feature.latitude, feature.longitude))
+                        .title(title)
+                        .icon(icon)
+                )
             )
         }
     }
@@ -470,6 +506,28 @@ private fun ensureNavigationLayers(style: Style) {
     }
 }
 
+private fun ensureCircumscriptionLayers(context: android.content.Context, style: Style) {
+    try {
+        if (style.getSource("bairros-source") == null) {
+            val json = context.assets.open("bairros_manaus.geojson").bufferedReader().use { it.readText() }
+            style.addSource(GeoJsonSource("bairros-source", json))
+            style.addLayer(
+                FillLayer("bairros-fill", "bairros-source").withProperties(
+                    PropertyFactory.fillColor(Expression.get("color")),
+                    PropertyFactory.fillOpacity(0.24f)
+                )
+            )
+            style.addLayer(
+                LineLayer("bairros-border", "bairros-source").withProperties(
+                    PropertyFactory.lineColor(Expression.get("color")),
+                    PropertyFactory.lineWidth(1.8f),
+                    PropertyFactory.lineOpacity(0.85f)
+                )
+            )
+        }
+    } catch (_: Exception) {}
+}
+
 private fun updateLine(style: Style, id: String, route: List<Pair<Double,Double>>) {
     val source = style.getSource(id) as? GeoJsonSource ?: return
     val positions = if (route.size >= 2) route else listOf(0.0 to 0.0,0.0 to 0.0)
@@ -481,15 +539,17 @@ private fun updateLine(style: Style, id: String, route: List<Pair<Double,Double>
 /**
  * Generates a high-DPI blue GPS location puck bitmap with an optional directional heading cone.
  */
-private fun createBlueLocationMarkerBitmap(bearing: Float, showHeading: Boolean): Bitmap {
+private fun createBlueLocationMarkerBitmap(bearing: Float, showHeading: Boolean, isMotorcycle: Boolean = false): Bitmap {
     val sizePx = 96
     val center = sizePx / 2f
     val bitmap = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bitmap)
 
-    // Outer translucent blue halo
+    // Outer translucent halo (Teal for motorcycle, Blue for car)
+    val haloColor = if (isMotorcycle) android.graphics.Color.argb(75, 0, 229, 255)
+        else android.graphics.Color.argb(65, 33, 150, 243)
     val haloPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = android.graphics.Color.argb(65, 33, 150, 243)
+        color = haloColor
         style = Paint.Style.FILL
     }
     canvas.drawCircle(center, center, 38f, haloPaint)
@@ -498,8 +558,10 @@ private fun createBlueLocationMarkerBitmap(bearing: Float, showHeading: Boolean)
     if (showHeading) {
         canvas.save()
         canvas.rotate(bearing, center, center)
+        val arrowColor = if (isMotorcycle) android.graphics.Color.rgb(0, 229, 255)
+            else android.graphics.Color.rgb(41, 182, 246)
         val arrowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = android.graphics.Color.rgb(41, 182, 246)
+            color = arrowColor
             style = Paint.Style.FILL
         }
         val path = Path().apply {
@@ -519,12 +581,85 @@ private fun createBlueLocationMarkerBitmap(bearing: Float, showHeading: Boolean)
     }
     canvas.drawCircle(center, center, 21f, borderPaint)
 
-    // Solid vibrant blue inner puck
+    // Solid inner puck (Teal for motorcycle, Blue for car)
+    val coreColor = if (isMotorcycle) android.graphics.Color.rgb(0, 180, 216)
+        else android.graphics.Color.rgb(2, 136, 209)
     val corePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = android.graphics.Color.rgb(2, 136, 209)
+        color = coreColor
         style = Paint.Style.FILL
     }
     canvas.drawCircle(center, center, 16f, corePaint)
+
+    return bitmap
+}
+
+/**
+ * Generates clear, high-contrast map badges for speed cameras and toll booths.
+ */
+private fun createSafetyMarkerBitmap(
+    type: com.example.viavox.service.SafetyAlertEngine.SafetyFeature.Type,
+    speedLimit: Int?
+): Bitmap {
+    val sizePx = 72
+    val center = sizePx / 2f
+    val bitmap = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+
+    // Outer shadow
+    val haloPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.argb(90, 0, 0, 0)
+        style = Paint.Style.FILL
+    }
+    canvas.drawCircle(center, center + 2f, 30f, haloPaint)
+
+    if (type == com.example.viavox.service.SafetyAlertEngine.SafetyFeature.Type.SPEED_CAMERA) {
+        // Red speed limit ring
+        val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.rgb(230, 40, 40)
+            style = Paint.Style.FILL
+        }
+        canvas.drawCircle(center, center, 28f, borderPaint)
+
+        // White inner circle
+        val innerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.WHITE
+            style = Paint.Style.FILL
+        }
+        canvas.drawCircle(center, center, 22f, innerPaint)
+
+        // Speed limit number or "RAD"
+        val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.rgb(20, 20, 20)
+            textAlign = Paint.Align.CENTER
+            textSize = if (speedLimit != null) 20f else 17f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+        }
+        val label = speedLimit?.toString() ?: "RAD"
+        val yPos = center - ((textPaint.descent() + textPaint.ascent()) / 2)
+        canvas.drawText(label, center, yPos, textPaint)
+    } else {
+        // Toll booth: Amber / orange badge
+        val tollPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.rgb(255, 152, 0)
+            style = Paint.Style.FILL
+        }
+        canvas.drawCircle(center, center, 28f, tollPaint)
+
+        val innerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.rgb(40, 25, 0)
+            style = Paint.Style.FILL
+        }
+        canvas.drawCircle(center, center, 23f, innerPaint)
+
+        val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.WHITE
+            textAlign = Paint.Align.CENTER
+            textSize = 15f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+        }
+        val yPos = center - ((textPaint.descent() + textPaint.ascent()) / 2)
+        canvas.drawText("PED", center, yPos, textPaint)
+    }
 
     return bitmap
 }

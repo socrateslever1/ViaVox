@@ -126,6 +126,28 @@ class ViaVoxViewModel(application: Application) : AndroidViewModel(application) 
         saveAndApplyConfig(newConfig)
     }
 
+    fun updateVehicleType(type: String) {
+        val newConfig = state.value.config.copy(
+            vehicleType = if (type.equals("motorcycle", ignoreCase = true)) "motorcycle" else "car"
+        )
+        saveAndApplyConfig(newConfig)
+    }
+
+    fun updateSafetyAlerts(enabled: Boolean) {
+        val newConfig = state.value.config.copy(enableSafetyAlerts = enabled)
+        saveAndApplyConfig(newConfig)
+    }
+
+    fun updatePoliceCircumscription(enabled: Boolean) {
+        val newConfig = state.value.config.copy(enablePoliceCircumscription = enabled)
+        saveAndApplyConfig(newConfig)
+    }
+
+    fun updateGoogleMapsApiKey(key: String) {
+        val newConfig = state.value.config.copy(googleMapsApiKey = key.trim())
+        saveAndApplyConfig(newConfig)
+    }
+
     private fun saveAndApplyConfig(config: ViaVoxConfig) {
         config.saveTo(prefs)
         TrackingRepository.updateConfig(config)
