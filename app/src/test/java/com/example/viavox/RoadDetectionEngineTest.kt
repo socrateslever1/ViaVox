@@ -377,7 +377,7 @@ class RoadDetectionEngineTest {
                 "Você está na Rua Aristides Rocha, bairro Petrópolis.",
                 "Agora você está na Rua Benjamin Constant.",
                 "Agora você está na Rua Nova, bairro Cachoeirinha.",
-                "Agora você está na Rua Nova, bairro Centro."
+                "Entrando no bairro Centro."
             ),
             said
         )
@@ -398,8 +398,9 @@ class RoadDetectionEngineTest {
         engine.onGeoFixUpdate(GeoFix(-3.100, -60.000, timestampMs = 1_000L))
         road = "Rua das Flores"
         area = "SAO JORGE"
-        engine.onGeoFixUpdate(GeoFix(-3.1003, -60.000, timestampMs = 11_000L))
-        engine.onGeoFixUpdate(GeoFix(-3.1006, -60.000, timestampMs = 20_000L))
+        // Moving vehicle: stationary samples must NOT trigger a false parallel-road switch.
+        engine.onGeoFixUpdate(GeoFix(-3.1003, -60.000, speedMps = 5f, timestampMs = 11_000L))
+        engine.onGeoFixUpdate(GeoFix(-3.1006, -60.000, speedMps = 5f, timestampMs = 20_000L))
 
         assertEquals(2, said.size)
         assertEquals("Agora você está na Rua das Flores.", said[1])
