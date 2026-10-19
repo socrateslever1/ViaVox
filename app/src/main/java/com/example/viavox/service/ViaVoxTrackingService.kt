@@ -29,7 +29,6 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 
 class ViaVoxTrackingService : Service() {
 
@@ -39,6 +38,7 @@ class ViaVoxTrackingService : Service() {
     private val poiAnnouncements = PoiAnnouncementCoordinator()
 
     private lateinit var ttsManager: TextToSpeechManager
+    private lateinit var speechQueue: SpeechOrchestrator
     private lateinit var locationTracker: LocationTrackingManager
     private lateinit var nominatimService: NominatimService
     private lateinit var poiService: PoiDiscoveryService
@@ -48,7 +48,6 @@ class ViaVoxTrackingService : Service() {
 
     private var currentConfig = ViaVoxConfig()
     private var isTrackingRunning = false
-    private var lastSpeechTimestamp = 0L
 
     override fun onCreate() {
         super.onCreate()
@@ -68,6 +67,12 @@ class ViaVoxTrackingService : Service() {
         ttsManager.franciscaEndpoint = currentConfig.franciscaBrokerUrl.ifBlank { null }
         ttsManager.franciscaAccessToken = currentConfig.franciscaAccessToken.ifBlank { null }
         ttsManager.setVoiceSelection(currentConfig.voiceProvider, currentConfig.nativeVoiceId)
+        speechQueue = SpeechOrchestrator(
+            play = { text, finished -> ttsManager.speakManaged(
+                SpeechTextNormalizer.normalize(text), finished
+            ) }
+        )
+        speechQueue.setEnabled(initialVoiceEnabled)
 
         nominatimService = NominatimService()
         nominatimService.googleApiKey = currentConfig.googleMapsApiKey
@@ -75,7 +80,7 @@ class ViaVoxTrackingService : Service() {
         safetyAlertEngine = SafetyAlertEngine(
             onAlert = { speechMessage ->
                 if (TrackingRepository.state.value.isVoiceEnabled && isTrackingRunning) {
-                    speakIfAllowed(speechMessage, forceRepeat = false)
+                    speakIfAllowed(speechMessage, forceRepeat = false, kind = SpeechKind.SAFETY)
                 }
             }
         )
@@ -87,11 +92,17 @@ class ViaVoxTrackingService : Service() {
                 TrackingRepository.updatePlace(place)
                 updateNotification(place.road, place.neighbourhood)
             },
-            onRoadAnnounceNeeded = { speechMessage, _ ->
+            // Legacy callback retained for existing unit tests; service plays
+            // only the structured transition to avoid double announcements.
+            onRoadAnnounceNeeded = { _, _ -> },
+            onGeographicTransition = { transition ->
                 if (TrackingRepository.state.value.isVoiceEnabled) {
                     poiAnnouncements.roadWasAnnounced(System.currentTimeMillis())
                 }
-                speakIfAllowed(speechMessage, forceRepeat = false)
+                speakIfAllowed(
+                    transition.sentence(), false,
+                    SpeechKind.GEOGRAPHY, "geo:" + transition.dedupeKey()
+                )
             },
             onStatusMessage = { status ->
                 TrackingRepository.updateStatus(status)
@@ -120,16 +131,14 @@ class ViaVoxTrackingService : Service() {
             ACTION_START -> startForegroundTracking()
             ACTION_STOP -> stopForegroundTracking()
             ACTION_REPEAT_SPEECH -> repeatCurrentSpeech()
-            ACTION_TEST_VOICE -> ttsManager.testVoice()
+            ACTION_TEST_VOICE -> speakIfAllowed(
+                "ViaVox. Teste de voz em português.",true,SpeechKind.USER_REQUEST,"voice-test"
+            )
             ACTION_NAV_GUIDANCE -> {
                 val instruction = intent?.getStringExtra(EXTRA_NAV_TEXT).orEmpty().trim()
                 if (instruction.isNotBlank() && isTrackingRunning) {
-                    serviceScope.launch {
-                        // A street/neighborhood announcement is never interrupted by routing.
-                        val waitMs = (lastSpeechTimestamp + 3_500L - System.currentTimeMillis()).coerceAtLeast(0L)
-                        if (waitMs > 0) delay(waitMs)
-                        if (isTrackingRunning) speakIfAllowed(instruction,forceRepeat = true)
-                    }
+                    speakIfAllowed(instruction,true,SpeechKind.NAVIGATION,
+                        "nav:" + instruction.lowercase())
                 }
             }
             ACTION_UPDATE_CONFIG -> {
@@ -137,6 +146,7 @@ class ViaVoxTrackingService : Service() {
                 currentConfig = ViaVoxConfig.loadFrom(prefs)
                 val voiceEnabled = prefs.getBoolean("voice_enabled", true)
                 ttsManager.setVoiceEnabled(voiceEnabled)
+                speechQueue.setEnabled(voiceEnabled)
                 ttsManager.setSpeechRate(currentConfig.speechRate)
                 ttsManager.franciscaEndpoint = currentConfig.franciscaBrokerUrl.ifBlank { null }
                 ttsManager.franciscaAccessToken = currentConfig.franciscaAccessToken.ifBlank { null }
@@ -199,7 +209,10 @@ class ViaVoxTrackingService : Service() {
         roadEngine.reset()
         lastPoiCheckTimestamp = 0L
         poiAnnouncements.reset()
-        TrackingRepository.updatePoiStatus("Buscando pontos de referência próximos...")
+        TrackingRepository.updatePoiStatus(
+            if (currentConfig.narratePoiEnabled) "Buscando pontos de referência próximos..."
+            else "Referências silenciadas nas configurações"
+        )
         locationTracker.startTracking()
     }
 
@@ -207,6 +220,7 @@ class ViaVoxTrackingService : Service() {
         Log.d(TAG, "Stopping foreground tracking")
         isTrackingRunning = false
         locationTracker.stopTracking()
+        speechQueue.cancelAll()
         ttsManager.stop()
         roadEngine.reset()
         poiJob?.cancel()
@@ -250,7 +264,7 @@ class ViaVoxTrackingService : Service() {
 
         // POI discovery is independent of the road-announcement cooldown:
         // 25-second scan delays previously skipped whole landmarks at driving speeds.
-        tryAnnouncePendingPoi(location)
+        if (currentConfig.narratePoiEnabled) tryAnnouncePendingPoi(location)
         val now = System.currentTimeMillis()
         val intervalMs = if (speedKmh >= 5f) 5_000L else 12_000L
         val accuracyMeters = if (location.hasAccuracy()) location.accuracy else 100f
@@ -258,6 +272,7 @@ class ViaVoxTrackingService : Service() {
             TrackingRepository.updatePoiStatus("Aguardando GPS mais preciso para reconhecer referências")
             return
         }
+        if (!currentConfig.narratePoiEnabled) return
         if (now - lastPoiCheckTimestamp < intervalMs || poiJob?.isActive == true) return
 
         lastPoiCheckTimestamp = now
@@ -303,7 +318,7 @@ class ViaVoxTrackingService : Service() {
     }
 
     private fun tryAnnouncePendingPoi(location: Location) {
-        if (!isTrackingRunning) return
+        if (!isTrackingRunning || !currentConfig.narratePoiEnabled) return
         // Use the *latest* accepted GPS fix, not coordinates captured before
         // a potentially slow HTTP query. A car can cover 50m while waiting.
         val position = TrackingRepository.state.value
@@ -339,27 +354,28 @@ class ViaVoxTrackingService : Service() {
             RelativeDirection.LEFT -> getString(R.string.tts_poi_left, poi.name)
             RelativeDirection.NEARBY -> getString(R.string.tts_poi_nearby, poi.name)
         }
-        // Mark as announced only at the moment it actually enters the TTS system.
-        poiAnnouncements.poiWasAnnounced(System.currentTimeMillis())
-        poiService.markAnnounced(poi)
-        TrackingRepository.updatePoi(poi, relativeDir)
-        TrackingRepository.updatePoiStatus("Enviando à voz: ${poi.name}")
-        speakIfAllowed(speech, forceRepeat = false)
+        if (speakIfAllowed(speech, false,SpeechKind.POI,"poi:" + poi.id)) {
+            poiAnnouncements.poiWasAnnounced(System.currentTimeMillis())
+            poiService.markAnnounced(poi)
+            TrackingRepository.updatePoi(poi, relativeDir)
+            TrackingRepository.updatePoiStatus("Referência aguardando voz: ${poi.name}")
+        }
     }
 
-    private fun speakIfAllowed(message: String, forceRepeat: Boolean) {
-        val isVoiceEnabled = TrackingRepository.state.value.isVoiceEnabled
-        if (!isVoiceEnabled) return
-
-        lastSpeechTimestamp = System.currentTimeMillis()
-        ttsManager.speak(message, forceRepeat = forceRepeat)
+    private fun speakIfAllowed(
+        message: String, forceRepeat: Boolean,
+        kind: SpeechKind = SpeechKind.GEOGRAPHY,
+        key: String = kind.name + ":" + message.lowercase()
+    ): Boolean {
+        if (!isTrackingRunning || !TrackingRepository.state.value.isVoiceEnabled) return false
+        return speechQueue.offer(kind,message,key,forceRepeat)
     }
 
     private fun repeatCurrentSpeech() {
         val currentPlace = TrackingRepository.state.value.place
         if (currentPlace != null && currentPlace.hasValidRoad()) {
             val message = currentPlace.toSpeechMessage(isTransition = false)
-            speakIfAllowed(message, forceRepeat = true)
+            speakIfAllowed(message,true,SpeechKind.USER_REQUEST,"repeat-current-road")
         }
     }
 
@@ -431,6 +447,7 @@ class ViaVoxTrackingService : Service() {
         Log.d(TAG, "Destroying ViaVoxTrackingService")
         isTrackingRunning = false
         locationTracker.stopTracking()
+        speechQueue.cancelAll()
         ttsManager.shutdown()
         roadEngine.reset()
         poiJob?.cancel()
