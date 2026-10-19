@@ -4,6 +4,8 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.viavox.data.NavigationNetworkService
+import com.example.viavox.data.VerifiedManausLandmarks
+import com.example.viavox.data.DestinationSearchPolicy
 import com.example.viavox.data.TrackingRepository
 import com.example.viavox.data.ViaVoxHistoryDatabase
 import com.example.viavox.model.MapPlace
@@ -14,6 +16,8 @@ import com.example.viavox.model.StoredRoute
 import com.example.viavox.model.TripPoint
 import com.example.viavox.service.ViaVoxTrackingService
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -29,6 +33,8 @@ data class NavigationUiState(
     val results: List<MapPlace> = emptyList(),
     val searching: Boolean = false,
     val searchNotice: String? = null,
+    val suggestionsVisible: Boolean = false,
+    val suggesting: Boolean = false,
     val calculating: Boolean = false,
     val error: String? = null,
     val selected: MapPlace? = null,
@@ -54,6 +60,7 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
     private val _ui = MutableStateFlow(NavigationUiState())
     val ui: StateFlow<NavigationUiState> = _ui.asStateFlow()
     private var searchJob: Job? = null
+    private var suggestionJob: Job? = null
     private var routeJob: Job? = null
     private var rerouteJob: Job? = null
     private var recordingId = 0L
@@ -89,19 +96,75 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    fun updateQuery(query: String) = _ui.update { it.copy(query = query) }
-    fun openPanel(panel: String) = _ui.update { it.copy(panel = panel, error = null) }
+    fun updateQuery(query: String) {
+        searchJob?.cancel()
+        suggestionJob?.cancel()
+        val normalized = query.trim()
+        val ready = normalized.length >= 3
+        val instant = if (ready) DestinationSearchPolicy.merge(
+            DestinationSearchPolicy.localMatches(
+                normalized,_ui.value.savedPlaces.map { it.second }
+            ),VerifiedManausLandmarks.find(normalized)
+        ) else emptyList()
+        _ui.update { it.copy(
+            query = query, results = instant,
+            suggestionsVisible = ready, suggesting = ready,
+            searching = false, searchNotice = null,error = null,
+            panel = ""
+        ) }
+        if (!ready) return
+        suggestionJob = viewModelScope.launch {
+            delay(480L)
+            val tracking = TrackingRepository.state.value
+            val places = runCatching {
+                network.suggest(
+                    normalized,
+                    tracking.latitude.takeIf { tracking.hasLocationFix },
+                    tracking.longitude.takeIf { tracking.hasLocationFix },
+                    _ui.value.savedPlaces.map { it.second }
+                )
+            }.getOrDefault(emptyList())
+            if (_ui.value.query.trim() != normalized) return@launch
+            _ui.update { state ->
+                state.copy(
+                    results = DestinationSearchPolicy.merge(places,instant).take(6),
+                    suggesting = false,
+                    suggestionsVisible = true,
+                    searchNotice = null
+                )
+            }
+        }
+    }
+
+    fun hideSuggestions() {
+        suggestionJob?.cancel()
+        _ui.update { it.copy(suggestionsVisible = false,suggesting = false) }
+    }
+
+    fun showSuggestions() {
+        if (_ui.value.query.trim().length >= 3) {
+            _ui.update { it.copy(suggestionsVisible = true,panel = "") }
+        }
+    }
+
+    fun openPanel(panel: String) = _ui.update {
+        it.copy(panel = panel, error = null, suggestionsVisible = false)
+    }
     fun closePanel() = _ui.update { it.copy(panel = "", error = null) }
     fun dismissError() = _ui.update { it.copy(error = null) }
 
     fun search() {
         val query = _ui.value.query.trim()
         searchJob?.cancel()
+        suggestionJob?.cancel()
         if (query.length < 3) {
             _ui.update { it.copy(error = "Informe pelo menos três letras para pesquisar.") }
             return
         }
-        _ui.update { it.copy(searching = true, error = null, searchNotice = null, results = emptyList(), panel = "search") }
+        _ui.update { it.copy(
+            searching = true, suggesting = false, suggestionsVisible = true,
+            error = null, searchNotice = null, panel = ""
+        ) }
         val location = TrackingRepository.state.value
         searchJob = viewModelScope.launch {
             // Personal bookmarks remain available even when public geocoders fail.
@@ -133,8 +196,11 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun select(place: MapPlace) {
+        suggestionJob?.cancel()
+        searchJob?.cancel()
         _ui.update { it.copy(selected = place, route = null, navigating = false,
-            showingTrip = null, panel = "", error = null) }
+            query = place.name, results = emptyList(),suggestionsVisible = false,
+            suggesting = false, showingTrip = null, panel = "", error = null) }
         calculateRoute(place)
     }
 
