@@ -78,6 +78,7 @@ fun ViaVoxMainScreen(
             isMotorcycle = state.config.isMotorcycle(),
             safetyFeatures = state.safetyFeatures,
             onMapLongPress = { lat, lon -> navigation.selectMapPoint(lat, lon) },
+            onReferenceSelected = navigation::select,
             modifier = Modifier.fillMaxSize()
         )
 
