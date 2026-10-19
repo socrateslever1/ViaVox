@@ -116,7 +116,8 @@ fun ViaVoxMainScreen(
                     .widthIn(max = 720.dp)
             )
 
-            if (navigationUi.selected != null || navigationUi.route != null) {
+            val searchOpen = navigationUi.suggestionsVisible && navigationUi.query.trim().length >= 3
+            if (!searchOpen && (navigationUi.selected != null || navigationUi.route != null)) {
                 NavigationRouteCard(
                     ui = navigationUi,
                     onStart = navigation::startNavigation,
@@ -125,13 +126,13 @@ fun ViaVoxMainScreen(
                     modifier = Modifier
                         .align(if (isWide) Alignment.BottomEnd else Alignment.BottomCenter)
                         .padding(horizontal = 14.dp)
-                        .padding(bottom = 179.dp)
+                        .padding(bottom = if (navigationUi.navigating) 172.dp else 12.dp)
                         .widthIn(max = if (isWide) 430.dp else 560.dp)
                         .fillMaxWidth()
                 )
             }
 
-            if (navigationUi.error != null && navigationUi.panel.isBlank()) {
+            if (navigationUi.error != null && navigationUi.panel.isBlank() && !searchOpen) {
                 androidx.compose.material3.Surface(
                     color = androidx.compose.ui.graphics.Color(0xED863437),
                     shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
@@ -148,7 +149,9 @@ fun ViaVoxMainScreen(
                 }
             }
 
-            // Compact bottom street & voice control card (never occupies half the screen)
+            // Route preview replaces the street card; searching hides it entirely
+            // so autocomplete and the keyboard never cover the whole map.
+            if (!searchOpen && (navigationUi.selected == null || navigationUi.navigating)) {
             StatusPanel(
                 state = state,
                 onStartTracking = onStartTracking,
@@ -162,6 +165,7 @@ fun ViaVoxMainScreen(
                     .widthIn(max = if (isWide) 420.dp else 560.dp)
                     .fillMaxWidth()
             )
+            }
         }
 
         NavigationLibraryDialog(
