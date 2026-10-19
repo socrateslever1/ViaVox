@@ -1,6 +1,10 @@
 package com.example.viavox.viewmodel
 
 import android.app.Application
+import android.content.Intent
+import androidx.core.content.FileProvider
+import com.example.viavox.data.GpxTripExporter
+import java.io.File
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.viavox.data.NavigationNetworkService
@@ -412,6 +416,35 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
     fun openTrip(trip: SavedTrip) {
         _ui.update { it.copy(showingTrip = trip, route = null, navigating = false,
             selected = null, panel = "") }
+    }
+
+    fun exportTrip(trip: SavedTrip) {
+        val app: Application = getApplication()
+        viewModelScope.launch {
+            try {
+                val export = withContext(Dispatchers.IO) {
+                    val path = File(app.cacheDir, "shared_tracks").apply { mkdirs() }
+                    val file = File(path, "viavox-percurso-${trip.id}.gpx")
+                    file.writeText(GpxTripExporter.encode(trip), Charsets.UTF_8)
+                    FileProvider.getUriForFile(
+                        app,"${app.packageName}.fileprovider",file
+                    )
+                }
+                val send = Intent(Intent.ACTION_SEND).apply {
+                    type = "application/gpx+xml"
+                    putExtra(Intent.EXTRA_STREAM,export)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                val chooser = Intent.createChooser(
+                    send,"Salvar ou compartilhar percurso GPX"
+                ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                app.startActivity(chooser)
+            } catch (error: Exception) {
+                _ui.update { it.copy(
+                    error = "Não foi possível exportar este percurso. Verifique se há pontos gravados."
+                ) }
+            }
+        }
     }
 
     fun removeTrip(id: Long) = viewModelScope.launch(Dispatchers.IO) {
