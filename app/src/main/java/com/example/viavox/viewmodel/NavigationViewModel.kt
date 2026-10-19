@@ -7,6 +7,7 @@ import com.example.viavox.data.NavigationNetworkService
 import com.example.viavox.data.VerifiedManausLandmarks
 import com.example.viavox.data.DestinationSearchPolicy
 import com.example.viavox.data.TrackingRepository
+import com.example.viavox.data.TripRecordingRepository
 import com.example.viavox.data.ViaVoxHistoryDatabase
 import com.example.viavox.model.MapPlace
 import com.example.viavox.model.NavigationMath
@@ -63,9 +64,6 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
     private var suggestionJob: Job? = null
     private var routeJob: Job? = null
     private var rerouteJob: Job? = null
-    private var recordingId = 0L
-    private var lastRecorded: TripPoint? = null
-    private var distanceRecorded = 0.0
     private var lastGuidedStep = -1
     private var lastAdvanceStep = -1
     private var lastRerouteAt = 0L
@@ -73,8 +71,8 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
     private var previousFixTimestamp = 0L
 
     init {
+        bindTripRecording()
         viewModelScope.launch(Dispatchers.IO) {
-            db.recoverUnfinishedTrips()
             refreshLists()
         }
         viewModelScope.launch {
@@ -83,15 +81,31 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
                 val now = System.currentTimeMillis()
                 if (now - previousFixTimestamp < 1_000L) return@collect
                 previousFixTimestamp = now
-                if (_ui.value.recording) appendLocation(
-                    TripPoint(tracking.latitude,tracking.longitude,now,
-                        tracking.accuracyMeters?.toFloat() ?: 100f)
-                )
                 if (_ui.value.navigating) monitorNavigation(
                     tracking.latitude,tracking.longitude,
                     tracking.accuracyMeters?.toFloat() ?: 100f,
                     tracking.speedKmh
                 )
+            }
+        }
+    }
+
+    // A recording survives Activity/Compose lifecycle transitions because
+    // the foreground service owns the GPS fixes, SQLite writes and lifecycle.
+    private fun bindTripRecording() {
+        viewModelScope.launch {
+            var wasRecording = false
+            TripRecordingRepository.state.collect { snapshot ->
+                _ui.update { it.copy(
+                    recording = snapshot.recording,
+                    recordedMeters = snapshot.meters,
+                    recordedCount = snapshot.count,
+                    livePoints = snapshot.points
+                ) }
+                if (wasRecording && !snapshot.recording) {
+                    viewModelScope.launch(Dispatchers.IO) { refreshLists() }
+                }
+                wasRecording = snapshot.recording
             }
         }
     }
@@ -356,58 +370,22 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
 
     fun beginRecording() {
         if (_ui.value.recording) return
-        val t = TrackingRepository.state.value
-        if (!t.isActive || !t.hasLocationFix) {
+        val current = TrackingRepository.state.value
+        if (!current.isActive || !current.hasLocationFix) {
             _ui.update { it.copy(error = "Ative o GPS antes de gravar o percurso.") }
             return
         }
-        viewModelScope.launch(Dispatchers.IO) {
-            recordingId = db.startTrip()
-            lastRecorded = null
-            distanceRecorded = 0.0
-            _ui.update { it.copy(recording = true, recordedMeters = 0.0,recordedCount = 0, livePoints = emptyList()) }
-        }
-    }
-
-    private suspend fun appendLocation(point: TripPoint) {
-        if (point.accuracy > 45f || recordingId == 0L) return
-        val last = lastRecorded
-        if (last != null) {
-            if (point.recordedAt - last.recordedAt < 3_000L) return
-            val distance = NavigationMath.meters(last.latitude,last.longitude,
-                point.latitude,point.longitude)
-            if (distance < 6.0) return
-            if (distance > 65.0 * ((point.recordedAt - last.recordedAt) / 1000.0) +
-                point.accuracy + last.accuracy) return
-            distanceRecorded += distance
-        }
-        withContext(Dispatchers.IO) {
-            db.appendTripPoint(recordingId,point,distanceRecorded)
-        }
-        lastRecorded = point
-        _ui.update { it.copy(
-            recordedMeters = distanceRecorded,
-            recordedCount = it.recordedCount + 1,
-            livePoints = (it.livePoints + point).takeLast(4500)
-        ) }
+        ViaVoxTrackingService.startRecording(getApplication())
     }
 
     fun finishRecording() {
         if (!_ui.value.recording) return
-        val finishedId = recordingId
-        recordingId = 0L
-        lastRecorded = null
-        _ui.update { it.copy(recording = false, livePoints = emptyList()) }
-        viewModelScope.launch(Dispatchers.IO) {
-            db.finishTrip(finishedId)
-            refreshLists()
-        }
+        ViaVoxTrackingService.stopRecording(getApplication())
     }
 
     fun onAppHidden() {
-        // Recording is foreground-only: stop and persist instead of silently
-        // claiming that it continued in background.
-        finishRecording()
+        // GPS and trip recording are service-owned. Do not destroy an active
+        // session when Android hides the activity or locks the screen.
     }
 
     fun openTrip(trip: SavedTrip) {
@@ -435,8 +413,7 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
 
     override fun onCleared() {
         super.onCleared()
-        // The Android lifecycle typically calls onAppHidden first.
-        if (recordingId != 0L) db.finishTrip(recordingId)
+        // Never finish a service-owned trip just because the screen is destroyed.
         db.close()
     }
 }
