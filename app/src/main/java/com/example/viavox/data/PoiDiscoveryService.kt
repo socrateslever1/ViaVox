@@ -112,34 +112,44 @@ class PoiDiscoveryService(
                     );
                     out center 100;
                 """.trimIndent()
-                val request = Request.Builder()
-                    .url("https://overpass-api.de/api/interpreter")
-                    .post(ql.toRequestBody("text/plain; charset=utf-8".toMediaType()))
-                    .header("User-Agent", "ViaVox/0.5 Android (POI discovery; OpenStreetMap)")
-                    .build()
-
-                client.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) {
-                        lastFailure = "Servidor de pontos de referência indisponível (${response.code})"
-                        Log.w(TAG, "Overpass HTTP ${response.code}")
-                        return@withContext
+                // A 502 at one Overpass instance must not disable landmark
+                // discovery for the whole trip. One alternate server max;
+                // spatial cache and 35-second backoff are retained.
+                var newPois: List<PointOfInterest>? = null
+                for (server in OVERPASS_ENDPOINTS) {
+                    try {
+                        val request = Request.Builder()
+                            .url(server)
+                            .post(ql.toRequestBody("text/plain; charset=utf-8".toMediaType()))
+                            .header("User-Agent", "ViaVox/0.7 Android (https://github.com/socrateslever1/ViaVox)")
+                            .build()
+                        client.newCall(request).execute().use { response ->
+                            if (response.isSuccessful) {
+                                val raw = response.body?.string()
+                                if (!raw.isNullOrBlank()) newPois = OverpassPoiParser.parse(raw)
+                            } else {
+                                Log.w(TAG, "Overpass HTTP ${response.code} at $server")
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Overpass instance unavailable: $server",e)
                     }
-                    val raw = response.body?.string()
-                    if (raw.isNullOrBlank()) {
-                        lastFailure = "Resposta vazia do servidor de referências"
-                        return@withContext
-                    }
-                    val found = OverpassPoiParser.parse(raw)
-                    synchronized(cachedPois) {
-                        cachedPois.clear()
-                        cachedPois.addAll(found)
-                    }
-                    lastQueryLat = lat
-                    lastQueryLon = lon
-                    lastSuccessAt = System.currentTimeMillis()
-                    lastFailure = null
-                    Log.d(TAG, "${found.size} named landmarks cached around current GPS area")
+                    if (newPois != null) break
                 }
+                if (newPois == null) {
+                    lastFailure = "Referências indisponíveis no momento"
+                    return@withContext
+                }
+                val found = newPois ?: emptyList()
+                synchronized(cachedPois) {
+                    cachedPois.clear()
+                    cachedPois.addAll(found)
+                }
+                lastQueryLat = lat
+                lastQueryLon = lon
+                lastSuccessAt = System.currentTimeMillis()
+                lastFailure = null
+                Log.d(TAG, "${found.size} named landmarks cached around current GPS area")
             } catch (e: Exception) {
                 lastFailure = "Sem conexão com a base de pontos de referência"
                 Log.w(TAG, "POI query failed; retaining previous cache", e)
@@ -150,6 +160,10 @@ class PoiDiscoveryService(
 
     private companion object {
         const val TAG = "ViaVoxPOI"
+        val OVERPASS_ENDPOINTS = listOf(
+            "https://overpass-api.de/api/interpreter",
+            "https://overpass.private.coffee/api/interpreter"
+        )
         const val ANNOUNCE_COOLDOWN_MS = 15 * 60_000L
     }
 }
