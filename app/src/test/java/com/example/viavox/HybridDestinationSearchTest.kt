@@ -15,6 +15,7 @@ class HybridDestinationSearchTest {
     @Test fun acceptsCicomQueriesRegardlessOfOrderOrAccents() {
         val variants = DestinationSearchPolicy.queryVariants("24ª CICOM")
         assertTrue(variants.any { it.contains("Companhia Interativa Comunitária") })
+        assertTrue(variants.any { it.contains("Lourenço da Silva Braga") })
         assertTrue(DestinationSearchPolicy.queryVariants("cicom 24").size > 1)
     }
 
