@@ -95,8 +95,15 @@ data class GisReference(
     }
 
     val shortLabel: String
-        get() = (alias.takeIf { it.contains("CICOM",ignoreCase = true) } ?: name)
-            .take(36)
+        get() {
+            if (alias.contains("CICOM",ignoreCase = true)) return alias.take(26)
+            // Some published records concatenate the acronym to the name,
+            // such as COMANDO GERALCMDOGERAL. Show a clean real-world label.
+            val sanitized = if (alias.length >= 3 && name.endsWith(alias,ignoreCase = true))
+                name.dropLast(alias.length).trim()
+            else name.trim()
+            return sanitized.ifBlank { name }.take(36)
+        }
 }
 
 object ArcGisReferenceParser {
