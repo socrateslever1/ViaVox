@@ -1,11 +1,13 @@
 # ViaVox - Core Reliability Design
 
 **Date:** 2026-10-18
-**Scope:** first critical delivery for Android, web, security, and reproducible builds
+**Scope:** first critical delivery for voice location, navigation, Android, web, security, and reproducible builds
 
 ## Purpose
 
-ViaVox must remain useful without an account. Street and nearby-reference narration must continue on Android while the screen is locked or another app is visible, until the user explicitly pauses tracking. Speech must not depend on a paid cloud API.
+ViaVox must remain useful without an account. Its primary feature is voice location: street and nearby-reference narration must continue on Android while the screen is locked or another app is visible, until the user explicitly pauses tracking. Speech must not depend on a paid cloud API.
+
+Navigation is a secondary feature. A user can search for a destination or select a point on the map, view a route, start guidance, receive visual and spoken turns, be rerouted after a real deviation, and receive an arrival message. Navigation failures must not disable the primary destination-free voice locator.
 
 An optional account may be introduced later only for cloud synchronization. Current favorites, routes, settings, and trip history remain local and do not require login.
 
@@ -17,6 +19,8 @@ An optional account may be introduced later only for cloud synchronization. Curr
 - ViaVox does not operate or configure Azure/Francisca speech in this scope.
 - The Cloudflare voice worker, broker URL, access token, and Francisca-specific UI and runtime code are removed.
 - No Azure or Cloudflare credential is required to build or use the application.
+- Navigation uses no paid API and requires no ViaVox account.
+- Public community endpoints are treated as replaceable best-effort providers, never as guaranteed infrastructure.
 
 ## Android background behavior
 
@@ -29,6 +33,34 @@ If Android destroys a running service, a sticky restart may resume only when tra
 The service is started while the Activity is visible, preserving modern Android foreground-service restrictions. Fine location is the supported mode for street, POI, side-of-road, and routing precision. Approximate-only permission is reported as limited and must not produce precision claims. Notification permission is requested independently and denial is communicated without treating it as a location denial.
 
 This delivery guarantees background continuation for the service-owned free narration flow. Trip recording and route-guidance state currently owned by `NavigationViewModel` remain foreground-session features; documentation must not claim that those features survive process death. Moving them into a persistent navigation session is a separate delivery.
+
+## Navigation flow
+
+Android and web expose the same essential journey:
+
+1. Follow the current GPS position on the map.
+2. Search for an address or establishment, or select a point on the map.
+3. Show the proposed driving route, distance, estimated duration, and destination.
+4. Require an explicit start action before turn guidance begins.
+5. Track progress along route geometry instead of selecting the globally nearest future maneuver.
+6. Announce upcoming turns without interrupting higher-priority current-street narration.
+7. Detect a sustained deviation using accepted GPS fixes before requesting a new route.
+8. Announce arrival once and leave the destination visible until the user closes it.
+
+The voice locator remains active before, during, and after navigation. Navigation errors are shown as recoverable states and do not stop location updates or street narration.
+
+The first background guarantee applies to service-owned voice location. Active route guidance remains a foreground-session feature in this delivery and is not claimed to survive process death or a device reboot.
+
+## Zero-direct-cost providers
+
+- Map rendering uses MapLibre with the current OpenFreeMap public styles and visible attribution.
+- Destination search uses Photon only for explicit searches, with debouncing, cancellation, cache, bounded results, and a replaceable base URL.
+- Route calculation uses OSRM only for explicit route creation or confirmed deviation, with request throttling and a replaceable base URL.
+- Android current-road lookup prefers the device `Geocoder` behind a testable abstraction and cache. Failure falls back to the last confirmed road rather than fabricating a location.
+- The public Nominatim endpoint is not used for periodic vehicle tracking. Any remaining web use must be explicit, rate-limited, cached, attributable, and replaceable.
+- Provider unavailability never creates charges, automatic retries without bounds, or a login requirement.
+
+The public providers have no ViaVox usage bill but also no availability guarantee. The UI communicates temporary provider failure and keeps the primary voice locator running with the last trustworthy data.
 
 ## Free voice selection
 
@@ -59,6 +91,9 @@ Behavior changes follow red-green-refactor:
 - Unit-test the tracking-session policy for automatic resume, explicit pause, and sticky restart.
 - Unit-test Android voice ranking and fallback independently of the Android TTS engine.
 - Unit-test web voice ranking and stored-voice fallback.
+- Unit-test route-progress advancement, loop/crossing protection, sustained off-route detection, reroute cooldown, and one-time arrival.
+- Unit-test provider throttling, stale-response cancellation, empty results, malformed responses, and unavailable geocoder fallback.
+- Add web tests for destination selection, route state, and navigation-state transitions independently of MapLibre rendering.
 - Preserve and run the existing Android road, GPS-quality, POI, parsing, and speech tests.
 - Run Android unit tests, Android lint, debug build, web tests, TypeScript build, and `git diff --check` before completion.
 
@@ -76,7 +111,6 @@ Device-only validation remains explicit: locked-screen GPS delivery, OEM battery
 
 - User accounts and cloud synchronization.
 - Paid or hosted neural voice services.
-- Reworking route-progress/map-matching logic.
 - Migrating trip recording or route state into the service.
 - History pagination/database migration.
 - Full UI redesign.
@@ -84,4 +118,4 @@ Device-only validation remains explicit: locked-screen GPS delivery, OEM battery
 
 ## Completion criteria
 
-The delivery is complete when the paid voice path is absent, anonymous local speech remains available, Android service lifecycle behavior matches the rules above, backup exclusions are configured, deterministic build inputs are committed, relevant automated checks pass, and remaining physical-device evidence is reported accurately.
+The delivery is complete when the paid voice path is absent, anonymous local speech remains available, destination search and point selection can produce a route, route progress/rerouting/arrival follow the rules above, Android service lifecycle behavior matches the background rules, backup exclusions are configured, deterministic build inputs are committed, relevant automated checks pass, and remaining physical-device evidence is reported accurately.
