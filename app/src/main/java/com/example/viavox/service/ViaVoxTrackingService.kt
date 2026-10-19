@@ -427,8 +427,9 @@ class ViaVoxTrackingService : Service() {
         rerouteJob = null
         navigationEngine = null
         ActiveNavigationRepository.publish(ActiveNavigationState())
-        // A stop action must revoke the old route even if the app is closed.
-        serviceScope.launch(Dispatchers.IO) { navigationStore.clear() }
+        // Clearing the small private state file is synchronized with writes.
+        // Do not defer it: otherwise a new destination can race with old cleanup.
+        navigationStore.clear()
         updateNotification(
             TrackingRepository.state.value.place?.road.orEmpty(),
             TrackingRepository.state.value.place?.neighbourhood.orEmpty()
@@ -468,7 +469,9 @@ class ViaVoxTrackingService : Service() {
                 result.onSuccess { next ->
                     // Persist new geometry before exposing it to UI.
                     try {
-                        withContext(Dispatchers.IO) { navigationStore.write(next) }
+                        withContext(Dispatchers.IO) {
+                            if (epoch == navigationEpoch) navigationStore.write(next)
+                        }
                         if (epoch != navigationEpoch) return@onSuccess
                         engine.replaceRoute(next)
                         ActiveNavigationRepository.publish(ActiveNavigationState(
