@@ -114,6 +114,10 @@ class ViaVoxViewModel(application: Application) : AndroidViewModel(application) 
         saveAndApplyConfig(state.value.config.copy(franciscaAccessToken = token.trim()))
     }
 
+    fun togglePoiNarration(enabled: Boolean) {
+        saveAndApplyConfig(state.value.config.copy(narratePoiEnabled = enabled))
+    }
+
     fun togglePoiCategory(category: PoiCategory, enabled: Boolean) {
         val current = state.value.config
         val newConfig = when (category) {
