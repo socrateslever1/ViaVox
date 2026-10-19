@@ -12,7 +12,8 @@ import com.example.viavox.data.ViaVoxHistoryDatabase
 import com.example.viavox.model.MapPlace
 import com.example.viavox.model.NavigationMath
 import com.example.viavox.model.NavigationRoute
-import com.example.viavox.model.RouteProgressEngine
+import com.example.viavox.service.ActiveNavigationRepository
+import com.example.viavox.service.NavigationSessionStore
 import com.example.viavox.model.SavedTrip
 import com.example.viavox.model.StoredRoute
 import com.example.viavox.model.TripPoint
@@ -67,13 +68,7 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
     private var searchJob: Job? = null
     private var suggestionJob: Job? = null
     private var routeJob: Job? = null
-    private var rerouteJob: Job? = null
-    private var lastGuidedStep = -1
-    private var lastAdvanceStep = -1
-    private var lastRerouteAt = 0L
-    private var progressEngine: RouteProgressEngine? = null
-    private var offRouteFixes = 0
-    private var previousFixTimestamp = 0L
+    private val sessionStore = NavigationSessionStore(application)
 
     init {
         bindTripRecording()
@@ -81,16 +76,25 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
             refreshLists()
         }
         viewModelScope.launch {
-            TrackingRepository.state.collect { tracking ->
-                if (!tracking.hasLocationFix || !tracking.isActive) return@collect
-                val now = System.currentTimeMillis()
-                if (now - previousFixTimestamp < 1_000L) return@collect
-                previousFixTimestamp = now
-                if (_ui.value.navigating) monitorNavigation(
-                    tracking.latitude,tracking.longitude,
-                    tracking.accuracyMeters?.toFloat() ?: 100f,
-                    tracking.speedKmh
-                )
+            ActiveNavigationRepository.state.collect { current ->
+                if (current.navigating && current.route != null) {
+                    _ui.update { it.copy(
+                        navigating = true, route = current.route,
+                        selected = current.route.destination,
+                        nextInstruction = current.instruction,
+                        metersUntilTurn = current.metersToStep,
+                        remainingDistanceMeters = current.metersRemaining,
+                        calculating = current.rerouting,
+                        error = if (current.status.contains("Sem conexão"))
+                            current.status else null
+                    ) }
+                } else if (_ui.value.navigating && !current.navigating) {
+                    _ui.update { it.copy(
+                        navigating = false,
+                        nextInstruction = current.instruction,
+                        calculating = false
+                    ) }
+                }
             }
         }
     }
@@ -239,9 +243,6 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
             val result = network.route(tracking.latitude,tracking.longitude,destination)
             result.fold(
                 onSuccess = { route ->
-                    lastGuidedStep = -1
-                    lastAdvanceStep = -1
-                    progressEngine = RouteProgressEngine(route)
                     _ui.update { it.copy(route = route, calculating = false, error = null) }
                 },
                 onFailure = { error ->
@@ -254,98 +255,34 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
 
     fun startNavigation() {
         val route = _ui.value.route ?: return
-        lastGuidedStep = -1
-        lastAdvanceStep = -1
-        offRouteFixes = 0
-        progressEngine = RouteProgressEngine(route)
+        if (!TrackingRepository.state.value.hasLocationPermission) {
+            _ui.update { it.copy(error = "Autorize o GPS antes de iniciar a navegação.") }
+            return
+        }
         _ui.update { it.copy(
-            navigating = true, nextInstruction = "Siga pela rota indicada",
-            remainingDistanceMeters = route.distanceMeters,
-            metersUntilTurn = 0.0
+            navigating = true, nextInstruction = "Preparando navegação...",
+            remainingDistanceMeters = route.distanceMeters, metersUntilTurn = 0.0,
+            error = null
         ) }
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) { sessionStore.write(route) }
+                // Only start the foreground session from a user-initiated action.
+                ViaVoxTrackingService.startNavigation(getApplication())
+            } catch (e: Exception) {
+                _ui.update { it.copy(
+                    navigating = false,error = "Não foi possível iniciar a rota. Tente novamente."
+                ) }
+            }
+        }
     }
 
     fun stopNavigation() {
-        rerouteJob?.cancel()
-        progressEngine = null
-        _ui.update { it.copy(navigating = false, route = null, selected = null,
-            nextInstruction = "", metersUntilTurn = 0.0) }
-    }
-
-    private suspend fun monitorNavigation(lat: Double, lon: Double, accuracy: Float, speedKmh: Float) {
-        val route = _ui.value.route ?: return
-        if (accuracy > 45f || !accuracy.isFinite()) return
-        val destinationDistance = NavigationMath.meters(
-            lat,lon,route.destination.latitude,route.destination.longitude
-        )
-        if (destinationDistance < 35) {
-            if (lastGuidedStep != Int.MAX_VALUE) {
-                lastGuidedStep = Int.MAX_VALUE
-                ViaVoxTrackingService.announceGuidance(getApplication(),"Você chegou ao destino.")
-            }
-            _ui.update { it.copy(navigating = false,nextInstruction = "Chegou ao destino",
-                metersUntilTurn = 0.0) }
-            return
-        }
-
-        // Only *forward* distance along the routed geometry determines the
-        // next maneuver. The nearest point in meters can be wrong at roundabouts.
-        val progress = (progressEngine ?: RouteProgressEngine(route).also {
-            progressEngine = it
-        }).update(lat,lon,speedKmh) ?: return
-        val index = progress.nextStepIndex
-        val meters = progress.metersToStep
-        if (index >= 0) {
-            val instruction = route.steps[index].instruction
-                .ifBlank { "Continue pela rota" }
-            _ui.update {
-                it.copy(
-                    nextInstruction = instruction,
-                    metersUntilTurn = meters,
-                    remainingDistanceMeters = progress.metersRemaining
-                )
-            }
-            if (index > 0 && meters in 120.0..320.0 &&
-                index > lastAdvanceStep && speedKmh > 8f) {
-                lastAdvanceStep = index
-                val clean = instruction.replaceFirstChar { it.lowercase() }
-                ViaVoxTrackingService.announceGuidance(
-                    getApplication(), "Em ${NavigationMath.formatDistance(meters)}, $clean."
-                )
-            }
-            if (index > 0 && meters in 1.0..55.0 &&
-                index > lastGuidedStep && speedKmh > 1.5f) {
-                lastGuidedStep = index
-                ViaVoxTrackingService.announceGuidance(getApplication(), "$instruction.")
-            }
-        }
-        val offRouteMeters = progress.distanceOffRouteMeters
-        offRouteFixes = if (offRouteMeters > (accuracy * 2 + 65.0)) offRouteFixes + 1 else 0
-        val now = System.currentTimeMillis()
-        if (offRouteFixes >= 3 && now - lastRerouteAt >= 45_000 &&
-            rerouteJob?.isActive != true
-        ) {
-            lastRerouteAt = now
-            offRouteFixes = 0
-            _ui.update { it.copy(calculating = true) }
-            rerouteJob = viewModelScope.launch {
-                val result = network.route(lat,lon,route.destination)
-                result.fold(
-                    onSuccess = {
-                        lastGuidedStep = -1
-                        lastAdvanceStep = -1
-                        progressEngine = RouteProgressEngine(it)
-                        _ui.update { old -> old.copy(route = it, calculating = false,
-                            nextInstruction = it.steps.firstOrNull()?.instruction.orEmpty()) }
-                        ViaVoxTrackingService.announceGuidance(getApplication(),"Rota recalculada.")
-                    },
-                    onFailure = {
-                        _ui.update { old -> old.copy(calculating = false,
-                            error = "Não foi possível recalcular a rota. Confira a conexão.") }
-                    }
-                )
-            }
-        }
+        ViaVoxTrackingService.stopNavigation(getApplication())
+        _ui.update { it.copy(
+            navigating = false,route = null,selected = null,
+            nextInstruction = "",metersUntilTurn = 0.0,remainingDistanceMeters = 0.0
+        ) }
     }
 
     /** Open a true editable bookmark dialog instead of silently inserting. */
@@ -442,7 +379,6 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun openSavedRoute(route: StoredRoute) {
-        progressEngine = RouteProgressEngine(route.route)
         _ui.update { it.copy(
             selected = route.route.destination, route = route.route,
             showingTrip = null, navigating = false, panel = "", error = null
