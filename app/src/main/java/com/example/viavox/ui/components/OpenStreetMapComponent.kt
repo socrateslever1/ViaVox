@@ -39,6 +39,7 @@ import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.delay
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.mutableStateOf
@@ -57,6 +58,10 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.example.viavox.data.ArcGisManausPlacesService
+import com.example.viavox.data.GisBounds
+import com.example.viavox.data.GisReference
+import com.example.viavox.data.ManausArcGisLayer
 import com.example.viavox.model.MapPlace
 import com.example.viavox.model.NavigationRoute
 import com.example.viavox.model.TripPoint
@@ -75,8 +80,12 @@ import org.maplibre.android.maps.Style
 import org.maplibre.android.style.layers.FillExtrusionLayer
 import org.maplibre.android.style.layers.FillLayer
 import org.maplibre.android.style.layers.LineLayer
+import org.maplibre.android.style.layers.SymbolLayer
+import org.maplibre.android.style.layers.CircleLayer
 import org.maplibre.android.style.sources.GeoJsonSource
 import org.maplibre.geojson.LineString
+import org.maplibre.geojson.Feature
+import org.maplibre.geojson.FeatureCollection
 import org.maplibre.geojson.Point
 import org.maplibre.android.style.layers.PropertyFactory
 import org.maplibre.android.style.expressions.Expression
@@ -117,11 +126,13 @@ fun OpenStreetMapComponent(
     isMotorcycle: Boolean = false,
     safetyFeatures: List<com.example.viavox.service.SafetyAlertEngine.SafetyFeature> = emptyList(),
     onMapLongPress: (Double, Double) -> Unit = { _, _ -> },
+    onReferenceSelected: (MapPlace) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val longPressCallback by rememberUpdatedState(onMapLongPress)
+    val referenceCallback by rememberUpdatedState(onReferenceSelected)
     val mapView = remember {
         MapLibre.getInstance(context)
         MapView(context)
@@ -132,6 +143,13 @@ fun OpenStreetMapComponent(
     val prefs = remember(context) { context.getSharedPreferences("viavox_prefs", android.content.Context.MODE_PRIVATE) }
     var selectedMapStyle by remember { mutableStateOf(prefs.getString("map_style", "bright") ?: "bright") }
     var styleMenuExpanded by remember { mutableStateOf(false) }
+    var showArcGisReferences by remember {
+        mutableStateOf(prefs.getBoolean("map_arcgis_references",true))
+    }
+    val arcGisService = remember { ArcGisManausPlacesService() }
+    var arcGisViewport by remember { mutableStateOf<GisBounds?>(null) }
+    var arcGisZoom by remember { mutableStateOf(0.0) }
+    var arcGisReferences by remember { mutableStateOf<List<GisReference>>(emptyList()) }
     var headingUp by remember { mutableStateOf(true) }
     var threeDView by remember { mutableStateOf(true) }
     var mapCameraBearing by remember { mutableStateOf(0f) }
@@ -186,6 +204,47 @@ fun OpenStreetMapComponent(
 
             readyMap.addOnCameraIdleListener {
                 mapCameraBearing = readyMap.cameraPosition.bearing.toFloat()
+                val zoom = readyMap.cameraPosition.zoom
+                if (zoom < ManausArcGisLayer.MIN_ZOOM) {
+                    arcGisZoom = zoom
+                    arcGisViewport = null
+                } else {
+                    val b = readyMap.projection.visibleRegion.latLngBounds
+                    val viewport = GisBounds(
+                        b.longitudeWest,b.latitudeSouth,b.longitudeEast,b.latitudeNorth
+                    )
+                    val previous = arcGisViewport
+                    if (previous == null || kotlin.math.abs(previous.midLatitude() - viewport.midLatitude()) > 0.0009 ||
+                        kotlin.math.abs(previous.midLongitude() - viewport.midLongitude()) > 0.0009 ||
+                        kotlin.math.abs(arcGisZoom - zoom) > 0.7
+                    ) {
+                        arcGisViewport = viewport
+                        arcGisZoom = zoom
+                    }
+                }
+            }
+            readyMap.addOnMapClickListener { coordinate ->
+                val features = readyMap.queryRenderedFeatures(
+                    readyMap.projection.toScreenLocation(coordinate), "viavox-arcgis-points",
+                    "viavox-arcgis-labels"
+                )
+                val hit = features.firstOrNull()
+                if (hit == null) false
+                else {
+                    val name = hit.getStringProperty("name") ?: ""
+                    val label = hit.getStringProperty("label") ?: ""
+                    val lat = hit.getNumberProperty("lat")?.toDouble()
+                    val lon = hit.getNumberProperty("lon")?.toDouble()
+                    if (lat == null || lon == null || name.isBlank()) false
+                    else {
+                        referenceCallback(MapPlace(
+                            label.ifBlank { name },lat,lon,
+                            (hit.getStringProperty("address") ?: "") +
+                                " · Manaus · ArcGIS"
+                        ))
+                        true
+                    }
+                }
             }
             readyMap.addOnCameraMoveStartedListener { reason ->
                 if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) {
@@ -197,6 +256,7 @@ fun OpenStreetMapComponent(
                 enhanceRealRoadContrast(style, selectedMapStyle == "dark")
                 if (threeDView) addBuildings3DIfAvailable(style)
                 ensureNavigationLayers(style)
+                ensureArcGisReferenceLayers(style)
                 isStyleReady = true
             }
             mapView.addOnDidFailLoadingMapListener {
@@ -205,6 +265,7 @@ fun OpenStreetMapComponent(
                         enhanceRealRoadContrast(style, false)
                         if (threeDView) addBuildings3DIfAvailable(style)
                         ensureNavigationLayers(style)
+                        ensureArcGisReferenceLayers(style)
                         isStyleReady = true
                     }
                 }
@@ -293,6 +354,32 @@ fun OpenStreetMapComponent(
         )
     }
 
+    // Load references only for the visible zoomed-in view.  This is independent
+    // of tracking fixes and will also refresh when a user pans the map.
+    LaunchedEffect(map, isStyleReady, arcGisViewport, arcGisZoom, showArcGisReferences) {
+        if (!isStyleReady || map == null || !showArcGisReferences ||
+            arcGisZoom < ManausArcGisLayer.MIN_ZOOM || arcGisViewport == null
+        ) {
+            arcGisReferences = emptyList()
+        } else {
+            delay(450)
+            arcGisReferences = arcGisService.loadVisible(
+                arcGisViewport!!,arcGisZoom
+            )
+        }
+    }
+
+    LaunchedEffect(map, isStyleReady, arcGisReferences, showArcGisReferences) {
+        val currentMap = map ?: return@LaunchedEffect
+        if (!isStyleReady) return@LaunchedEffect
+        val style = currentMap.style ?: return@LaunchedEffect
+        ensureArcGisReferenceLayers(style)
+        updateArcGisReferenceLayers(
+            style,
+            if (showArcGisReferences) arcGisReferences else emptyList()
+        )
+    }
+
     LaunchedEffect(map, isStyleReady, route, destination, favorites, savedTrack, liveTrack) {
         val mapRef = map ?: return@LaunchedEffect
         if (!isStyleReady) return@LaunchedEffect
@@ -362,6 +449,21 @@ fun OpenStreetMapComponent(
     Box(modifier = modifier.fillMaxSize().testTag("map_view")) {
         AndroidView(factory = { mapView }, modifier = Modifier.fillMaxSize())
 
+        if (showArcGisReferences && arcGisReferences.isNotEmpty()) {
+            Surface(
+                color = Color(0xE9082336),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.align(Alignment.BottomStart)
+                    .padding(start = 12.dp,bottom = 185.dp)
+            ) {
+                Text(
+                    "${arcGisReferences.size} referências · GeoSegurança/ArcGIS",
+                    color = Color.White,fontSize = 10.sp,
+                    modifier = Modifier.padding(horizontal = 9.dp,vertical = 5.dp)
+                )
+            }
+        }
+
         if (!isStyleReady) {
             CircularProgressIndicator(
                 color = ViaVoxTeal,
@@ -407,11 +509,41 @@ fun OpenStreetMapComponent(
                                     if (key == "dark") enhanceRealRoadContrast(style, true)
                                     if (threeDView) addBuildings3DIfAvailable(style)
                                     ensureNavigationLayers(style)
+                                    ensureArcGisReferenceLayers(style)
                                     isStyleReady = true
                                 }
                             }
                         )
                     }
+                    androidx.compose.material3.HorizontalDivider()
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                if (showArcGisReferences) "✓ Referências de Manaus" else "Referências de Manaus"
+                            )
+                        },
+                        onClick = {
+                            showArcGisReferences = !showArcGisReferences
+                            prefs.edit().putBoolean("map_arcgis_references",showArcGisReferences).apply()
+                            styleMenuExpanded = false
+                            if (showArcGisReferences) {
+                                val current = map
+                                if (current != null) {
+                                    val b = current.projection.visibleRegion.latLngBounds
+                                    arcGisZoom = current.cameraPosition.zoom
+                                    arcGisViewport = GisBounds(
+                                        b.longitudeWest,b.latitudeSouth,b.longitudeEast,b.latitudeNorth
+                                    )
+                                }
+                            }
+                        },
+                        modifier = Modifier.testTag("arcgis_references_toggle")
+                    )
+                    Text(
+                        "GeoSegurança · ArcGIS Online",
+                        color = Color.Gray,fontSize = 11.sp,
+                        modifier = Modifier.padding(horizontal = 14.dp,vertical = 4.dp)
+                    )
                 }
             }
 
@@ -482,6 +614,47 @@ fun OpenStreetMapComponent(
             }
         }
     }
+}
+
+/** Native MapLibre layers are significantly cheaper than 200 Annotation views. */
+private fun ensureArcGisReferenceLayers(style: Style) {
+    val id = "viavox-arcgis-references"
+    if (style.getSource(id) == null) {
+        style.addSource(GeoJsonSource(id, FeatureCollection.fromFeatures(emptyArray<Feature>())))
+    }
+    if (style.getLayer("viavox-arcgis-points") == null) {
+        style.addLayer(CircleLayer("viavox-arcgis-points",id).withProperties(
+            PropertyFactory.circleRadius(6f),
+            PropertyFactory.circleColor(android.graphics.Color.rgb(2, 166, 156)),
+            PropertyFactory.circleStrokeColor(android.graphics.Color.WHITE),
+            PropertyFactory.circleStrokeWidth(1.5f)
+        ).apply { minZoom = 15f })
+    }
+    if (style.getLayer("viavox-arcgis-labels") == null) {
+        style.addLayer(SymbolLayer("viavox-arcgis-labels",id).withProperties(
+            PropertyFactory.textField(Expression.get("label")),
+            PropertyFactory.textSize(11f),
+            PropertyFactory.textColor(android.graphics.Color.rgb(22, 45, 68)),
+            PropertyFactory.textHaloColor(android.graphics.Color.WHITE),
+            PropertyFactory.textHaloWidth(1.5f)
+        ).apply { minZoom = 15f })
+    }
+}
+
+private fun updateArcGisReferenceLayers(style: Style, places: List<GisReference>) {
+    val source = style.getSource("viavox-arcgis-references") as? GeoJsonSource ?: return
+    val features = places.map { place ->
+        Feature.fromGeometry(Point.fromLngLat(place.longitude,place.latitude)).apply {
+            addStringProperty("name",place.name)
+            addStringProperty("label",place.shortLabel)
+            addStringProperty("address",
+                listOf(place.address,place.neighborhood).filter(String::isNotBlank)
+                    .joinToString(" · "))
+            addNumberProperty("lat",place.latitude)
+            addNumberProperty("lon",place.longitude)
+        }
+    }
+    source.setGeoJson(FeatureCollection.fromFeatures(features))
 }
 
 /** Route and recorded trip use separate GPU line layers on top of real map tiles. */
