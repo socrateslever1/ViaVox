@@ -79,6 +79,59 @@ class HybridDestinationSearchTest {
         assertEquals(offline, out.first())
     }
 
+    @Test fun recognizesCicomEvenWhenNumberComesFirstAndWhileTyping() {
+        assertEquals("24",DestinationSearchPolicy.cicomNumber("24 cicom"))
+        assertEquals("24",DestinationSearchPolicy.cicomNumber("CICOM 24"))
+        assertEquals("24",DestinationSearchPolicy.cicomNumber("24ª CICOM"))
+        assertEquals("24",DestinationSearchPolicy.cicomNumber("24 ci"))
+        assertTrue(DestinationSearchPolicy.isCicomQuery("24 cicom"))
+        assertFalse(DestinationSearchPolicy.isCicomQuery("Cicomar"))
+    }
+
+    @Test fun liveSuggestionsNeverOfferForeignCicomar() = runBlocking {
+        val requests = mutableListOf<String>()
+        val fake = OkHttpClient.Builder().addInterceptor { chain ->
+            requests += chain.request().url.toString()
+            val data = """
+                {"features":[{"attributes":{"OBJECTID":21056,
+                  "NOME_PONTO":"VIGÉSIMA QUARTA COMPANHIA INTERATIVA COMUNITÁRIA24ª CICOM",
+                  "SIGLA_PONTO":"24ª CICOM","TIPO":"POLÍCIA MILITAR",
+                  "ENDERECO":"Av. Manaus Moderna","BAIRRO":"Centro"},
+                  "geometry":{"x":-60.01634535299996,"y":-3.13791017099993}}]}
+            """.trimIndent()
+            Response.Builder().request(chain.request())
+                .protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                .body(data.toResponseBody()).build()
+        }.build()
+        val service = NavigationNetworkService(
+            http = fake,
+            photonBase = "https://photon.invalid",
+            nominatimBase = "https://nominatim.invalid"
+        )
+        val result = service.suggest("24 ci",-3.1,-60.0)
+        assertEquals("24ª CICOM",result.first().name)
+        assertTrue(result.all { it.latitude < 0 && it.longitude < 0 })
+        assertEquals(1, requests.size)
+        assertTrue(requests.single().contains("arcgis"))
+        val explicit = service.search("24 cicom",-3.1,-60.0).getOrThrow()
+        assertEquals("24ª CICOM",explicit.first().name)
+        assertTrue(requests.none { it.contains("photon.invalid") })
+    }
+
+    @Test fun verifiedLocalCicomRemainsFindableWhenServicesAreOffline() = runBlocking {
+        val fake = OkHttpClient.Builder().addInterceptor { chain ->
+            Response.Builder().request(chain.request())
+                .protocol(Protocol.HTTP_1_1).code(502).message("Unavailable")
+                .body("{}".toResponseBody()).build()
+        }.build()
+        val service = NavigationNetworkService(
+            fake,"https://photon.invalid","https://router.invalid","https://nominatim.invalid"
+        )
+        val results = service.search("24 cicom",-3.1,-60.0).getOrThrow()
+        assertEquals("24ª CICOM",results.first().name)
+        assertEquals(-3.13791017099993,results.first().latitude,1e-8)
+    }
+
     @Test fun rawTechnicalPoiErrorsStayOutOfUserHud() {
         val display = com.example.viavox.ui.components.PoiStatusPresenter.display(
             "Servidor de pontos de referência indisponível (502)"
