@@ -65,6 +65,32 @@ class ViaVoxHistoryDatabase(context: Context) :
         return out
     }
 
+    /** Rename an existing saved place without changing GPS or creation date. */
+    fun renameFavorite(id: Long, title: String): Boolean {
+        val name = title.trim()
+        if (name.isBlank() || name.length > 90) return false
+        return writableDatabase.update(
+            "favorites",ContentValues().apply { put("name",name) },
+            "id=?",arrayOf(id.toString())
+        ) == 1
+    }
+
+    /**
+     * Avoid duplicate bookmarks from GPS noise when saving the same physical
+     * location again. Keep the original coordinate, only update its name.
+     */
+    fun closestFavorite(latitude: Double,longitude: Double,limitMeters: Double = 24.0)
+        : Pair<Long,MapPlace>? =
+        getFavorites().filter {
+            com.example.viavox.model.NavigationMath.meters(
+                latitude,longitude,it.second.latitude,it.second.longitude
+            ) <= limitMeters
+        }.minByOrNull {
+            com.example.viavox.model.NavigationMath.meters(
+                latitude,longitude,it.second.latitude,it.second.longitude
+            )
+        }
+
     fun deleteFavorite(id: Long) = writableDatabase.delete("favorites", "id=?", arrayOf(id.toString()))
 
     fun saveRoute(route: NavigationRoute): Long {
