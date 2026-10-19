@@ -16,7 +16,11 @@ import java.io.File
  */
 class NavigationSessionStore(context: Context) {
     private val file = AtomicFile(File(context.filesDir,"viavox_active_navigation.json"))
-    private val lock = Any()
+    private val lock = globalFileLock
+
+    private companion object {
+        val globalFileLock = Any()
+    }
 
     fun write(route: NavigationRoute) = synchronized(lock) {
         require(route.coordinates.size in 2..25_000) { "Rota sem geometria válida" }
