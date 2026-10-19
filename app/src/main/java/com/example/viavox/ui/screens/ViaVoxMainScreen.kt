@@ -139,6 +139,7 @@ fun ViaVoxMainScreen(
                     onStart = navigation::startNavigation,
                     onStop = navigation::stopNavigation,
                     onSaveRoute = navigation::saveCurrentRoute,
+                    vehicleIsMotorcycle = state.config.isMotorcycle(),
                     modifier = Modifier
                         .align(if (isWide) Alignment.BottomEnd else Alignment.BottomCenter)
                         .padding(horizontal = 14.dp)
