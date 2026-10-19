@@ -29,7 +29,8 @@ class RoadDetectionEngine(
     private val onStatusMessage: (String) -> Unit,
     private val reverseGeocodeProvider: suspend (Double, Double) -> Result<Place> = { lat, lon ->
         nominatimService.reverseGeocode(lat, lon)
-    }
+    },
+    private val onGeographicTransition: ((GeographicTransition) -> Unit)? = null
 ) {
 
     private var activeQueryJob: Job? = null
@@ -41,6 +42,9 @@ class RoadDetectionEngine(
     private var currentConfirmedRoad: String? = null
     private var currentConfirmedVenue: String? = null
     private var lastAnnouncedNeighbourhood: String? = null
+    private var lastAnnouncedZone: String? = null
+    private var pendingZone: String? = null
+    private var pendingZoneCount = 0
     private var pendingNeighbourhood: String? = null
     private var pendingNeighbourhoodCount = 0
     private var pendingCandidateRoad: String? = null
@@ -60,6 +64,9 @@ class RoadDetectionEngine(
         currentConfirmedRoad = null
         currentConfirmedVenue = null
         lastAnnouncedNeighbourhood = null
+        lastAnnouncedZone = null
+        pendingZone = null
+        pendingZoneCount = 0
         pendingNeighbourhood = null
         pendingNeighbourhoodCount = 0
         pendingCandidateRoad = null
@@ -176,6 +183,7 @@ class RoadDetectionEngine(
         if (currentNormalized == null) {
             currentConfirmedRoad = road
             lastAnnouncedNeighbourhood = normalizedPlace.neighbourhood.takeIf { normalizedPlace.hasValidNeighbourhood() }
+            lastAnnouncedZone = normalizedPlace.zone.takeIf { it.isNotBlank() }
             pendingNeighbourhood = null
             pendingNeighbourhoodCount = 0
             pendingCandidateRoad = null
@@ -184,6 +192,11 @@ class RoadDetectionEngine(
 
             val message = normalizedPlace.toSpeechMessage(isTransition = false)
             onRoadAnnounceNeeded(message, true)
+            onGeographicTransition?.invoke(GeographicTransition(
+                zone = normalizedPlace.zone.takeIf { it.isNotBlank() },
+                neighbourhood = normalizedPlace.neighbourhood.takeIf { normalizedPlace.hasValidNeighbourhood() },
+                road = road
+            ))
             return
         }
 
@@ -193,6 +206,8 @@ class RoadDetectionEngine(
             pendingCandidatePlace = null
             pendingCandidateCount = 0
 
+            val newZone = confirmedZoneTransition(normalizedPlace.zone)
+            var newNeighbourhood: String? = null
             // A road may cross neighbourhood boundaries without changing its name.
             // Require two consecutive address results before announcing the new area.
             if (normalizedPlace.hasValidNeighbourhood() &&
@@ -208,6 +223,7 @@ class RoadDetectionEngine(
                     lastAnnouncedNeighbourhood = normalizedPlace.neighbourhood
                     pendingNeighbourhood = null
                     pendingNeighbourhoodCount = 0
+                    newNeighbourhood = normalizedPlace.neighbourhood
                     onRoadAnnounceNeeded(
                         normalizedPlace.toNeighbourhoodTransitionMessage(includePolice = enablePoliceCircumscription),
                         false
@@ -216,6 +232,11 @@ class RoadDetectionEngine(
             } else {
                 pendingNeighbourhood = null
                 pendingNeighbourhoodCount = 0
+            }
+            if (newZone != null || newNeighbourhood != null) {
+                onGeographicTransition?.invoke(GeographicTransition(
+                    zone = newZone, neighbourhood = newNeighbourhood
+                ))
             }
             return
         }
@@ -271,6 +292,11 @@ class RoadDetectionEngine(
                 pendingNeighbourhoodCount = 0
 
                 // Mention the area only on first identification or when it changes.
+                val zoneChanged = normalizedPlace.zone.isNotBlank() &&
+                    !sameNeighbourhood(lastAnnouncedZone, normalizedPlace.zone)
+                if (normalizedPlace.zone.isNotBlank()) lastAnnouncedZone = normalizedPlace.zone
+                pendingZone = null
+                pendingZoneCount = 0
                 val neighbourhoodChanged = normalizedPlace.hasValidNeighbourhood() &&
                     !sameNeighbourhood(lastAnnouncedNeighbourhood, normalizedPlace.neighbourhood)
                 if (normalizedPlace.hasValidNeighbourhood()) {
@@ -281,6 +307,11 @@ class RoadDetectionEngine(
                     includeNeighbourhood = neighbourhoodChanged
                 )
                 onRoadAnnounceNeeded(message, false)
+                onGeographicTransition?.invoke(GeographicTransition(
+                    zone = normalizedPlace.zone.takeIf { zoneChanged },
+                    neighbourhood = normalizedPlace.neighbourhood.takeIf { neighbourhoodChanged },
+                    road = road
+                ))
             }
         } else {
             // First sighting of a candidate road (protects against single-point GPS bounce at intersections)
@@ -290,6 +321,25 @@ class RoadDetectionEngine(
             pendingCandidateStartLat = fix.latitude
             pendingCandidateStartLon = fix.longitude
         }
+    }
+
+    /** Require two consistent geocoder readings for zone-only transitions. */
+    private fun confirmedZoneTransition(zone: String): String? {
+        if (zone.isBlank() || sameNeighbourhood(lastAnnouncedZone,zone)) {
+            pendingZone = null
+            pendingZoneCount = 0
+            return null
+        }
+        if (sameNeighbourhood(pendingZone,zone)) pendingZoneCount++
+        else {
+            pendingZone = zone
+            pendingZoneCount = 1
+        }
+        if (pendingZoneCount < 2) return null
+        lastAnnouncedZone = zone
+        pendingZone = null
+        pendingZoneCount = 0
+        return zone
     }
 
     private fun sameNeighbourhood(previous: String?, current: String): Boolean =
