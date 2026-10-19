@@ -12,6 +12,20 @@ import org.json.JSONObject
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
+/**
+ * Offline result from a public ArcGIS feature, not an invented coordinate.
+ * The metadata explicitly warns that police locations may change.
+ */
+object VerifiedManausLandmarks {
+    private val cicom24 = MapPlace(
+        "24ª CICOM", -3.13791017099993, -60.01634535299996,
+        "Centro · Manaus · cadastro ArcGIS (confirme o endereço)"
+    )
+    fun find(query: String): List<MapPlace> =
+        if (DestinationSearchPolicy.cicomNumber(query) == "24") listOf(cicom24)
+        else emptyList()
+}
+
 /** Public ArcGIS feature layer linked in the user's Polícia Civil map. */
 object ManausArcGisLayer {
     const val SOURCE = "GeoSegurança / ArcGIS Online — Pontos_de_referência"
@@ -172,10 +186,9 @@ class ArcGisManausPlacesService(
 
     suspend fun search(query: String): List<MapPlace> = withContext(Dispatchers.IO) {
         val normalized = DestinationSearchPolicy.normalize(query)
-        val match = Regex("""^(?:(\d{1,2})\s*cicom|cicom\s*(\d{1,2}))$""")
-            .matchEntire(normalized)
-        val number = match?.groupValues?.get(1)?.ifBlank { match.groupValues[2] }
-        val clean = if (number != null) "CICOM" else query.trim().take(70)
+        val number = DestinationSearchPolicy.cicomNumber(query)
+        val clean = if (number != null || DestinationSearchPolicy.isCicomQuery(query))
+            "CICOM" else query.trim().take(70)
         if (clean.length < 3) return@withContext emptyList()
         val safe = clean.replace("'","''").replace("%","")
         val where = if (number != null)
@@ -188,7 +201,9 @@ class ArcGisManausPlacesService(
                 "returnGeometry" to "true",
                 "outSR" to "4326",
                 "resultRecordCount" to "35"
-            ))).map { it.asDestination() }
+            ))).filter { reference ->
+                number == null || DestinationSearchPolicy.cicomNumber(reference.alias) == number
+            }.map { it.asDestination() }
         } catch (error: Exception) {
             android.util.Log.w("ViaVoxArcGIS","ArcGIS destination search unavailable",error)
             emptyList()
