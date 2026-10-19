@@ -1,6 +1,8 @@
 package com.example.viavox.data
 
 import com.example.viavox.model.MapPlace
+import com.example.viavox.model.PoiCategory
+import com.example.viavox.model.PointOfInterest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -55,6 +57,28 @@ data class GisReference(
             neighborhood.takeIf(String::isNotBlank), "Manaus")
             .joinToString(" · ")
     )
+
+    /**
+     * Speech uses only important public landmarks, not every tiny storefront.
+     * Generic shops remain visible on the map and selectable as destinations.
+     */
+    fun asSpokenReference(): PointOfInterest? {
+        val tags = DestinationSearchPolicy.normalize("$type $subtype")
+        val category = when {
+            listOf("saude","hospital","clinica","farmacia","upa","ubs").any(tags::contains) ->
+                PoiCategory.HEALTH
+            listOf("escola","universidade","educacao","ensino","colegio").any(tags::contains) ->
+                PoiCategory.EDUCATION
+            listOf("combustivel","posto de abastecimento","posto de gasolina").any(tags::contains) ->
+                PoiCategory.FUEL
+            listOf("praca","lazer","parque","jardim").any(tags::contains) ->
+                PoiCategory.PARK
+            listOf("policia","orgao publico","shopping","bombeiro","rodoviaria").any(tags::contains) ->
+                PoiCategory.PUBLIC
+            else -> null
+        } ?: return null
+        return PointOfInterest("arcgis_$id",shortLabel,category,latitude,longitude)
+    }
 
     val shortLabel: String
         get() = (alias.takeIf { it.contains("CICOM",ignoreCase = true) } ?: name)
