@@ -38,6 +38,7 @@ fun ViaVoxMainScreen(
     onSpeedChanged: (Float) -> Unit,
     onVoiceSelectionChanged: (String, String) -> Unit,
     onIntervalChanged: (Int) -> Unit,
+    onPoiCategoryToggled: (PoiCategory, Boolean) -> Unit,
     onFranciscaBrokerUrlChanged: (String) -> Unit = {},
     onFranciscaAccessTokenChanged: (String) -> Unit = {},
     onVehicleTypeChanged: (String) -> Unit = {},
