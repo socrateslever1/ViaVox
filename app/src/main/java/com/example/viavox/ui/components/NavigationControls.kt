@@ -55,6 +55,7 @@ fun NavigationSearchAndActions(
     onShowSuggestions: () -> Unit,
     onDismissSuggestions: () -> Unit,
     onSelectSuggestion: (MapPlace) -> Unit,
+    isCurrentLocationSaved: Boolean = false,
     onOpenSaved: () -> Unit,
     onOpenRoutes: () -> Unit,
     onOpenHistory: () -> Unit,
@@ -110,9 +111,18 @@ fun NavigationSearchAndActions(
                             modifier = Modifier.size(17.dp))
                     }
                 } else {
-                    IconButton(onClick = onSaveCurrentPosition,modifier = Modifier.size(32.dp)) {
-                        Icon(Icons.Default.BookmarkAdd,"Salvar localização",tint = hint,
-                            modifier = Modifier.size(19.dp))
+                    IconButton(
+                        onClick = onSaveCurrentPosition,
+                        modifier = Modifier.size(34.dp).testTag("save_here_button")
+                    ) {
+                        Icon(
+                            if (isCurrentLocationSaved) Icons.Default.Bookmark
+                            else Icons.Default.BookmarkAdd,
+                            if (isCurrentLocationSaved) "Editar lugar salvo"
+                            else "Salvar aqui",
+                            tint = if (isCurrentLocationSaved) aqua else hint,
+                            modifier = Modifier.size(21.dp)
+                        )
                     }
                 }
                 IconButton(onClick = { keyboard?.hide();onSearch() },
