@@ -6,6 +6,7 @@ data class ViaVoxConfig(
     val speechRate: Float = 0.95f,
     val minIntervalSeconds: Int = 20,
     val narratePoiEnabled: Boolean = true,
+    val backgroundVoiceEnabled: Boolean = false,
     val enableHealthPoi: Boolean = true,
     val enableEducationPoi: Boolean = true,
     val enableParksPoi: Boolean = true,
@@ -34,6 +35,7 @@ data class ViaVoxConfig(
             .putFloat("speech_rate", speechRate)
             .putInt("min_interval_seconds", minIntervalSeconds)
             .putBoolean("narrate_poi_enabled", narratePoiEnabled)
+            .putBoolean("background_voice_enabled", backgroundVoiceEnabled)
             .putBoolean("poi_health", enableHealthPoi)
             .putBoolean("poi_education", enableEducationPoi)
             .putBoolean("poi_parks", enableParksPoi)
@@ -56,6 +58,7 @@ data class ViaVoxConfig(
                 speechRate = prefs.getFloat("speech_rate", 0.95f),
                 minIntervalSeconds = prefs.getInt("min_interval_seconds", 20),
                 narratePoiEnabled = prefs.getBoolean("narrate_poi_enabled", true),
+                backgroundVoiceEnabled = prefs.getBoolean("background_voice_enabled", false),
                 enableHealthPoi = prefs.getBoolean("poi_health", true),
                 enableEducationPoi = prefs.getBoolean("poi_education", true),
                 enableParksPoi = prefs.getBoolean("poi_parks", true),
