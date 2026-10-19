@@ -176,6 +176,14 @@ fun SettingsDialog(
                         }
                     }
 
+                    Text(
+                        "O modo Moto muda o indicador no mapa. O provedor de rotas atual ainda usa vias de carro; não calcula restrições específicas para motocicletas.",
+                        color = muted,
+                        fontSize = 11.sp,
+                        lineHeight = 15.sp,
+                        modifier = Modifier.padding(bottom = 16.dp)
+                    )
+                    
                     SectionTitle("Voz da navegação")
                     Text(
                         text = "Escolha entre as vozes em português disponíveis no seu celular.",
