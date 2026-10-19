@@ -776,56 +776,93 @@ private fun updateLine(style: Style, id: String, route: List<Pair<Double,Double>
  * Generates a high-DPI blue GPS location puck bitmap with an optional directional heading cone.
  */
 private fun createBlueLocationMarkerBitmap(bearing: Float, showHeading: Boolean, isMotorcycle: Boolean = false): Bitmap {
-    val sizePx = 96
+    val sizePx = 112
     val center = sizePx / 2f
-    val bitmap = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
+    val bitmap = Bitmap.createBitmap(sizePx,sizePx,Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bitmap)
-
-    // Outer translucent halo (Teal for motorcycle, Blue for car)
-    val haloColor = if (isMotorcycle) android.graphics.Color.argb(75, 0, 229, 255)
-        else android.graphics.Color.argb(65, 33, 150, 243)
-    val haloPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = haloColor
-        style = Paint.Style.FILL
+    val teal = android.graphics.Color.rgb(31,221,207)
+    val blue = android.graphics.Color.rgb(28,120,248)
+    val highlight = if (isMotorcycle) teal else blue
+    val aura = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.argb(56,
+            android.graphics.Color.red(highlight),
+            android.graphics.Color.green(highlight),
+            android.graphics.Color.blue(highlight))
     }
-    canvas.drawCircle(center, center, 38f, haloPaint)
+    canvas.drawCircle(center,center,43f,aura)
 
-    // Directional heading arrow if vehicle/user bearing is available
-    if (showHeading) {
-        canvas.save()
-        canvas.rotate(bearing, center, center)
-        val arrowColor = if (isMotorcycle) android.graphics.Color.rgb(0, 229, 255)
-            else android.graphics.Color.rgb(41, 182, 246)
-        val arrowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = arrowColor
-            style = Paint.Style.FILL
+    if (!showHeading) {
+        // When the heading is unknown, explicitly use a nondirectional dot.
+        val outline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.WHITE
         }
-        val path = Path().apply {
-            moveTo(center, 6f)
-            lineTo(center - 13f, center - 12f)
-            lineTo(center + 13f, center - 12f)
-            close()
-        }
-        canvas.drawPath(path, arrowPaint)
-        canvas.restore()
+        canvas.drawCircle(center,center,22f,outline)
+        outline.color = highlight
+        canvas.drawCircle(center,center,17f,outline)
+        return bitmap
     }
 
-    // White border ring
-    val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    canvas.save()
+    canvas.rotate(bearing,center,center)
+    val direction = Path().apply {
+        moveTo(center,5f)
+        lineTo(center-14f,center-16f)
+        lineTo(center+14f,center-16f)
+        close()
+    }
+    canvas.drawPath(direction,Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.argb(190,
+            android.graphics.Color.red(highlight),
+            android.graphics.Color.green(highlight),
+            android.graphics.Color.blue(highlight))
+    })
+
+    val white = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = android.graphics.Color.WHITE
         style = Paint.Style.FILL
     }
-    canvas.drawCircle(center, center, 21f, borderPaint)
-
-    // Solid inner puck (Teal for motorcycle, Blue for car)
-    val coreColor = if (isMotorcycle) android.graphics.Color.rgb(0, 180, 216)
-        else android.graphics.Color.rgb(2, 136, 209)
-    val corePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = coreColor
+    val body = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = highlight
         style = Paint.Style.FILL
     }
-    canvas.drawCircle(center, center, 16f, corePaint)
-
+    if (isMotorcycle) {
+        // A real two-wheel vehicle silhouette, not just a teal car dot.
+        val darkWheel = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.rgb(12,32,51)
+            style = Paint.Style.STROKE
+            strokeWidth = 4.5f
+        }
+        canvas.drawCircle(center,center-18f,9f,darkWheel)
+        canvas.drawCircle(center,center+19f,9f,darkWheel)
+        canvas.drawRoundRect(android.graphics.RectF(center-5f,center-21f,
+            center+5f,center+25f),5f,5f,white)
+        canvas.drawRoundRect(android.graphics.RectF(center-4f,center-16f,
+            center+4f,center+12f),3f,3f,body)
+        canvas.drawLine(center-12f,center-13f,center+12f,center-13f,darkWheel)
+        canvas.drawCircle(center,center+10f,6.5f,white)
+    } else {
+        // Car icon with windshield, body and wheels.
+        val dark = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.rgb(12,32,51)
+        }
+        canvas.drawRoundRect(android.graphics.RectF(center-16f,center-27f,
+            center+16f,center+28f),10f,10f,white)
+        canvas.drawRoundRect(android.graphics.RectF(center-12.5f,center-24f,
+            center+12.5f,center+24f),7f,7f,body)
+        canvas.drawRoundRect(android.graphics.RectF(center-10f,center-19f,
+            center+10f,center-6f),4f,4f,dark)
+        canvas.drawRoundRect(android.graphics.RectF(center-10f,center+6f,
+            center+10f,center+19f),4f,4f,dark)
+        canvas.drawRoundRect(android.graphics.RectF(center-21f,center-16f,
+            center-15f,center-3f),2f,2f,dark)
+        canvas.drawRoundRect(android.graphics.RectF(center+15f,center-16f,
+            center+21f,center-3f),2f,2f,dark)
+        canvas.drawRoundRect(android.graphics.RectF(center-21f,center+9f,
+            center-15f,center+22f),2f,2f,dark)
+        canvas.drawRoundRect(android.graphics.RectF(center+15f,center+9f,
+            center+21f,center+22f),2f,2f,dark)
+    }
+    canvas.restore()
     return bitmap
 }
 
