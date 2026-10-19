@@ -445,7 +445,8 @@ fun NavigationLibraryDialog(
     onRenameFavorite: (Long, String) -> Unit,
     onDeleteFavorite: (Long) -> Unit,
     onDeleteRoute: (Long) -> Unit,
-    onDeleteTrip: (Long) -> Unit
+    onDeleteTrip: (Long) -> Unit,
+    onExportTrip: (SavedTrip) -> Unit
 ) {
     if (ui.panel.isBlank() || ui.panel == "search") return
     var editFavoriteId by remember { mutableStateOf<Long?>(null) }
@@ -527,6 +528,7 @@ fun NavigationLibraryDialog(
                                 "${NavigationMath.formatDistance(trip.distanceMeters)} · ${trip.points.size} registros",
                                 Icons.Default.Timeline,
                                 action = { onSelectTrip(trip) },
+                                onExport = { onExportTrip(trip) },
                                 onDelete = { pendingDelete = "history" to trip.id }
                             )
                         }
@@ -612,6 +614,7 @@ private fun LibraryRow(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     action: () -> Unit,
     onEdit: (() -> Unit)? = null,
+    onExport: (() -> Unit)? = null,
     onDelete: (() -> Unit)? = null
 ) {
     Surface(color = Color(0xFF1C354E),shape = RoundedCornerShape(13.dp),
@@ -629,6 +632,14 @@ private fun LibraryRow(
             if (onEdit != null) {
                 IconButton(onClick = onEdit,modifier = Modifier.size(37.dp)) {
                     Icon(Icons.Default.Edit,"Renomear",tint = aqua)
+                }
+            }
+            if (onExport != null) {
+                IconButton(
+                    onClick = onExport,
+                    modifier = Modifier.size(37.dp).testTag("share_trip_gpx")
+                ) {
+                    Icon(Icons.Default.Share,"Exportar GPX",tint = aqua)
                 }
             }
             if(onDelete != null) {
