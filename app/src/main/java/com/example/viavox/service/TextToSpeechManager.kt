@@ -86,6 +86,7 @@ class TextToSpeechManager(
     private var nativeVoiceId = ""
     private var currentSpeechRate = 0.95f
     private var queuedBeforeInit: String? = null
+    private var completionCallback: (() -> Unit)? = null
 
     private var activeUtteranceId = ""
     private var activeText = ""
@@ -108,11 +109,12 @@ class TextToSpeechManager(
             tts?.stop()
             francisca.endpoint = endpoint
             requestAudioFocus()
-            francisca.speak(text, fallback)
+            francisca.speak(text, fallback) { onManagedFinished() }
         },
         fallbackSpeak = { speakLocally(it) },
         stopAll = {
             queuedBeforeInit = null
+            completionCallback = null
             activeUtteranceId = ""
             francisca.stop()
             tts?.stop()
@@ -135,6 +137,7 @@ class TextToSpeechManager(
         if (status != TextToSpeech.SUCCESS) {
             initFailed = true
             reportVoiceIssue("O sintetizador de voz do Android não está disponível.")
+            onManagedFinished()
             return
         }
         isInitialized = true
@@ -153,6 +156,7 @@ class TextToSpeechManager(
                 reportVoiceIssue(null)
                 releaseAudioFocus()
                 onSpeakingStateChanged(false)
+                onManagedFinished()
             }
             @Deprecated("Deprecated by Android")
             override fun onError(utteranceId: String?) =
@@ -230,6 +234,7 @@ class TextToSpeechManager(
         reportVoiceIssue(message)
         releaseAudioFocus()
         onSpeakingStateChanged(false)
+        onManagedFinished()
     }
 
     fun setVoiceSelection(provider: String, androidVoiceId: String) {
@@ -254,6 +259,20 @@ class TextToSpeechManager(
         router.speak(text, forceRepeat)
     }
 
+    /** Caller serializes play requests; callback fires on *actual* playback end. */
+    fun speakManaged(text: String, onFinished: () -> Unit) {
+        // A serialized queue must be the sole owner of managed playback.
+        // Generation checks in SpeechOrchestrator reject obsolete completions.
+        completionCallback = onFinished
+        if (!router.speak(text, forceRepeat = true)) onManagedFinished()
+    }
+
+    private fun onManagedFinished() {
+        val callback = completionCallback ?: return
+        completionCallback = null
+        mainHandler.post { callback() }
+    }
+
     fun testVoice() {
         // A diagnostic test must not fail merely because the voice toggle is off.
         if (!router.isVoiceEnabled) {
@@ -265,8 +284,10 @@ class TextToSpeechManager(
 
     private fun speakLocally(text: String) {
         if (!isInitialized) {
-            if (initFailed) reportVoiceIssue("Motor de voz indisponível. Instale uma voz em português.")
-            else queuedBeforeInit = text
+            if (initFailed) {
+                reportVoiceIssue("Motor de voz indisponível. Instale uma voz em português.")
+                onManagedFinished()
+            } else queuedBeforeInit = text
             return
         }
         francisca.stop()
@@ -282,7 +303,7 @@ class TextToSpeechManager(
         val utteranceId = "viavox_${System.nanoTime()}"
         activeUtteranceId = utteranceId
         try {
-            val rc = engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+            val rc = engine.speak(text, if (retry) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD, null, utteranceId)
             if (rc != TextToSpeech.SUCCESS) {
                 failLocalSpeech("O Android rejeitou a reprodução. Verifique a voz instalada.")
             } else if (!retry) {
