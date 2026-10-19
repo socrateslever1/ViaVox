@@ -32,6 +32,7 @@ import com.example.viavox.ui.components.HeaderBar
 import com.example.viavox.ui.components.OpenStreetMapComponent
 import com.example.viavox.ui.components.SettingsDialog
 import com.example.viavox.ui.components.StatusPanel
+import com.example.viavox.ui.components.SavedPlaceEditorDialog
 import com.example.viavox.ui.theme.ViaVoxDarkBg
 
 @Composable
@@ -211,6 +212,14 @@ fun ViaVoxMainScreen(
             )
             }
         }
+
+        SavedPlaceEditorDialog(
+            place = navigationUi.pendingSavePlace,
+            existingId = navigationUi.pendingSaveId,
+            onSave = navigation::confirmSavePlace,
+            onRemove = navigation::removeCurrentSavedPlace,
+            onDismiss = navigation::dismissSavePlace
+        )
 
         NavigationLibraryDialog(
             ui = navigationUi,
