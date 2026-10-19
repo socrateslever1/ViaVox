@@ -155,6 +155,24 @@ class ViaVoxTrackingService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action ?: ACTION_START
         Log.d(TAG, "onStartCommand received action: $action")
+        if (intent == null) {
+            // START_STICKY is only for explicit user sessions. Never wake GPS
+            // after a restart for an ordinary map-only foreground session.
+            val prefs = getSharedPreferences("viavox_prefs",Context.MODE_PRIVATE)
+            val tripPrefs = getSharedPreferences("viavox_trip_session",Context.MODE_PRIVATE)
+            val mayRestore = BackgroundSessionPolicy.mayRestore(
+                hasSavedNavigation = java.io.File(
+                    filesDir,"viavox_active_navigation.json"
+                ).exists(),
+                hasUnfinishedRecording = tripPrefs.getLong("active_trip_id",0L) > 0L,
+                backgroundVoice = currentConfig.backgroundVoiceEnabled,
+                manuallyPaused = prefs.getBoolean("tracking_manually_paused",false)
+            )
+            if (!mayRestore) {
+                stopSelf()
+                return START_NOT_STICKY
+            }
+        }
 
         when (action) {
             ACTION_START -> startForegroundTracking()
@@ -226,7 +244,14 @@ class ViaVoxTrackingService : Service() {
             }
         }
 
-        return START_NOT_STICKY
+        val persistent = BackgroundSessionPolicy.keepAlive(
+            navigation = ActiveNavigationRepository.state.value.navigating ||
+                action == ACTION_NAV_START,
+            recording = TripRecordingRepository.state.value.recording ||
+                action == ACTION_RECORD_START,
+            backgroundVoice = currentConfig.backgroundVoiceEnabled
+        )
+        return if (isTrackingRunning && persistent) START_STICKY else START_NOT_STICKY
     }
 
     private fun hasLocationPermission(): Boolean {
