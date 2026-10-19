@@ -313,6 +313,112 @@ fun NavigationRouteCard(
     }
 }
 
+
+/**
+ * Driving HUD only: one compact maneuver strip, no stacked route panels.
+ * All values come from live navigation state; do not show static route ETA.
+ */
+@Composable
+fun ActiveNavigationBanner(
+    ui: NavigationUiState,
+    onStop: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    if (!ui.navigating || ui.route == null) return
+    Surface(
+        modifier = modifier.testTag("active_navigation_banner"),
+        shape = RoundedCornerShape(19.dp),
+        color = Color(0xF40B243A),
+        shadowElevation = 9.dp,
+        border = BorderStroke(1.dp,Color.White.copy(alpha = 0.15f))
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth()
+                .padding(horizontal = 12.dp,vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Surface(
+                color = aqua.copy(alpha = 0.13f),
+                shape = RoundedCornerShape(13.dp),
+                modifier = Modifier.size(43.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(Icons.Default.Navigation,"Próxima manobra",tint = aqua,
+                        modifier = Modifier.size(26.dp))
+                }
+            }
+            Column(Modifier.weight(1f)) {
+                Text(
+                    if (ui.metersUntilTurn > 0)
+                        "Em ${NavigationMath.formatDistance(ui.metersUntilTurn)}"
+                    else "Siga a rota",
+                    color = aqua,fontSize = 12.sp,fontWeight = FontWeight.Bold
+                )
+                Text(
+                    ui.nextInstruction.ifBlank { "Siga pela via indicada" },
+                    color = pale,fontSize = 15.sp,fontWeight = FontWeight.Bold,
+                    maxLines = 2,overflow = TextOverflow.Ellipsis
+                )
+            }
+            IconButton(
+                onClick = onStop,
+                modifier = Modifier.size(40.dp).testTag("stop_navigation_button")
+            ) {
+                Icon(Icons.Default.Close, "Encerrar navegação",tint = hint,
+                    modifier = Modifier.size(23.dp))
+            }
+        }
+    }
+}
+
+@Composable
+fun NavigationStreetStrip(
+    street: String,
+    neighborhood: String,
+    accuracyMeters: Int?,
+    voiceEnabled: Boolean,
+    onToggleVoice: (Boolean) -> Unit,
+    onRepeat: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier.testTag("navigation_street_strip"),
+        shape = RoundedCornerShape(19.dp),
+        color = Color(0xEE0B243A),
+        border = BorderStroke(1.dp,Color.White.copy(alpha = 0.12f)),
+        shadowElevation = 7.dp
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 11.dp,vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = { onToggleVoice(!voiceEnabled) },
+                modifier = Modifier.size(39.dp)) {
+                Icon(
+                    if (voiceEnabled) Icons.Default.VolumeUp else Icons.Default.VolumeOff,
+                    if (voiceEnabled) "Silenciar voz" else "Ativar voz",
+                    tint = if (voiceEnabled) aqua else hint
+                )
+            }
+            Spacer(Modifier.width(7.dp))
+            Column(Modifier.weight(1f)) {
+                Text(street,color = pale,fontSize = 15.sp,fontWeight = FontWeight.Bold,
+                    maxLines = 1,overflow = TextOverflow.Ellipsis)
+                Text(
+                    listOfNotNull(neighborhood.takeIf { it.isNotBlank() },
+                        accuracyMeters?.let { "GPS ±${it} m" }).joinToString(" · "),
+                    color = hint,fontSize = 11.sp,maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            IconButton(onClick = onRepeat,modifier = Modifier.size(39.dp)) {
+                Icon(Icons.Default.Replay,"Repetir nome da rua",tint = aqua)
+            }
+        }
+    }
+}
+
 @Composable
 fun NavigationLibraryDialog(
     ui: NavigationUiState,
