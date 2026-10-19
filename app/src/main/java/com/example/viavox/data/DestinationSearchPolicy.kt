@@ -17,18 +17,18 @@ object DestinationSearchPolicy {
 
     /** Match CICOM abbreviations and typing prefixes (24 ci, CICOM 24). */
     fun cicomNumber(query: String): String? {
-        val normalized = normalize(query).replace(Regex("""\\b(\\d{1,2})\\s+a\\s+cicom\\b"""), "$1 cicom")
-        val first = Regex("""^(\\d{1,2})\\s+ci(?:c(?:o(?:m)?)?)?(?:\\s+.*)?$""")
+        val normalized = normalize(query).replace(Regex("""\b(\d{1,2})\s+a\s+cicom\b"""), "$1 cicom")
+        val first = Regex("""^(\d{1,2})\s+ci(?:c(?:o(?:m)?)?)?(?:\s+.*)?$""")
             .matchEntire(normalized)
         if (first != null) return first.groupValues[1]
-        val second = Regex("""^cicom\\s+(\\d{1,2})(?:\\s+.*)?$""").matchEntire(normalized)
+        val second = Regex("""^cicom\s+(\d{1,2})(?:\s+.*)?$""").matchEntire(normalized)
         return second?.groupValues?.get(1)
     }
 
     fun isCicomQuery(query: String): Boolean {
         val normalized = normalize(query)
         return cicomNumber(query) != null ||
-            Regex("""(?:^|\\s)cicom(?:\\s|$)""").containsMatchIn(normalized)
+            Regex("""(?:^|\s)cicom(?:\s|$)""").containsMatchIn(normalized)
     }
 
     fun queryVariants(query: String): List<String> {
