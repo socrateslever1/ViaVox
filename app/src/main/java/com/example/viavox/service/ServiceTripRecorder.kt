@@ -42,6 +42,7 @@ class ServiceTripRecorder(context: Context) {
     private val mutex = Mutex()
     private var activeTripId = 0L
     private var cumulativeMeters = 0.0
+    private var savedCount = 0
     private var lastPoint: TripPoint? = null
     private var savedPoints: List<TripPoint> = emptyList()
 
@@ -52,6 +53,7 @@ class ServiceTripRecorder(context: Context) {
             if (stored != null) {
                 activeTripId = stored.id
                 cumulativeMeters = stored.distanceMeters
+                savedCount = stored.points.size
                 savedPoints = stored.points.takeLast(4500)
                 lastPoint = stored.points.lastOrNull()
                 return@withLock publish()
@@ -66,6 +68,7 @@ class ServiceTripRecorder(context: Context) {
         if (activeTripId != 0L) return@withLock publish()
         activeTripId = db.startTrip()
         cumulativeMeters = 0.0
+        savedCount = 0
         lastPoint = null
         savedPoints = emptyList()
         if (!prefs.edit().putLong("active_trip_id",activeTripId).commit()) {
@@ -81,6 +84,7 @@ class ServiceTripRecorder(context: Context) {
         db.appendTripPoint(activeTripId,point,newDistance)
         lastPoint = point
         cumulativeMeters = newDistance
+        savedCount++
         savedPoints = (savedPoints + point).takeLast(4500)
         publish()
     }
@@ -90,6 +94,7 @@ class ServiceTripRecorder(context: Context) {
         activeTripId = 0L
         lastPoint = null
         cumulativeMeters = 0.0
+        savedCount = 0
         savedPoints = emptyList()
         prefs.edit().remove("active_trip_id").commit()
         publish()
@@ -98,7 +103,7 @@ class ServiceTripRecorder(context: Context) {
     private fun publish(): TripRecordingState {
         val snapshot = TripRecordingState(
             tripId = activeTripId, recording = activeTripId > 0,
-            meters = cumulativeMeters, count = if (activeTripId > 0) savedPoints.size else 0,
+            meters = cumulativeMeters, count = if (activeTripId > 0) savedCount else 0,
             points = savedPoints
         )
         TripRecordingRepository.update(snapshot)
