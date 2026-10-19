@@ -1,5 +1,7 @@
 package com.example.viavox.ui.components
 
+import android.animation.ValueAnimator
+import android.view.animation.LinearInterpolator
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
@@ -62,6 +64,7 @@ import com.example.viavox.data.ArcGisManausPlacesService
 import com.example.viavox.data.GisBounds
 import com.example.viavox.data.GisReference
 import com.example.viavox.data.ManausArcGisLayer
+import com.example.viavox.model.NavigationCameraMath
 import com.example.viavox.model.MapPlace
 import com.example.viavox.model.NavigationRoute
 import com.example.viavox.model.TripPoint
@@ -90,6 +93,7 @@ import org.maplibre.geojson.Point
 import org.maplibre.android.style.layers.PropertyFactory
 import org.maplibre.android.style.expressions.Expression
 import kotlin.math.abs
+import kotlin.math.max
 
 private const val INITIAL_ZOOM = 17.2
 private const val DARK_MAP_STYLE = "https://tiles.openfreemap.org/styles/dark"
@@ -154,6 +158,9 @@ fun OpenStreetMapComponent(
     var threeDView by remember { mutableStateOf(true) }
     var mapCameraBearing by remember { mutableStateOf(0f) }
     var marker by remember { mutableStateOf<Marker?>(null) }
+    val puckAnimator = remember { arrayOfNulls<ValueAnimator>(1) }
+    var lastNavigationBearing by remember { mutableStateOf<Double?>(null) }
+    var wasNavigating by remember { mutableStateOf(false) }
     var destMarker by remember { mutableStateOf<Marker?>(null) }
     val favoriteMarkers = remember { mutableListOf<Marker>() }
     val safetyMarkers = remember { mutableListOf<Marker>() }
@@ -284,73 +291,115 @@ fun OpenStreetMapComponent(
         onDispose {
             lifecycle.removeObserver(observer)
             stopIfNeeded()
+            puckAnimator[0]?.cancel()
             mapView.onDestroy()
         }
     }
 
-    // Update coordinates/camera only on new GPS fixes, not on every compass event.
+    // One camera animator owns location, bearing, pitch and zoom together.
+    // A second bearingTo animation formerly cancelled every position animation.
     LaunchedEffect(
         map, isStyleReady, latitude, longitude, bearing, hasBearing,
-        speedKmh, followUser, hasLocationFix, headingUp, threeDView
+        speedKmh, followUser, hasLocationFix, headingUp, threeDView,
+        navigating, isMotorcycle
     ) {
         val currentMap = map ?: return@LaunchedEffect
         if (!isStyleReady || !hasLocationFix) return@LaunchedEffect
-        val effectiveCoords = if (navigating && route != null && route.coordinates.isNotEmpty()) {
-            com.example.viavox.model.NavigationMath.snapToPolyline(latitude, longitude, route.coordinates)
-        } else {
-            latitude to longitude
-        }
-        val point = LatLng(effectiveCoords.first, effectiveCoords.second)
-        val previousMarker = marker
-        if (previousMarker == null) {
-            val defaultPuck = IconFactory.getInstance(context).fromBitmap(
-                createBlueLocationMarkerBitmap(0f, false, isMotorcycle)
+        val effective = if (navigating && route != null && route.coordinates.isNotEmpty()) {
+            com.example.viavox.model.NavigationMath.snapToPolyline(
+                latitude,longitude,route.coordinates
             )
-            marker = currentMap.addMarker(MarkerOptions().position(point).icon(defaultPuck))
+        } else latitude to longitude
+        val point = LatLng(effective.first,effective.second)
+        val existing = marker
+        if (existing == null) {
+            val initialIcon = IconFactory.getInstance(context).fromBitmap(
+                createBlueLocationMarkerBitmap(0f,false,isMotorcycle)
+            )
+            marker = currentMap.addMarker(MarkerOptions().position(point).icon(initialIcon))
         } else {
-            previousMarker.position = point
+            val oldPoint = existing.position
+            val jump = com.example.viavox.model.NavigationMath.meters(
+                oldPoint.latitude,oldPoint.longitude,point.latitude,point.longitude
+            )
+            puckAnimator[0]?.cancel()
+            if (jump < 95.0 && jump > 0.3) {
+                val animator = ValueAnimator.ofFloat(0f,1f).apply {
+                    duration = 850L
+                    interpolator = LinearInterpolator()
+                    addUpdateListener { animation ->
+                        val t = (animation.animatedValue as Float).toDouble()
+                        existing.position = LatLng(
+                            oldPoint.latitude + (point.latitude - oldPoint.latitude)*t,
+                            oldPoint.longitude + (point.longitude - oldPoint.longitude)*t
+                        )
+                    }
+                }
+                puckAnimator[0] = animator
+                animator.start()
+            } else existing.position = point
         }
+
+        val reliableCourse = hasBearing && speedKmh >= 7f
+        val sensorHeading = compassHeading
+        val targetBearing = if (reliableCourse) bearing.toDouble()
+            else lastNavigationBearing ?: sensorHeading?.toDouble()
+        if (reliableCourse) lastNavigationBearing = bearing.toDouble()
 
         if (followUser) {
-            // Heading-up while actually moving; don't spin the map as the
-            // phone is handled while stopped. Preserve user zoom and tilt.
-            val cameraNow = currentMap.cameraPosition
-            val cameraPos = CameraPosition.Builder()
-                .target(point)
-                .zoom(if (previousMarker == null) INITIAL_ZOOM else cameraNow.zoom)
-                .tilt(if (threeDView) 48.0 else 0.0)
-                .bearing(cameraNow.bearing)
-                .build()
-            currentMap.animateCamera(CameraUpdateFactory.newCameraPosition(cameraPos), 550)
+            val current = currentMap.cameraPosition
+            val cameraBearing = when {
+                !headingUp -> 0.0
+                navigating && targetBearing != null ->
+                    NavigationCameraMath.smoothBearing(current.bearing,targetBearing)
+                targetBearing != null ->
+                    NavigationCameraMath.smoothBearing(current.bearing,targetBearing,0.4)
+                else -> current.bearing
+            }
+            val target = if (navigating && headingUp && targetBearing != null)
+                NavigationCameraMath.cameraTarget(
+                    point.latitude,point.longitude,cameraBearing,
+                    NavigationCameraMath.lookAheadMeters(speedKmh)
+                )
+            else point.latitude to point.longitude
+            val cameraZoom = when {
+                navigating && !wasNavigating ->
+                    NavigationCameraMath.followZoom(speedKmh)
+                navigating && current.zoom < 16.6 ->
+                    NavigationCameraMath.followZoom(speedKmh)
+                navigating && current.zoom > 18.4 -> 18.4
+                existing == null -> INITIAL_ZOOM
+                else -> current.zoom // respect a deliberate gesture/recenter zoom
+            }
+            currentMap.animateCamera(
+                CameraUpdateFactory.newCameraPosition(
+                    CameraPosition.Builder()
+                        .target(LatLng(target.first,target.second))
+                        .zoom(cameraZoom)
+                        .bearing(cameraBearing)
+                        .tilt(if (threeDView) NavigationCameraMath.GUIDE_TILT else 0.0)
+                        .build()
+                ), if (navigating) 1000 else 740
+            )
         }
+        wasNavigating = navigating
     }
 
-    // Annotation icons are screen-aligned: compensate for map camera rotation.
-    // In heading-up mode the arrow faces screen top, rather than double-rotating.
+    // Update the screen-aligned vehicle symbol independently of map camera.
+    // Crucially, never animate the camera in this effect.
     LaunchedEffect(
         map, isStyleReady, marker, compassHeading, bearing, hasBearing,
-        speedKmh, followUser, hasLocationFix, mapCameraBearing, headingUp, isMotorcycle
+        speedKmh, mapCameraBearing, isMotorcycle, headingUp, navigating
     ) {
-        val currentMap = map ?: return@LaunchedEffect
         val currentMarker = marker ?: return@LaunchedEffect
         if (!isStyleReady || !hasLocationFix) return@LaunchedEffect
-
-        // Vehicle course is meaningful only when actually moving.
-        // At a stop, the top of the phone is the chosen reference direction.
-        val movingCourseReliable = hasBearing && speedKmh >= 7f
-        val heading = if (movingCourseReliable) bearing else compassHeading
-        if (headingUp && followUser && heading != null) {
-            val cameraBearing = currentMap.cameraPosition.bearing.toFloat()
-            val delta = abs(((heading - cameraBearing + 540f) % 360f) - 180f)
-            if (delta >= 7f) {
-                currentMap.animateCamera(CameraUpdateFactory.bearingTo(heading.toDouble()), 450)
-            }
-        }
-        val relative = if (heading == null) 0f else {
-            ((heading - mapCameraBearing) % 360f + 360f) % 360f
-        }
+        val reliable = hasBearing && speedKmh >= 7f
+        val direction = if (reliable) bearing.toDouble()
+            else lastNavigationBearing ?: compassHeading?.toDouble()
+        val displayAngle = if (direction == null) 0f
+            else ((direction.toFloat() - mapCameraBearing) % 360f + 360f) % 360f
         currentMarker.icon = IconFactory.getInstance(context).fromBitmap(
-            createBlueLocationMarkerBitmap(relative, heading != null, isMotorcycle)
+            createBlueLocationMarkerBitmap(displayAngle,direction != null,isMotorcycle)
         )
     }
 
@@ -433,23 +482,29 @@ fun OpenStreetMapComponent(
         }
     }
 
-    // When a destination changes, frame the trip's actual route instead of
-    // merely drawing a straight line. The regular GPS camera follows during navigation.
+    // Route overview: fit all route vertices and destination without hard-coded
+    // 13.6 zoom. Starting navigation restores a close tracking camera.
     LaunchedEffect(map, route, navigating) {
         val mapRef = map ?: return@LaunchedEffect
         if (route != null && route.coordinates.isNotEmpty() && !navigating) {
             followUser = false
-            val midPoint = route.coordinates[route.coordinates.size / 2]
+            val boundsBuilder = org.maplibre.android.geometry.LatLngBounds.Builder()
+            route.coordinates.forEach { (lat,lon) ->
+                boundsBuilder.include(LatLng(lat,lon))
+            }
+            val bounds = boundsBuilder.build()
             mapRef.animateCamera(
-                CameraUpdateFactory.newLatLngZoom(LatLng(midPoint.first,midPoint.second), 13.6), 600
+                CameraUpdateFactory.newLatLngBounds(bounds, 95), 720
             )
+        } else if (navigating) {
+            followUser = true
         }
     }
 
     Box(modifier = modifier.fillMaxSize().testTag("map_view")) {
         AndroidView(factory = { mapView }, modifier = Modifier.fillMaxSize())
 
-        if (showArcGisReferences && arcGisReferences.isNotEmpty()) {
+        if (!navigating && showArcGisReferences && arcGisReferences.isNotEmpty()) {
             Surface(
                 color = Color(0xE9082336),
                 shape = RoundedCornerShape(10.dp),
@@ -474,11 +529,11 @@ fun OpenStreetMapComponent(
         // Floating map controls, all wired to MapLibre camera or style actions.
         // Keep the map interactive and visible beneath the controls.
         Column(
-            modifier = Modifier.align(Alignment.CenterEnd).padding(end = 12.dp, bottom = 40.dp),
+            modifier = Modifier.align(Alignment.CenterEnd).padding(end = 12.dp, bottom = if (navigating) 170.dp else 40.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Box {
+            if (!navigating) Box {
                 MapControlButton(
                     icon = Icons.Default.Layers,
                     label = "Selecionar mapa: ruas, detalhado ou noturno",
@@ -547,7 +602,7 @@ fun OpenStreetMapComponent(
                 }
             }
 
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            if (!navigating) Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 MapControlButton(
                     icon = Icons.Default.Explore,
                     label = if (headingUp) "Fixar norte na tela" else "Seguir direção à frente",
@@ -570,7 +625,7 @@ fun OpenStreetMapComponent(
                 )
             }
 
-            MapControlButton(
+            if (!navigating) MapControlButton(
                 icon = Icons.Default.Terrain,
                 label = if (threeDView) "Vista de cima (2D)" else "Vista inclinada (3D)",
                 testTag = "map_3d_button"
@@ -583,9 +638,17 @@ fun OpenStreetMapComponent(
                 icon = Icons.Default.MyLocation,
                 label = "Recentralizar minha posição",
                 testTag = "recenter_button"
-            ) { followUser = true }
+            ) {
+                followUser = true
+                val current = map
+                if (navigating && current != null) {
+                    current.animateCamera(CameraUpdateFactory.zoomTo(
+                        NavigationCameraMath.followZoom(speedKmh)
+                    ), 350)
+                }
+            }
 
-            Surface(
+            if (!navigating) Surface(
                 shape = RoundedCornerShape(23.dp),
                 color = Color(0xF0081A30),
                 border = BorderStroke(1.dp, Color.White.copy(alpha = 0.13f)),
