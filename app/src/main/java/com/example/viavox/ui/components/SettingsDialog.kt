@@ -67,6 +67,7 @@ fun SettingsDialog(
     onTestVoice: () -> Unit,
     onIntervalChanged: (Int) -> Unit,
     onPoiCategoryToggled: (PoiCategory, Boolean) -> Unit,
+    onPoiNarrationToggled: (Boolean) -> Unit = {},
     onFranciscaBrokerUrlChanged: (String) -> Unit = {},
     onFranciscaAccessTokenChanged: (String) -> Unit = {},
     onVehicleTypeChanged: (String) -> Unit = {},
@@ -426,6 +427,14 @@ fun SettingsDialog(
                     Spacer(Modifier.height(15.dp))
 
                     SectionTitle("Pontos de referência")
+                    CategoryToggle("Narrar pontos de referência", config.narratePoiEnabled) {
+                        onPoiNarrationToggled(it)
+                    }
+                    Text(
+                        "Apenas controla os avisos falados. Não remove os pontos do mapa.",
+                        color = muted, fontSize = 11.sp,
+                        modifier = Modifier.padding(bottom = 10.dp)
+                    )
                     CategoryToggle(stringResource(R.string.category_health), config.enableHealthPoi) {
                         onPoiCategoryToggled(PoiCategory.HEALTH, it)
                     }
