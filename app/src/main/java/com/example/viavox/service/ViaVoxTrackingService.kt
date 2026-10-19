@@ -308,14 +308,17 @@ class ViaVoxTrackingService : Service() {
         val intervalMs = if (speedKmh >= 5f) 5_000L else 12_000L
         val accuracyMeters = if (location.hasAccuracy()) location.accuracy else 100f
         if (accuracyMeters > 40f) {
-            TrackingRepository.updatePoiStatus("Aguardando GPS mais preciso para reconhecer referências")
+            if (currentConfig.narratePoiEnabled) {
+                TrackingRepository.updatePoiStatus("Aguardando GPS mais preciso para reconhecer referências")
+            }
             return
         }
-        if (!currentConfig.narratePoiEnabled) return
-        if (now - lastPoiCheckTimestamp < intervalMs || poiJob?.isActive == true) return
-
-        lastPoiCheckTimestamp = now
-        poiJob = serviceScope.launch {
+        // POI throttling must NEVER prevent an independent safety evaluation.
+        if (currentConfig.narratePoiEnabled &&
+            now - lastPoiCheckTimestamp >= intervalMs && poiJob?.isActive != true
+        ) {
+            lastPoiCheckTimestamp = now
+            poiJob = serviceScope.launch {
             val poi = poiService.findNearbyPoi(
                 userLat = lat,
                 userLon = lon,
@@ -338,6 +341,7 @@ class ViaVoxTrackingService : Service() {
                         "Nenhum ponto cadastrado próximo no OpenStreetMap"
                     else "Procurando referências próximas na direção do percurso"
                 )
+            }
             }
         }
 
