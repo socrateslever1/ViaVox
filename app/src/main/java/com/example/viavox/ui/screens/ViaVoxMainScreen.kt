@@ -114,6 +114,11 @@ fun ViaVoxMainScreen(
                 onShowSuggestions = navigation::showSuggestions,
                 onDismissSuggestions = navigation::hideSuggestions,
                 onSelectSuggestion = navigation::select,
+                isCurrentLocationSaved = state.hasLocationFix && navigationUi.savedPlaces.any { pair ->
+                    com.example.viavox.model.NavigationMath.meters(
+                        state.latitude,state.longitude,pair.second.latitude,pair.second.longitude
+                    ) < 24.0
+                },
                 onOpenSaved = navigation::showSavedPlaces,
                 onOpenRoutes = navigation::showSavedRoutes,
                 onOpenHistory = navigation::showHistory,
@@ -229,6 +234,7 @@ fun ViaVoxMainScreen(
             onSelectDestination = navigation::select,
             onSelectSavedRoute = navigation::openSavedRoute,
             onSelectTrip = navigation::openTrip,
+            onRenameFavorite = navigation::renameFavorite,
             onDeleteFavorite = { navigation.removeFavorite(it) },
             onDeleteRoute = { navigation.removeRoute(it) },
             onDeleteTrip = { navigation.removeTrip(it) }
