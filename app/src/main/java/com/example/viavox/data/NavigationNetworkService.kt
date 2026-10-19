@@ -23,7 +23,8 @@ class NavigationNetworkService(
         .build(),
     private val photonBase: String = "https://photon.komoot.io",
     private val osrmBase: String = "https://router.project-osrm.org",
-    private val nominatimBase: String = "https://nominatim.openstreetmap.org"
+    private val nominatimBase: String = "https://nominatim.openstreetmap.org",
+    private val arcGis: ArcGisManausPlacesService = ArcGisManausPlacesService(http)
 ) {
     // Public Nominatim usage is limited to one request per second. Only perform
     // explicit user-initiated searches, never autocomplete on every keystroke.
@@ -54,6 +55,16 @@ class NavigationNetworkService(
 
             val local = DestinationSearchPolicy.localMatches(cleaned, savedPlaces)
             val searchKey = DestinationSearchPolicy.normalize(cleaned)
+            val isCicom = Regex("""(?:^|\\s)cicom(?:\\s|$)""").containsMatchIn(searchKey)
+            // First resolve Manaus police stations from real published GIS
+            // points, not fuzzy international search results (e.g. Cicomar).
+            val localGis = if (isCicom && (userLat == null || userLon == null ||
+                ManausArcGisLayer.inCoverage(userLat,userLon))) {
+                arcGis.search(cleaned)
+            } else emptyList()
+            if (localGis.isNotEmpty()) {
+                return@runCatching DestinationSearchPolicy.merge(local,localGis)
+            }
             val cached = synchronized(cacheLock) { searchCache[searchKey] }
             if (cached != null && System.currentTimeMillis() - cached.first < 600_000L) {
                 return@runCatching DestinationSearchPolicy.merge(local,cached.second)
@@ -94,8 +105,27 @@ class NavigationNetworkService(
                 if (searchCache.size >= 80) searchCache.clear()
                 searchCache[searchKey] = System.currentTimeMillis() to online
             }
-            val combined = DestinationSearchPolicy.merge(local,
-                if (online.isNotEmpty()) online else cached?.second.orEmpty())
+            val unfiltered = if (online.isNotEmpty()) online else cached?.second.orEmpty()
+            // Restrict ambiguous unit names to actual Manaus locations.
+            // Never return similarly spelled businesses on another continent.
+            val trusted = if (isCicom) {
+                unfiltered.filter {
+                    ManausArcGisLayer.inCoverage(it.latitude,it.longitude) &&
+                        (DestinationSearchPolicy.normalize(it.name).contains("cicom") ||
+                            DestinationSearchPolicy.normalize(it.name).contains("companhia interativa"))
+                }
+            } else if (userLat != null && userLon != null &&
+                ManausArcGisLayer.inCoverage(userLat,userLon)
+            ) {
+                // Rank genuinely nearby results first, retaining global matches
+                // for explicitly named distant destinations.
+                unfiltered.sortedBy {
+                    com.example.viavox.model.NavigationMath.meters(
+                        userLat,userLon,it.latitude,it.longitude
+                    )
+                }
+            } else unfiltered
+            val combined = DestinationSearchPolicy.merge(local,trusted)
             if (combined.isNotEmpty()) return@runCatching combined
             if (lastError != null) {
                 throw IllegalStateException(
