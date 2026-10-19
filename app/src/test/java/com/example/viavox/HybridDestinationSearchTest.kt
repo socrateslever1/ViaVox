@@ -60,8 +60,9 @@ class HybridDestinationSearchTest {
         )
         val result = service.search("Avenida Brasil Manaus", -3.1, -60.0).getOrThrow()
         assertEquals("Avenida Brasil", result.single().name)
-        assertTrue(endpoints.first().contains("/api?"))
-        assertFalse(endpoints.first().contains("lang=pt"))
+        assertTrue(endpoints.first().contains("/arcgis/"))
+        assertTrue(endpoints.any { it.contains("/api?") })
+        assertTrue(endpoints.filter { it.contains("/api?") }.none { it.contains("lang=pt") })
         assertTrue(endpoints.any { it.contains("/search?") })
     }
 
