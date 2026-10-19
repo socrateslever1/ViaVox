@@ -159,14 +159,26 @@ class ViaVoxTrackingService : Service() {
         when (action) {
             ACTION_START -> startForegroundTracking()
             ACTION_RECORD_START -> {
-                if (isTrackingRunning) serviceScope.launch(Dispatchers.IO) {
-                    recorderReady.await()
-                    tripRecorder.start()
+                if (isTrackingRunning) serviceScope.launch {
+                    withContext(Dispatchers.IO) {
+                        recorderReady.await()
+                        tripRecorder.start()
+                    }
+                    updateNotification(
+                        TrackingRepository.state.value.place?.road.orEmpty(),
+                        TrackingRepository.state.value.place?.neighbourhood.orEmpty()
+                    )
                 }
             }
-            ACTION_RECORD_STOP -> serviceScope.launch(Dispatchers.IO) {
-                recorderReady.await()
-                tripRecorder.finish()
+            ACTION_RECORD_STOP -> serviceScope.launch {
+                withContext(Dispatchers.IO) {
+                    recorderReady.await()
+                    tripRecorder.finish()
+                }
+                updateNotification(
+                    TrackingRepository.state.value.place?.road.orEmpty(),
+                    TrackingRepository.state.value.place?.neighbourhood.orEmpty()
+                )
             }
             ACTION_NAV_START -> {
                 startForegroundTracking()
