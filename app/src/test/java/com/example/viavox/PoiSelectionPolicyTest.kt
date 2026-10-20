@@ -41,7 +41,7 @@ class PoiSelectionPolicyTest {
         ))
         assertFalse(PoiSelectionPolicy.streetMatches(
             "Rua São José", "Rua São José Operário, 10"
-        ).not()) // a different street name must NEVER count as a valid match
+        ))
         assertFalse(PoiSelectionPolicy.streetMatches(
             "Rua Benjamin Constant", "Avenida Benjamin Azevedo, 30"
         ))
