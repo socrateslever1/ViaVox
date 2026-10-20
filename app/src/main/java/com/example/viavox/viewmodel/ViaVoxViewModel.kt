@@ -137,7 +137,7 @@ class ViaVoxViewModel(application: Application) : AndroidViewModel(application) 
 
     fun updateVehicleType(type: String) {
         val newConfig = state.value.config.copy(
-            vehicleType = if (type.equals("motorcycle", ignoreCase = true)) "motorcycle" else "car"
+            vehicleType = com.example.viavox.model.VehicleMode.from(type).storedValue
         )
         saveAndApplyConfig(newConfig)
     }
