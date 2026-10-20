@@ -381,16 +381,30 @@ fun OpenStreetMapComponent(
                     NavigationCameraMath.EXPLORE_FOLLOW_ZOOM
                 else -> current.zoom // respect a deliberate pinch/zoom after recenter
             }
-            currentMap.animateCamera(
-                CameraUpdateFactory.newCameraPosition(
-                    CameraPosition.Builder()
-                        .target(LatLng(target.first,target.second))
-                        .zoom(cameraZoom)
-                        .bearing(cameraBearing)
-                        .tilt(if (threeDView) NavigationCameraMath.GUIDE_TILT else 0.0)
-                        .build()
-                ), if (navigating) 1000 else 740
+            // Never start an overlapping camera animation for tiny GPS noise.
+            // Keep guidance responsive without interrupting 1-second transitions
+            // with another full 1-second movement on each fix.
+            val remainingCameraMovement = com.example.viavox.model.NavigationMath.meters(
+                current.target.latitude,current.target.longitude,target.first,target.second
             )
+            val turning = abs(
+                NavigationCameraMath.angularDelta(current.bearing,cameraBearing)
+            )
+            if (remainingCameraMovement > 2.5 || turning > 2.5 ||
+                abs(current.zoom-cameraZoom) > 0.04 ||
+                abs(current.tilt - if (threeDView) NavigationCameraMath.GUIDE_TILT else 0.0) > 1.5
+            ) {
+                currentMap.animateCamera(
+                    CameraUpdateFactory.newCameraPosition(
+                        CameraPosition.Builder()
+                            .target(LatLng(target.first,target.second))
+                            .zoom(cameraZoom)
+                            .bearing(cameraBearing)
+                            .tilt(if (threeDView) NavigationCameraMath.GUIDE_TILT else 0.0)
+                            .build()
+                    ), if (navigating) 630 else 570
+                )
+            }
         }
         wasNavigating = navigating
     }
@@ -519,9 +533,9 @@ fun OpenStreetMapComponent(
             mapRef.animateCamera(
                 CameraUpdateFactory.newLatLngBounds(bounds, 95), 720
             )
-        } else if (navigating) {
-            followUser = true
         }
+        // A navigation transition itself re-enables following above. Subsequent
+        // route updates must NOT undo a user's chosen manual zoom/overview.
     }
 
     Box(modifier = modifier.fillMaxSize().testTag("map_view")) {
