@@ -78,20 +78,28 @@ data class GisReference(
      */
     fun asSpokenReference(): PointOfInterest? {
         val tags = DestinationSearchPolicy.normalize("$type $subtype")
+        // ArcGIS category labels can be broad (e.g. COMÉRCIO/SERVIÇOS).
+        // Narrate only community-significant sites, never random businesses.
+        if (listOf("farmacia","drogaria","empresa","comercio","shopping",
+                "supermercado","combustivel","abastecimento","clinica",
+                "laboratorio","posto de gasolina","loja","restaurante")
+                .any(tags::contains)) return null
         val category = when {
-            listOf("saude","hospital","clinica","farmacia","upa","ubs").any(tags::contains) ->
-                PoiCategory.HEALTH
-            listOf("escola","universidade","educacao","ensino","colegio").any(tags::contains) ->
-                PoiCategory.EDUCATION
-            listOf("combustivel","posto de abastecimento","posto de gasolina").any(tags::contains) ->
-                PoiCategory.FUEL
-            listOf("praca","lazer","parque","jardim").any(tags::contains) ->
-                PoiCategory.PARK
-            listOf("policia","orgao publico","shopping","bombeiro","rodoviaria").any(tags::contains) ->
-                PoiCategory.PUBLIC
+            listOf("hospital","upa","unidade basica de saude","ubs")
+                .any(tags::contains) -> PoiCategory.HEALTH
+            listOf("escola","universidade","educacao","colegio","instituto federal")
+                .any(tags::contains) -> PoiCategory.EDUCATION
+            listOf("policia","bombeiro","delegacia","forum","tribunal",
+                "orgao publico","prefeitura","museu","monumento")
+                .any(tags::contains) -> PoiCategory.PUBLIC
+            listOf("parque","praca").any(tags::contains) -> PoiCategory.PARK
             else -> null
         } ?: return null
-        return PointOfInterest("arcgis_$id",shortLabel,category,latitude,longitude)
+        if (address.isBlank()) return null
+        return PointOfInterest(
+            "arcgis_$id", shortLabel, category, latitude, longitude,
+            streetAddress = address
+        )
     }
 
     val shortLabel: String
