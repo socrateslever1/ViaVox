@@ -147,7 +147,8 @@ class PoiDiscoveryService(
                         GisBounds(lon-0.0034,lat-0.0034,lon+0.0034,lat+0.0034),
                         16.0
                     ).mapNotNull { it.asSpokenReference() }
-                        .filter { it.distanceTo(lat,lon) <= 420.0 }
+                        .filter(PoiSelectionPolicy::isImportantForSpeech)
+                        .filter { it.distanceTo(lat,lon) <= 220.0 }
                 } else emptyList()
                 // Do not query both public GIS services if enough landmarks
                 // are already available in the local dataset.
