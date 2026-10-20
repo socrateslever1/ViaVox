@@ -35,6 +35,26 @@ object NavigationCameraMath {
         return if (result < 0) result + 360.0 else result
     }
 
+    /**
+     * On-device compass is a direction of the *phone*, GPS course is a
+     * direction of *travel*. They are not interchangeable. On compass mode,
+     * rotation must still work while speed=0 / GPS position is unchanged.
+     */
+    fun resolveHeading(
+        phoneHeading: Double?,
+        gpsCourse: Double?,
+        lastCourse: Double?,
+        followCompass: Boolean
+    ): Double? {
+        fun valid(angle: Double?): Double? =
+            angle?.takeIf { it.isFinite() }?.let { ((it % 360.0) + 360.0) % 360.0 }
+        return if (followCompass) {
+            valid(phoneHeading) ?: valid(gpsCourse) ?: valid(lastCourse)
+        } else {
+            valid(gpsCourse) ?: valid(lastCourse) ?: valid(phoneHeading)
+        }
+    }
+
     /** Follow the vehicle at street level; only fast roads widen the field of view. */
     fun followZoom(speedKmh: Float): Double = when {
         speedKmh < 20f -> 18.35
