@@ -1,6 +1,12 @@
 # ViaVox — Plano de entrega e pendências
 **Atualizado:** 2026-10-18 · **Android:** Kotlin / Compose / MapLibre · **Base auditada:** ViaVox 0.4.3.
 
+## Auditoria de continuidade — 20/10/2026
+
+O cabeçalho e a tabela abaixo registram o planejamento original e não representam sozinhos o estado atual. O código Android chegou à versão **0.9.6** e a issue [#17](https://github.com/socrateslever1/ViaVox/issues/17) continua sendo a fonte de aceite: fila única de voz, partes da sessão em segundo plano, progresso de rota, câmera, perfis visuais, favoritos e exportação GPX já possuem implementação e CI, mas voz, tela bloqueada, câmera, GPS e consumo ainda dependem de validação em aparelho Samsung e em percurso real.
+
+O plano `2026-10-19-click-to-navigate.md` ficou com o ledger incompleto e foi parcialmente superado pelas decisões posteriores de UX do Android, que preservam pressão longa para escolher um ponto vazio. O plano `2026-10-20-official-road-alerts-safe-navigation.md` está em andamento: o parser/merge web e o carregamento da base local foram integrados, mas os GeoJSON oficiais permanecem vazios porque as páginas atuais do IMMU/Prefeitura informam locais e sentidos sem publicar coordenadas WGS84 autoritativas. Não preencher esses pontos por geocodificação aproximada nem anunciar cobertura oficial antes de revisão. A integração Android dessa base também permanece pendente.
+
 ## Funcionalidades já confirmadas em campo
 - ✅ Detectar e anunciar a rua atual e a mudança de rua automaticamente, sem destino.
 - ✅ Detectar a mudança de bairro e falar o bairro quando necessário.

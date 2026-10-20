@@ -18,6 +18,13 @@ import {
   type NavigationRoute,
   type SearchPlace
 } from './navigation';
+import {
+  mergeRoadAlerts,
+  parseOfficialRoadAlerts,
+  parseOsmRoadAlerts,
+  type OfficialRoadAlert,
+  type RoadAlert
+} from './roadAlerts';
 
 setWorkerUrl(workerUrl);
 
@@ -97,14 +104,6 @@ type Place = {
   venueName: string;
 };
 
-type SafetyCamera = {
-  id: string;
-  lat: number;
-  lon: number;
-  type: 'speed_camera' | 'toll_booth';
-  maxspeed?: number;
-};
-
 type NavStep = {
   instruction: string;
   distance: number;
@@ -179,7 +178,7 @@ function MapCanvas({
   vehicleType: 'car' | 'motorcycle';
   route: NavRoute | null;
   destination: Coordinates | null;
-  safetyCameras: SafetyCamera[];
+  safetyCameras: RoadAlert[];
   styleUrl: string;
   showBairrosLayer?: boolean;
   showCicomsLayer?: boolean;
@@ -477,8 +476,17 @@ function MapCanvas({
 
     safetyCameras.forEach(cam => {
       const el = document.createElement('div');
-      el.className = cam.type === 'speed_camera' ? 'radar-pin' : 'toll-pin';
-      el.innerText = cam.type === 'speed_camera' ? (cam.maxspeed ? `${cam.maxspeed}` : 'RAD') : 'PED';
+      el.className = cam.type === 'toll_booth' ? 'toll-pin' : 'radar-pin';
+      el.innerText = cam.type === 'toll_booth'
+        ? 'PED'
+        : cam.maxspeedKmh
+          ? `${cam.maxspeedKmh}`
+          : cam.type === 'red_light_camera'
+            ? 'SEM'
+            : cam.type === 'speed_hump_camera'
+              ? 'LOM'
+              : 'RAD';
+      el.title = cam.location || (cam.type === 'toll_booth' ? 'Pedágio' : 'Fiscalização eletrônica');
       const m = new Marker({ element: el }).setLngLat([cam.lon, cam.lat]).addTo(map.current!);
       cameraMarkers.current.push(m);
     });
@@ -567,10 +575,31 @@ export function App() {
   const [isRouting, setIsRouting] = useState(false);
 
   // Safety Features (Speed cameras & tolls)
-  const [safetyCameras, setSafetyCameras] = useState<SafetyCamera[]>([]);
+  const [safetyCameras, setSafetyCameras] = useState<RoadAlert[]>([]);
+  const officialSafetyAlerts = useRef<OfficialRoadAlert[]>([]);
+  const osmSafetyAlerts = useRef<RoadAlert[]>([]);
   const alertedCameraIds = useRef<Set<string>>(new Set());
   const lastSafetyQueryTime = useRef(0);
   const lastSafetyQueryPoint = useRef<Coordinates | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const response = await fetch(`${import.meta.env.BASE_URL}radares-manaus.geojson`, {
+          signal: controller.signal
+        });
+        if (!response.ok) return;
+        const official = parseOfficialRoadAlerts(await response.json());
+        if (controller.signal.aborted) return;
+        officialSafetyAlerts.current = official;
+        setSafetyCameras(mergeRoadAlerts(official, osmSafetyAlerts.current));
+      } catch {
+        // A base oficial local é complementar; uma falha não bloqueia mapa ou navegação.
+      }
+    })();
+    return () => controller.abort();
+  }, []);
 
   // Internal references
   const watch = useRef<number | null>(null);
@@ -668,21 +697,9 @@ export function App() {
         body: q
       });
       if (!res.ok) return;
-      const data = await res.json();
-      const elements: any[] = data.elements || [];
-      const feats: SafetyCamera[] = elements.map(el => {
-        const type = el.tags?.highway === 'speed_camera' ? 'speed_camera' : 'toll_booth';
-        const rawSpeed = el.tags?.maxspeed;
-        const maxspeed = rawSpeed ? parseInt(rawSpeed, 10) : undefined;
-        return {
-          id: String(el.id),
-          lat: el.lat,
-          lon: el.lon,
-          type,
-          maxspeed: Number.isFinite(maxspeed) ? maxspeed : undefined
-        };
-      });
-      setSafetyCameras(feats);
+      const osm = parseOsmRoadAlerts(await res.json());
+      osmSafetyAlerts.current = osm;
+      setSafetyCameras(mergeRoadAlerts(officialSafetyAlerts.current, osm));
     } catch {
       // Overpass soft-fail
     }
@@ -707,11 +724,16 @@ export function App() {
 
         alertedCameraIds.current.add(cam.id);
         const distRound = Math.round(dist);
-        if (cam.type === 'speed_camera') {
-          const limit = cam.maxspeed ? `, limite ${cam.maxspeed} por hora` : '';
-          void say(`Atenção: radar à frente em ${distRound} metros${limit}.`);
-        } else {
+        if (cam.type === 'toll_booth') {
           void say(`Atenção: praça de pedágio à frente em ${distRound} metros.`);
+        } else {
+          const limit = cam.maxspeedKmh ? `, limite ${cam.maxspeedKmh} por hora` : '';
+          const kind = cam.type === 'red_light_camera'
+            ? 'fiscalização semafórica'
+            : cam.type === 'speed_hump_camera'
+              ? 'lombada eletrônica'
+              : 'radar';
+          void say(`Atenção: ${kind} à frente em ${distRound} metros${limit}.`);
         }
       }
     });
@@ -1135,7 +1157,7 @@ export function App() {
           vehicleType={vehicleType}
           route={activeRoute}
           destination={destination}
-          safetyCameras={safetyCameras}
+          safetyCameras={enableSafety ? safetyCameras : []}
           styleUrl={MAP_STYLES[mapStyleKey]}
           showBairrosLayer={showBairrosLayer}
           showCicomsLayer={showCicomsLayer}
@@ -1396,8 +1418,8 @@ export function App() {
             </div>
           )}
           {safetyCameras.length > 0 && enableSafety && (
-            <div className="badge-safety" title="Radares monitorados no percurso">
-              📷 {safetyCameras.length} radares próximos
+            <div className="badge-safety" title="Alertas viários disponíveis nas proximidades">
+              📷 {safetyCameras.length} alertas viários próximos
             </div>
           )}
         </div>
@@ -1520,7 +1542,7 @@ export function App() {
               <div className="setting-toggle-info">
                 <span className="setting-toggle-title">📷 Radares e Fiscalização</span>
                 <span className="setting-toggle-desc">
-                  Exibe ícones com limite de velocidade de radares fixos no percurso.
+                  Usa pontos oficiais revisados quando disponíveis e dados complementares do OpenStreetMap.
                 </span>
               </div>
               <input

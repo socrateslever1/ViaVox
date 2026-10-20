@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'src/**'
+      - 'public/**'
       - 'package.json'
       - 'package-lock.json'
       - 'index.html'
@@ -13,6 +14,7 @@ on:
   pull_request:
     paths:
       - 'src/**'
+      - 'public/**'
       - 'package.json'
       - 'package-lock.json'
       - 'index.html'
