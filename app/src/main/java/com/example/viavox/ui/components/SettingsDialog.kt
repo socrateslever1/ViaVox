@@ -445,8 +445,11 @@ fun SettingsDialog(
                         onPoiNarrationToggled(it)
                     }
                     Text(
-                        "Apenas controla os avisos falados. Não remove os pontos do mapa.",
-                        color = muted, fontSize = 11.sp,
+                        "Somente hospitais, escolas, praças e órgãos públicos relevantes, " +
+                            "com endereço comprovado na mesma rua, a até 30 metros. " +
+                            "Farmácias, lojas, postos e empresas não serão narrados. " +
+                            "O mapa continua exibindo outros locais normalmente.",
+                        color = muted, fontSize = 11.sp, lineHeight = 15.sp,
                         modifier = Modifier.padding(bottom = 10.dp)
                     )
                     CategoryToggle(stringResource(R.string.category_health), config.enableHealthPoi) {
@@ -457,9 +460,6 @@ fun SettingsDialog(
                     }
                     CategoryToggle(stringResource(R.string.category_parks), config.enableParksPoi) {
                         onPoiCategoryToggled(PoiCategory.PARK, it)
-                    }
-                    CategoryToggle(stringResource(R.string.category_fuel), config.enableFuelPoi) {
-                        onPoiCategoryToggled(PoiCategory.FUEL, it)
                     }
                     CategoryToggle(stringResource(R.string.category_public), config.enablePublicPoi) {
                         onPoiCategoryToggled(PoiCategory.PUBLIC, it)
