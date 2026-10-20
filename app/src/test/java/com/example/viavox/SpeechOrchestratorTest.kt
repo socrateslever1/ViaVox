@@ -90,7 +90,7 @@ class SpeechOrchestratorTest {
     }
 
     @Test fun acronymAndRoadNamesAreReadNaturallyWithoutCorruptingGISNames() {
-        assertEquals("vigésima quarta cicom",
+        assertEquals("vigésima quarta cícom",
             SpeechTextNormalizer.normalize("24ª CICOM"))
         assertEquals("Comando Geral",
             SpeechTextNormalizer.normalize("COMANDO GERALCMDOGERAL"))
@@ -99,5 +99,8 @@ class SpeechOrchestratorTest {
         assertEquals("AM 0 1 0",
             SpeechTextNormalizer.normalize("AM-010"))
         assertEquals("Rua Pará",SpeechTextNormalizer.normalize("Rua Pará"))
+        assertEquals("úpa São Jorge",SpeechTextNormalizer.normalize("UPA São Jorge"))
+        assertEquals("Polícia Militar do Amazonas",SpeechTextNormalizer.normalize("PMAM"))
+        assertEquals("Hospital Geral",SpeechTextNormalizer.normalize("HOSPITAL GERAL"))
     }
 }
