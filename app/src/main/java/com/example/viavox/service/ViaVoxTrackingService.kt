@@ -89,7 +89,22 @@ class ViaVoxTrackingService : Service() {
         speechQueue = SpeechOrchestrator(
             play = { text, finished -> ttsManager.speakManaged(
                 SpeechTextNormalizer.normalize(text), finished
-            ) }
+            ) },
+            canPlay = { event ->
+                if (event.kind != SpeechKind.POI) true
+                else {
+                    val latest = TrackingRepository.state.value
+                    val poiId = event.key.removePrefix("poi:")
+                    latest.hasLocationFix && currentConfig.narratePoiEnabled &&
+                        poiService.isStillRelevant(
+                            poiId, latest.latitude,latest.longitude,
+                            latest.accuracyMeters?.toFloat() ?: 100f,
+                            latest.speedKmh / 3.6f,
+                            latest.bearing.takeIf { latest.hasBearing },
+                            latest.place?.road.orEmpty()
+                        )
+                }
+            }
         )
         speechQueue.setEnabled(initialVoiceEnabled)
 
