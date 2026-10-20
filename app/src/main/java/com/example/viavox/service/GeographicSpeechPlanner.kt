@@ -48,6 +48,7 @@ object SpeechTextNormalizer {
         // Full-uppercase GIS labels are words, not a sequence of initials.
         text = text.replace(Regex("""\b\p{Lu}{4,}\b""")) {
             it.value.lowercase(java.util.Locale.forLanguageTag("pt-BR"))
+                .replaceFirstChar { letter -> letter.uppercaseChar() }
         }
         text = text.replace(Regex("""(?i)\bBR[-\s]*(\d{2,3})\b""")) {
             "BR " + it.groupValues[1].map(Char::digitToInt).joinToString(" ")
