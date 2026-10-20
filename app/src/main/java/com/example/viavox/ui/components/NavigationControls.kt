@@ -413,6 +413,10 @@ fun ActiveNavigationBanner(
     }
 }
 
+/**
+ * Compact bottom ETA/status card shown while guidance is active.
+ * Unlike a second dashboard, this card occupies only one row.
+ */
 @Composable
 fun NavigationStreetStrip(
     street: String,
@@ -421,39 +425,52 @@ fun NavigationStreetStrip(
     voiceEnabled: Boolean,
     onToggleVoice: (Boolean) -> Unit,
     onRepeat: () -> Unit,
+    destinationName: String = "",
+    remainingMeters: Double = 0.0,
+    estimatedMinutes: Int = 0,
     modifier: Modifier = Modifier
 ) {
     Surface(
         modifier = modifier.testTag("navigation_street_strip"),
         shape = RoundedCornerShape(19.dp),
-        color = Color(0xEE0B243A),
+        color = Color(0xF20B243A),
         border = BorderStroke(1.dp,Color.White.copy(alpha = 0.12f)),
         shadowElevation = 7.dp
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 11.dp,vertical = 9.dp),
-            verticalAlignment = Alignment.CenterVertically
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp,vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            IconButton(onClick = { onToggleVoice(!voiceEnabled) },
-                modifier = Modifier.size(39.dp)) {
+            IconButton(
+                onClick = { onToggleVoice(!voiceEnabled) },
+                modifier = Modifier.size(38.dp)
+            ) {
                 Icon(
                     if (voiceEnabled) Icons.Default.VolumeUp else Icons.Default.VolumeOff,
                     if (voiceEnabled) "Silenciar voz" else "Ativar voz",
                     tint = if (voiceEnabled) aqua else hint
                 )
             }
-            Spacer(Modifier.width(7.dp))
-            Column(Modifier.weight(1f)) {
-                Text(street,color = pale,fontSize = 15.sp,fontWeight = FontWeight.Bold,
-                    maxLines = 1,overflow = TextOverflow.Ellipsis)
+            Column(Modifier.weight(1f),verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
-                    listOfNotNull(neighborhood.takeIf { it.isNotBlank() },
-                        accuracyMeters?.let { "GPS ±${it} m" }).joinToString(" · "),
-                    color = hint,fontSize = 11.sp,maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    if (estimatedMinutes > 0)
+                        "≈ $estimatedMinutes min · ${NavigationMath.formatDistance(remainingMeters)}"
+                    else NavigationMath.formatDistance(remainingMeters) + " restantes",
+                    color = aqua,fontSize = 17.sp,fontWeight = FontWeight.Bold,
+                    maxLines = 1,overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.testTag("navigation_eta")
+                )
+                Text(
+                    listOfNotNull(
+                        street.takeIf(String::isNotBlank),
+                        neighborhood.takeIf(String::isNotBlank)
+                    ).joinToString(" · "),
+                    color = hint,fontSize = 11.sp,
+                    maxLines = 1,overflow = TextOverflow.Ellipsis
                 )
             }
-            IconButton(onClick = onRepeat,modifier = Modifier.size(39.dp)) {
+            IconButton(onClick = onRepeat,modifier = Modifier.size(38.dp)) {
                 Icon(Icons.Default.Replay,"Repetir nome da rua",tint = aqua)
             }
         }
