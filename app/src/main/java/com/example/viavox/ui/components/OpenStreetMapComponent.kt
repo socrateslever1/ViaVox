@@ -95,7 +95,7 @@ import org.maplibre.android.style.expressions.Expression
 import kotlin.math.abs
 import kotlin.math.max
 
-private const val INITIAL_ZOOM = 17.2
+private const val INITIAL_ZOOM = 18.05
 private const val DARK_MAP_STYLE = "https://tiles.openfreemap.org/styles/dark"
 private const val BRIGHT_MAP_STYLE = "https://tiles.openfreemap.org/styles/bright"
 private const val FALLBACK_MAP_STYLE = "https://tiles.openfreemap.org/styles/liberty"
@@ -149,6 +149,9 @@ fun OpenStreetMapComponent(
     var styleMenuExpanded by remember { mutableStateOf(false) }
     var showArcGisReferences by remember {
         mutableStateOf(prefs.getBoolean("map_arcgis_references",true))
+    }
+    var showAdminBoundaries by remember {
+        mutableStateOf(prefs.getBoolean("map_admin_boundaries",false))
     }
     val arcGisService = remember { ArcGisManausPlacesService() }
     var arcGisViewport by remember { mutableStateOf<GisBounds?>(null) }
@@ -368,11 +371,15 @@ fun OpenStreetMapComponent(
             val cameraZoom = when {
                 navigating && !wasNavigating ->
                     NavigationCameraMath.followZoom(speedKmh)
-                navigating && current.zoom < 16.6 ->
+                navigating && current.zoom < 17.0 ->
                     NavigationCameraMath.followZoom(speedKmh)
-                navigating && current.zoom > 18.4 -> 18.4
+                navigating && current.zoom > 18.5 -> 18.5
                 existing == null -> INITIAL_ZOOM
-                else -> current.zoom // respect a deliberate gesture/recenter zoom
+                !navigating && wasNavigating ->
+                    NavigationCameraMath.EXPLORE_FOLLOW_ZOOM
+                !navigating && current.zoom < 16.8 ->
+                    NavigationCameraMath.EXPLORE_FOLLOW_ZOOM
+                else -> current.zoom // respect a deliberate pinch/zoom after recenter
             }
             currentMap.animateCamera(
                 CameraUpdateFactory.newCameraPosition(
@@ -429,6 +436,19 @@ fun OpenStreetMapComponent(
         updateArcGisReferenceLayers(
             style,
             if (showArcGisReferences) arcGisReferences else emptyList()
+        )
+    }
+
+    LaunchedEffect(map, isStyleReady, showAdminBoundaries) {
+        val currentMap = map ?: return@LaunchedEffect
+        if (!isStyleReady) return@LaunchedEffect
+        val style = currentMap.style ?: return@LaunchedEffect
+        ensureCircumscriptionLayers(context,style)
+        style.getLayer("bairros-fill")?.setProperties(
+            PropertyFactory.fillOpacity(if (showAdminBoundaries) 0.13f else 0f)
+        )
+        style.getLayer("bairros-border")?.setProperties(
+            PropertyFactory.lineOpacity(if (showAdminBoundaries) 0.48f else 0f)
         )
     }
 
@@ -507,21 +527,6 @@ fun OpenStreetMapComponent(
     Box(modifier = modifier.fillMaxSize().testTag("map_view")) {
         AndroidView(factory = { mapView }, modifier = Modifier.fillMaxSize())
 
-        if (!navigating && showArcGisReferences && arcGisReferences.isNotEmpty()) {
-            Surface(
-                color = Color(0xE9082336),
-                shape = RoundedCornerShape(10.dp),
-                modifier = Modifier.align(Alignment.BottomStart)
-                    .padding(start = 12.dp,bottom = 185.dp)
-            ) {
-                Text(
-                    "${arcGisReferences.size} referências · GeoSegurança/ArcGIS",
-                    color = Color.White,fontSize = 10.sp,
-                    modifier = Modifier.padding(horizontal = 9.dp,vertical = 5.dp)
-                )
-            }
-        }
-
         if (!isStyleReady) {
             CircularProgressIndicator(
                 color = ViaVoxTeal,
@@ -529,17 +534,18 @@ fun OpenStreetMapComponent(
             )
         }
 
-        // Floating map controls, all wired to MapLibre camera or style actions.
-        // Keep the map interactive and visible beneath the controls.
+        // The map owns the screen. Frequent operations stay under one small
+        // control menu; the rail never overlaps the street/navigation HUD.
         Column(
-            modifier = Modifier.align(Alignment.CenterEnd).padding(end = 12.dp, bottom = if (navigating) 170.dp else 40.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.align(Alignment.BottomEnd)
+                .padding(end = 11.dp,bottom = if (navigating) 106.dp else 151.dp),
+            verticalArrangement = Arrangement.spacedBy(9.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             if (!navigating) Box {
                 MapControlButton(
                     icon = Icons.Default.Layers,
-                    label = "Selecionar mapa: ruas, detalhado ou noturno",
+                    label = "Camadas, orientação e nível de zoom",
                     testTag = "map_style_button"
                 ) { styleMenuExpanded = true }
 
@@ -548,133 +554,166 @@ fun OpenStreetMapComponent(
                     onDismissRequest = { styleMenuExpanded = false }
                 ) {
                     listOf(
-                        "bright" to "Ruas · colorido",
-                        "liberty" to "Detalhado · bairros e pontos",
-                        "dark" to "Noturno · escuro"
-                    ).forEach { (key, title) ->
+                        "bright" to "Mapa claro",
+                        "liberty" to "Mapa detalhado",
+                        "dark" to "Mapa noturno"
+                    ).forEach { (key,title) ->
                         DropdownMenuItem(
                             text = { Text(if (selectedMapStyle == key) "✓ $title" else title) },
                             onClick = {
                                 styleMenuExpanded = false
-                                if (selectedMapStyle == key) return@DropdownMenuItem
-                                selectedMapStyle = key
-                                prefs.edit().putString("map_style", key).apply()
-                                val current = map ?: return@DropdownMenuItem
-                                marker?.let { current.removeMarker(it) }
-                                marker = null
-                                isStyleReady = false
-                                current.setStyle(Style.Builder().fromUri(mapStyleUrl(key))) { style ->
-                                    if (key == "dark") enhanceRealRoadContrast(style, true)
-                                    if (threeDView) addBuildings3DIfAvailable(style)
-                                    ensureNavigationLayers(style)
-                                    ensureArcGisReferenceLayers(style)
-                                    isStyleReady = true
+                                if (selectedMapStyle != key) {
+                                    selectedMapStyle = key
+                                    prefs.edit().putString("map_style",key).apply()
+                                    val current = map
+                                    if (current != null) {
+                                        marker?.let { current.removeMarker(it) }
+                                        marker = null
+                                        isStyleReady = false
+                                        current.setStyle(
+                                            Style.Builder().fromUri(mapStyleUrl(key))
+                                        ) { style ->
+                                            enhanceRealRoadContrast(style,key == "dark")
+                                            if (threeDView) addBuildings3DIfAvailable(style)
+                                            ensureNavigationLayers(style)
+                                            ensureArcGisReferenceLayers(style)
+                                            isStyleReady = true
+                                        }
+                                    }
                                 }
                             }
                         )
                     }
                     androidx.compose.material3.HorizontalDivider()
                     DropdownMenuItem(
-                        text = {
-                            Text(
-                                if (showArcGisReferences) "✓ Referências de Manaus" else "Referências de Manaus"
-                            )
-                        },
+                        text = { Text(if (showArcGisReferences)
+                            "✓ Mostrar referências" else "Mostrar referências") },
                         onClick = {
                             showArcGisReferences = !showArcGisReferences
-                            prefs.edit().putBoolean("map_arcgis_references",showArcGisReferences).apply()
+                            prefs.edit().putBoolean(
+                                "map_arcgis_references",showArcGisReferences
+                            ).apply()
                             styleMenuExpanded = false
                             if (showArcGisReferences) {
-                                val current = map
-                                if (current != null) {
-                                    val b = current.projection.visibleRegion.latLngBounds
-                                    arcGisZoom = current.cameraPosition.zoom
+                                map?.let { activeMap ->
+                                    val b = activeMap.projection.visibleRegion.latLngBounds
+                                    arcGisZoom = activeMap.cameraPosition.zoom
                                     arcGisViewport = GisBounds(
-                                        b.longitudeWest,b.latitudeSouth,b.longitudeEast,b.latitudeNorth
+                                        b.longitudeWest,b.latitudeSouth,
+                                        b.longitudeEast,b.latitudeNorth
                                     )
                                 }
                             }
                         },
                         modifier = Modifier.testTag("arcgis_references_toggle")
                     )
+                    DropdownMenuItem(
+                        text = { Text(if (showAdminBoundaries)
+                            "✓ Limites de bairros" else "Limites de bairros") },
+                        onClick = {
+                            showAdminBoundaries = !showAdminBoundaries
+                            prefs.edit().putBoolean(
+                                "map_admin_boundaries",showAdminBoundaries
+                            ).apply()
+                            styleMenuExpanded = false
+                        },
+                        modifier = Modifier.testTag("map_admin_boundaries_toggle")
+                    )
+                    androidx.compose.material3.HorizontalDivider()
+                    DropdownMenuItem(
+                        text = { Text(if (headingUp)
+                            "✓ Seguir direção" else "Seguir direção") },
+                        onClick = {
+                            headingUp = true
+                            followUser = true
+                            styleMenuExpanded = false
+                        },
+                        modifier = Modifier.testTag("compass_button")
+                    )
+                    DropdownMenuItem(
+                        text = { Text(if (!headingUp)
+                            "✓ Norte para cima" else "Norte para cima") },
+                        onClick = {
+                            headingUp = false
+                            followUser = true
+                            styleMenuExpanded = false
+                            map?.animateCamera(CameraUpdateFactory.bearingTo(0.0),350)
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text(if (threeDView)
+                            "✓ Perspectiva 3D" else "Perspectiva 3D") },
+                        onClick = {
+                            threeDView = !threeDView
+                            styleMenuExpanded = false
+                            map?.animateCamera(CameraUpdateFactory.tiltTo(
+                                if (threeDView) NavigationCameraMath.GUIDE_TILT else 0.0
+                            ),450)
+                        },
+                        modifier = Modifier.testTag("map_3d_button")
+                    )
+                    androidx.compose.material3.HorizontalDivider()
+                    DropdownMenuItem(
+                        text = { Text("Aproximar mapa") },
+                        leadingIcon = { Icon(Icons.Default.Add,null) },
+                        onClick = {
+                            styleMenuExpanded = false
+                            followUser = false
+                            map?.animateCamera(CameraUpdateFactory.zoomIn(),280)
+                        },
+                        modifier = Modifier.testTag("zoom_in_button")
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Afastar mapa") },
+                        leadingIcon = { Icon(Icons.Default.Remove,null) },
+                        onClick = {
+                            styleMenuExpanded = false
+                            followUser = false
+                            map?.animateCamera(CameraUpdateFactory.zoomOut(),280)
+                        },
+                        modifier = Modifier.testTag("zoom_out_button")
+                    )
                     Text(
-                        "GeoSegurança · ArcGIS Online",
-                        color = Color.Gray,fontSize = 11.sp,
+                        "Referências: GeoSegurança / ArcGIS Online",
+                        color = Color.Gray,fontSize = 10.sp,
                         modifier = Modifier.padding(horizontal = 14.dp,vertical = 4.dp)
                     )
                 }
             }
 
-            if (!navigating) Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                MapControlButton(
-                    icon = Icons.Default.Explore,
-                    label = if (headingUp) "Fixar norte na tela" else "Seguir direção à frente",
-                    testTag = "compass_button"
-                ) {
-                    headingUp = !headingUp
-                    followUser = true
-                    if (!headingUp) {
-                        map?.animateCamera(CameraUpdateFactory.bearingTo(0.0), 450)
-                    }
-                }
-                Text(
-                    if (headingUp) "FRENTE" else "NORTE",
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 9.sp,
-                    modifier = Modifier
-                        .background(Color(0xE0102642), RoundedCornerShape(7.dp))
-                        .padding(horizontal = 5.dp, vertical = 3.dp)
-                )
-            }
-
-            if (!navigating) MapControlButton(
-                icon = Icons.Default.Terrain,
-                label = if (threeDView) "Vista de cima (2D)" else "Vista inclinada (3D)",
-                testTag = "map_3d_button"
-            ) {
-                threeDView = !threeDView
-                map?.animateCamera(CameraUpdateFactory.tiltTo(if (threeDView) 48.0 else 0.0), 550)
-            }
-
             MapControlButton(
                 icon = Icons.Default.MyLocation,
-                label = "Recentralizar minha posição",
+                label = "Seguir minha posição, na direção do movimento",
                 testTag = "recenter_button"
             ) {
+                headingUp = true
                 followUser = true
-                val current = map
-                if (navigating && current != null) {
-                    current.animateCamera(CameraUpdateFactory.zoomTo(
-                        NavigationCameraMath.followZoom(speedKmh)
-                    ), 350)
-                }
-            }
-
-            if (!navigating) Surface(
-                shape = RoundedCornerShape(23.dp),
-                color = Color(0xF0081A30),
-                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.13f)),
-                shadowElevation = 8.dp
-            ) {
-                Column {
-                    IconButton(
-                        onClick = { map?.animateCamera(CameraUpdateFactory.zoomIn(), 260) },
-                        modifier = Modifier.size(44.dp).testTag("zoom_in_button")
-                    ) {
-                        Icon(Icons.Default.Add, "Ampliar mapa", tint = Color.White)
-                    }
-                    Box(
-                        modifier = Modifier
-                            .padding(horizontal = 10.dp)
-                            .size(width = 24.dp, height = 1.dp)
-                            .background(Color.White.copy(alpha = 0.18f))
-                    )
-                    IconButton(
-                        onClick = { map?.animateCamera(CameraUpdateFactory.zoomOut(), 260) },
-                        modifier = Modifier.size(44.dp).testTag("zoom_out_button")
-                    ) {
-                        Icon(Icons.Default.Remove, "Reduzir mapa", tint = Color.White)
+                map?.let { activeMap ->
+                    if (hasLocationFix) {
+                        val targetBearing = if (hasBearing && speedKmh >= 7f)
+                            bearing.toDouble() else lastNavigationBearing
+                        val mapDirection = targetBearing ?: activeMap.cameraPosition.bearing
+                        val targetCoords = if (navigating && targetBearing != null)
+                            NavigationCameraMath.cameraTarget(
+                                latitude,longitude,mapDirection,
+                                NavigationCameraMath.lookAheadMeters(speedKmh)
+                            )
+                        else latitude to longitude
+                        activeMap.animateCamera(
+                            CameraUpdateFactory.newCameraPosition(
+                                CameraPosition.Builder()
+                                    .target(LatLng(targetCoords.first,targetCoords.second))
+                                    .zoom(if (navigating)
+                                        NavigationCameraMath.followZoom(speedKmh)
+                                        else NavigationCameraMath.EXPLORE_FOLLOW_ZOOM
+                                    )
+                                    .bearing(mapDirection)
+                                    .tilt(if (threeDView)
+                                        NavigationCameraMath.GUIDE_TILT else 0.0
+                                    )
+                                    .build()
+                            ),520
+                        )
                     }
                 }
             }
@@ -753,14 +792,14 @@ private fun ensureCircumscriptionLayers(context: android.content.Context, style:
             style.addLayer(
                 FillLayer("bairros-fill", "bairros-source").withProperties(
                     PropertyFactory.fillColor(Expression.get("color")),
-                    PropertyFactory.fillOpacity(0.24f)
+                    PropertyFactory.fillOpacity(0f)
                 )
             )
             style.addLayer(
                 LineLayer("bairros-border", "bairros-source").withProperties(
                     PropertyFactory.lineColor(Expression.get("color")),
                     PropertyFactory.lineWidth(1.8f),
-                    PropertyFactory.lineOpacity(0.85f)
+                    PropertyFactory.lineOpacity(0f)
                 )
             )
         }
