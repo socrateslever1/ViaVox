@@ -83,6 +83,24 @@ class PoiDiscoveryService(
     }
 
     /**
+     * Spoken landmarks must still be on the user's current street and within
+     * 30m at the *start* of speech. A queued landmark expires when the rider
+     * turns, drives past it, or loses precise GPS.
+     */
+    fun isStillRelevant(
+        id: String, latitude: Double, longitude: Double,
+        accuracyMeters: Float, speedMps: Float, bearingDegrees: Float?,
+        currentRoad: String
+    ): Boolean {
+        val poi = synchronized(cachedPois) { cachedPois.firstOrNull { it.id == id } }
+            ?: return false
+        return PoiSelectionPolicy.choose(
+            listOf(poi), latitude, longitude, accuracyMeters,
+            speedMps, bearingDegrees, currentRoad
+        ) != null
+    }
+
+    /**
      * Mark only when the service actually sends the message to the TTS manager,
      * never while querying. A postponed POI must remain eligible.
      */
