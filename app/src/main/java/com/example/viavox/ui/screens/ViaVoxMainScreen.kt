@@ -5,6 +5,14 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import com.example.viavox.ui.components.FloatingSpeedometer
+import com.example.viavox.ui.components.resolveRoadSpeedLimit
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -190,6 +198,27 @@ fun ViaVoxMainScreen(
                         } else 0
                     } ?: 0,
                     modifier = Modifier.fillMaxWidth()
+                )
+            }
+
+            var customSpeedLimit by remember { mutableStateOf<Int?>(null) }
+            val autoSpeedLimit = remember(state.place?.road, state.safetyFeatures, state.latitude, state.longitude) {
+                resolveRoadSpeedLimit(state.place?.road, state.safetyFeatures, state.latitude, state.longitude)
+            }
+            val activeSpeedLimit = customSpeedLimit ?: autoSpeedLimit
+
+            AnimatedVisibility(
+                visible = navigationUi.navigating,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(start = 14.dp, bottom = 96.dp),
+                enter = fadeIn() + slideInHorizontally { -it },
+                exit = fadeOut() + slideOutHorizontally { -it }
+            ) {
+                FloatingSpeedometer(
+                    speedKmh = state.speedKmh,
+                    speedLimitKmh = activeSpeedLimit,
+                    onSpeedLimitChanged = { customSpeedLimit = it }
                 )
             }
 

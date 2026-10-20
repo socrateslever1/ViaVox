@@ -80,6 +80,7 @@ import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
+import org.maplibre.android.maps.MapLibreMapOptions
 import org.maplibre.android.maps.Style
 import org.maplibre.android.style.layers.FillExtrusionLayer
 import org.maplibre.android.style.layers.FillLayer
@@ -140,7 +141,9 @@ fun OpenStreetMapComponent(
     val referenceCallback by rememberUpdatedState(onReferenceSelected)
     val mapView = remember {
         MapLibre.getInstance(context)
-        MapView(context)
+        val options = MapLibreMapOptions.createFromAttributes(context)
+            .textureMode(true)
+        MapView(context, options)
     }
     var map by remember { mutableStateOf<MapLibreMap?>(null) }
     var isStyleReady by remember { mutableStateOf(false) }
@@ -177,7 +180,6 @@ fun OpenStreetMapComponent(
     var wasNavigating by remember { mutableStateOf(false) }
     var destMarker by remember { mutableStateOf<Marker?>(null) }
     val favoriteMarkers = remember { mutableListOf<Marker>() }
-    val safetyMarkers = remember { mutableListOf<Marker>() }
     val compassHeading = rememberDeviceCompassHeading(isActive, latitude, longitude)
 
     // Resume following user whenever tracking starts
@@ -204,6 +206,12 @@ fun OpenStreetMapComponent(
                 Lifecycle.Event.ON_RESUME -> resumeIfNeeded()
                 Lifecycle.Event.ON_PAUSE -> pauseIfNeeded()
                 Lifecycle.Event.ON_STOP -> stopIfNeeded()
+                Lifecycle.Event.ON_DESTROY -> {
+                    stopIfNeeded()
+                    try {
+                        mapView.onDestroy()
+                    } catch (_: Exception) {}
+                }
                 else -> Unit
             }
         }
@@ -245,6 +253,26 @@ fun OpenStreetMapComponent(
                 }
             }
             readyMap.addOnMapClickListener { coordinate ->
+                val safetyHits = readyMap.queryRenderedFeatures(
+                    readyMap.projection.toScreenLocation(coordinate),
+                    "viavox-safety-circles", "viavox-safety-labels"
+                )
+                val safetyHit = safetyHits.firstOrNull()
+                if (safetyHit != null) {
+                    val title = safetyHit.getStringProperty("title") ?: "Alerta viário"
+                    val lat = safetyHit.getNumberProperty("lat")?.toDouble()
+                    val lon = safetyHit.getNumberProperty("lon")?.toDouble()
+                    if (lat != null && lon != null) {
+                        referenceCallback(
+                            MapPlace(
+                                title, lat, lon,
+                                "Alerta de fiscalização · ViaVox"
+                            )
+                        )
+                        return@addOnMapClickListener true
+                    }
+                }
+
                 val features = readyMap.queryRenderedFeatures(
                     readyMap.projection.toScreenLocation(coordinate), "viavox-arcgis-points",
                     "viavox-arcgis-labels"
@@ -281,6 +309,8 @@ fun OpenStreetMapComponent(
                 if (threeDView) addBuildings3DIfAvailable(style)
                 ensureNavigationLayers(style)
                 ensureArcGisReferenceLayers(style)
+                ensureSafetyAlertLayers(style)
+                updateSafetyAlertLayers(style, safetyFeatures)
                 isStyleReady = true
             }
             mapView.addOnDidFailLoadingMapListener {
@@ -290,6 +320,8 @@ fun OpenStreetMapComponent(
                         if (threeDView) addBuildings3DIfAvailable(style)
                         ensureNavigationLayers(style)
                         ensureArcGisReferenceLayers(style)
+                        ensureSafetyAlertLayers(style)
+                        updateSafetyAlertLayers(style, safetyFeatures)
                         isStyleReady = true
                     }
                 }
@@ -309,7 +341,11 @@ fun OpenStreetMapComponent(
             lifecycle.removeObserver(observer)
             stopIfNeeded()
             puckAnimator[0]?.cancel()
-            mapView.onDestroy()
+            if (lifecycle.currentState == Lifecycle.State.DESTROYED) {
+                try {
+                    mapView.onDestroy()
+                } catch (_: Exception) {}
+            }
         }
     }
 
@@ -345,11 +381,13 @@ fun OpenStreetMapComponent(
                     duration = 850L
                     interpolator = LinearInterpolator()
                     addUpdateListener { animation ->
-                        val t = (animation.animatedValue as Float).toDouble()
-                        existing.position = LatLng(
-                            oldPoint.latitude + (point.latitude - oldPoint.latitude)*t,
-                            oldPoint.longitude + (point.longitude - oldPoint.longitude)*t
-                        )
+                        try {
+                            val t = (animation.animatedValue as Float).toDouble()
+                            existing.position = LatLng(
+                                oldPoint.latitude + (point.latitude - oldPoint.latitude)*t,
+                                oldPoint.longitude + (point.longitude - oldPoint.longitude)*t
+                            )
+                        } catch (_: Exception) {}
                     }
                 }
                 puckAnimator[0] = animator
@@ -530,27 +568,9 @@ fun OpenStreetMapComponent(
     LaunchedEffect(map, isStyleReady, safetyFeatures) {
         val mapRef = map ?: return@LaunchedEffect
         if (!isStyleReady) return@LaunchedEffect
-        safetyMarkers.forEach { mapRef.removeMarker(it) }
-        safetyMarkers.clear()
-
-        safetyFeatures.forEach { feature ->
-            val icon = IconFactory.getInstance(context).fromBitmap(
-                createSafetyMarkerBitmap(feature.type, feature.speedLimitKmh)
-            )
-            val title = when (feature.type) {
-                com.example.viavox.service.SafetyAlertEngine.SafetyFeature.Type.SPEED_CAMERA ->
-                    feature.speedLimitKmh?.let { "Radar $it km/h" } ?: "Radar de velocidade"
-                com.example.viavox.service.SafetyAlertEngine.SafetyFeature.Type.TOLL_BOOTH -> "Pedágio"
-            }
-            safetyMarkers.add(
-                mapRef.addMarker(
-                    MarkerOptions()
-                        .position(LatLng(feature.latitude, feature.longitude))
-                        .title(title)
-                        .icon(icon)
-                )
-            )
-        }
+        val style = mapRef.style ?: return@LaunchedEffect
+        ensureSafetyAlertLayers(style)
+        updateSafetyAlertLayers(style, safetyFeatures)
     }
 
     // Route overview: fit all route vertices and destination without hard-coded
@@ -620,6 +640,7 @@ fun OpenStreetMapComponent(
                                     prefs.edit().putString("map_style",key).apply()
                                     val current = map
                                     if (current != null) {
+                                        puckAnimator[0]?.cancel()
                                         marker?.let { current.removeMarker(it) }
                                         marker = null
                                         markerIconKey = ""
@@ -631,6 +652,8 @@ fun OpenStreetMapComponent(
                                             if (threeDView) addBuildings3DIfAvailable(style)
                                             ensureNavigationLayers(style)
                                             ensureArcGisReferenceLayers(style)
+                                            ensureSafetyAlertLayers(style)
+                                            updateSafetyAlertLayers(style, safetyFeatures)
                                             isStyleReady = true
                                         }
                                     }
@@ -842,6 +865,86 @@ private fun updateArcGisReferenceLayers(style: Style, places: List<GisReference>
     source.setGeoJson(FeatureCollection.fromFeatures(features))
 }
 
+/** Native GPU layers for real-time safety alerts (speed cameras, speed humps, red light cameras, toll booths). */
+private fun ensureSafetyAlertLayers(style: Style) {
+    val id = "viavox-safety-alerts"
+    if (style.getSource(id) == null) {
+        style.addSource(GeoJsonSource(id, FeatureCollection.fromFeatures(emptyArray<Feature>())))
+    }
+    if (style.getLayer("viavox-safety-circles") == null) {
+        style.addLayer(
+            CircleLayer("viavox-safety-circles", id).withProperties(
+                PropertyFactory.circleRadius(14f),
+                PropertyFactory.circleColor(
+                    Expression.match(
+                        Expression.get("type"),
+                        Expression.literal("speed_camera"), Expression.color(android.graphics.Color.rgb(230, 40, 40)),
+                        Expression.literal("speed_hump_camera"), Expression.color(android.graphics.Color.rgb(235, 120, 0)),
+                        Expression.literal("red_light_camera"), Expression.color(android.graphics.Color.rgb(180, 20, 70)),
+                        Expression.literal("toll_booth"), Expression.color(android.graphics.Color.rgb(255, 152, 0)),
+                        Expression.color(android.graphics.Color.rgb(230, 40, 40))
+                    )
+                ),
+                PropertyFactory.circleStrokeColor(android.graphics.Color.WHITE),
+                PropertyFactory.circleStrokeWidth(2f)
+            )
+        )
+    }
+    if (style.getLayer("viavox-safety-labels") == null) {
+        style.addLayer(
+            SymbolLayer("viavox-safety-labels", id).withProperties(
+                PropertyFactory.textField(Expression.get("badge")),
+                PropertyFactory.textSize(10f),
+                PropertyFactory.textColor(android.graphics.Color.WHITE),
+                PropertyFactory.textAllowOverlap(true),
+                PropertyFactory.textIgnorePlacement(true)
+            )
+        )
+    }
+}
+
+private fun updateSafetyAlertLayers(
+    style: Style,
+    features: List<com.example.viavox.service.SafetyAlertEngine.SafetyFeature>
+) {
+    val source = style.getSource("viavox-safety-alerts") as? GeoJsonSource ?: return
+    val geoJsonFeatures = features.map { feature ->
+        val typeStr = when (feature.type) {
+            com.example.viavox.service.SafetyAlertEngine.SafetyFeature.Type.SPEED_CAMERA -> "speed_camera"
+            com.example.viavox.service.SafetyAlertEngine.SafetyFeature.Type.SPEED_HUMP_CAMERA -> "speed_hump_camera"
+            com.example.viavox.service.SafetyAlertEngine.SafetyFeature.Type.RED_LIGHT_CAMERA -> "red_light_camera"
+            com.example.viavox.service.SafetyAlertEngine.SafetyFeature.Type.TOLL_BOOTH -> "toll_booth"
+        }
+        val badge = when (feature.type) {
+            com.example.viavox.service.SafetyAlertEngine.SafetyFeature.Type.SPEED_CAMERA ->
+                feature.speedLimitKmh?.toString() ?: "RAD"
+            com.example.viavox.service.SafetyAlertEngine.SafetyFeature.Type.SPEED_HUMP_CAMERA ->
+                feature.speedLimitKmh?.toString() ?: "LOM"
+            com.example.viavox.service.SafetyAlertEngine.SafetyFeature.Type.RED_LIGHT_CAMERA -> "SEM"
+            com.example.viavox.service.SafetyAlertEngine.SafetyFeature.Type.TOLL_BOOTH -> "PED"
+        }
+        val title = when (feature.type) {
+            com.example.viavox.service.SafetyAlertEngine.SafetyFeature.Type.SPEED_CAMERA ->
+                feature.location.ifBlank { feature.speedLimitKmh?.let { "Radar $it km/h" } ?: "Radar de velocidade" }
+            com.example.viavox.service.SafetyAlertEngine.SafetyFeature.Type.SPEED_HUMP_CAMERA ->
+                feature.location.ifBlank { feature.speedLimitKmh?.let { "Lombada eletrônica $it km/h" } ?: "Lombada eletrônica" }
+            com.example.viavox.service.SafetyAlertEngine.SafetyFeature.Type.RED_LIGHT_CAMERA ->
+                feature.location.ifBlank { "Fiscalização semafórica" }
+            com.example.viavox.service.SafetyAlertEngine.SafetyFeature.Type.TOLL_BOOTH ->
+                feature.location.ifBlank { "Pedágio" }
+        }
+        Feature.fromGeometry(Point.fromLngLat(feature.longitude, feature.latitude)).apply {
+            addStringProperty("id", feature.id)
+            addStringProperty("type", typeStr)
+            addStringProperty("badge", badge)
+            addStringProperty("title", title)
+            addNumberProperty("lat", feature.latitude)
+            addNumberProperty("lon", feature.longitude)
+        }
+    }
+    source.setGeoJson(FeatureCollection.fromFeatures(geoJsonFeatures))
+}
+
 /** Route and recorded trip use separate GPU line layers on top of real map tiles. */
 private fun ensureNavigationLayers(style: Style) {
     val specs = listOf(
@@ -1015,76 +1118,7 @@ private fun createVehicleLocationMarkerBitmap(
     return bitmap
 }
 
-/**
- * Generates clear, high-contrast map badges for speed cameras and toll booths.
- */
-private fun createSafetyMarkerBitmap(
-    type: com.example.viavox.service.SafetyAlertEngine.SafetyFeature.Type,
-    speedLimit: Int?
-): Bitmap {
-    val sizePx = 72
-    val center = sizePx / 2f
-    val bitmap = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
-    val canvas = Canvas(bitmap)
 
-    // Outer shadow
-    val haloPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = android.graphics.Color.argb(90, 0, 0, 0)
-        style = Paint.Style.FILL
-    }
-    canvas.drawCircle(center, center + 2f, 30f, haloPaint)
-
-    if (type == com.example.viavox.service.SafetyAlertEngine.SafetyFeature.Type.SPEED_CAMERA) {
-        // Red speed limit ring
-        val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = android.graphics.Color.rgb(230, 40, 40)
-            style = Paint.Style.FILL
-        }
-        canvas.drawCircle(center, center, 28f, borderPaint)
-
-        // White inner circle
-        val innerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = android.graphics.Color.WHITE
-            style = Paint.Style.FILL
-        }
-        canvas.drawCircle(center, center, 22f, innerPaint)
-
-        // Speed limit number or "RAD"
-        val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = android.graphics.Color.rgb(20, 20, 20)
-            textAlign = Paint.Align.CENTER
-            textSize = if (speedLimit != null) 20f else 17f
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
-        }
-        val label = speedLimit?.toString() ?: "RAD"
-        val yPos = center - ((textPaint.descent() + textPaint.ascent()) / 2)
-        canvas.drawText(label, center, yPos, textPaint)
-    } else {
-        // Toll booth: Amber / orange badge
-        val tollPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = android.graphics.Color.rgb(255, 152, 0)
-            style = Paint.Style.FILL
-        }
-        canvas.drawCircle(center, center, 28f, tollPaint)
-
-        val innerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = android.graphics.Color.rgb(40, 25, 0)
-            style = Paint.Style.FILL
-        }
-        canvas.drawCircle(center, center, 23f, innerPaint)
-
-        val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = android.graphics.Color.WHITE
-            textAlign = Paint.Align.CENTER
-            textSize = 15f
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
-        }
-        val yPos = center - ((textPaint.descent() + textPaint.ascent()) / 2)
-        canvas.drawText("PED", center, yPos, textPaint)
-    }
-
-    return bitmap
-}
 
 @Composable
 private fun MapControlButton(
@@ -1136,26 +1170,7 @@ private fun enhanceRealRoadContrast(style: Style, dark: Boolean) {
  * Never synthesizes geometry: no building data simply means no extrusion.
  */
 private fun addBuildings3DIfAvailable(style: Style) {
-    val sourceId = listOf("openmaptiles", "openfreemap").firstOrNull { style.getSource(it) != null }
-        ?: return
-    if (style.getLayer("viavox-3d-buildings") != null) return
-    try {
-        val layer = FillExtrusionLayer("viavox-3d-buildings", sourceId).apply {
-            sourceLayer = "building"
-            minZoom = 15f
-            setFilter(Expression.all(
-                Expression.has("render_height"),
-                Expression.has("render_min_height")
-            ))
-            setProperties(
-                PropertyFactory.fillExtrusionColor(android.graphics.Color.rgb(73, 94, 119)),
-                PropertyFactory.fillExtrusionHeight(Expression.get("render_height")),
-                PropertyFactory.fillExtrusionBase(Expression.get("render_min_height")),
-                PropertyFactory.fillExtrusionOpacity(0.83f)
-            )
-        }
-        style.addLayer(layer)
-    } catch (_: Exception) {
-        // Rendering the road map is more important than an optional 3D effect.
-    }
+    // FillExtrusionLayer on Android emulators / mobile GPUs can trigger SIGSEGV in RenderThread / libmaplibre shaders.
+    // The tilted 3D driving perspective is rendered cleanly, smoothly and reliably via CameraPosition.tilt.
+    return
 }

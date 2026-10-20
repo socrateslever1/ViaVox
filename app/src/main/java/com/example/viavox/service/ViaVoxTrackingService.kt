@@ -117,7 +117,9 @@ class ViaVoxTrackingService : Service() {
                     speakIfAllowed(speechMessage, forceRepeat = false, kind = SpeechKind.SAFETY)
                 }
             }
-        )
+        ).also {
+            it.loadOfficialAlertsFromAssets(this)
+        }
 
         roadEngine = RoadDetectionEngine(
             nominatimService = nominatimService,
