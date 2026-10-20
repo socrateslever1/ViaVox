@@ -132,58 +132,49 @@ fun SettingsDialog(
                         modifier = Modifier.padding(top = 3.dp, bottom = 19.dp)
                     )
 
-                    SectionTitle("Tipo de Veículo")
+                    SectionTitle("Como você está se deslocando?")
                     Text(
-                        text = "Personalize as instruções e a navegação para o seu transporte.",
-                        color = muted,
-                        fontSize = 12.sp,
-                        modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
+                        text = "O indicador muda imediatamente para carro, moto ou caminhada.",
+                        color = muted, fontSize = 12.sp,
+                        modifier = Modifier.padding(top = 4.dp,bottom = 9.dp)
                     )
+                    val chosenMode = com.example.viavox.model.VehicleMode.from(config.vehicleType)
                     Row(
-                        modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 9.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        val isMoto = config.isMotorcycle()
-                        Button(
-                            onClick = { onVehicleTypeChanged("car") },
-                            modifier = Modifier.weight(1f).testTag("vehicle_car_btn"),
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (!isMoto) accent else Color.White.copy(alpha = 0.08f)
-                            )
-                        ) {
-                            Text(
-                                "🚗 Carro",
-                                color = if (!isMoto) Color(0xFF07192D) else white,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp
-                            )
-                        }
-                        Button(
-                            onClick = { onVehicleTypeChanged("motorcycle") },
-                            modifier = Modifier.weight(1f).testTag("vehicle_moto_btn"),
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (isMoto) accent else Color.White.copy(alpha = 0.08f)
-                            )
-                        ) {
-                            Text(
-                                "🏍️ Moto",
-                                color = if (isMoto) Color(0xFF07192D) else white,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp
-                            )
+                        listOf(
+                            Triple(com.example.viavox.model.VehicleMode.CAR,"🚗 Carro","vehicle_car_btn"),
+                            Triple(com.example.viavox.model.VehicleMode.MOTORCYCLE,"🏍 Moto","vehicle_moto_btn"),
+                            Triple(com.example.viavox.model.VehicleMode.WALKING,"🚶 A pé","vehicle_walking_btn")
+                        ).forEach { (mode,label,tag) ->
+                            val selected = chosenMode == mode
+                            Button(
+                                onClick = { onVehicleTypeChanged(mode.storedValue) },
+                                modifier = Modifier.weight(1f).testTag(tag),
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                                    horizontal = 3.dp, vertical = 8.dp
+                                ),
+                                shape = RoundedCornerShape(11.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (selected) accent else Color.White.copy(alpha = 0.08f)
+                                )
+                            ) {
+                                Text(
+                                    label,
+                                    color = if (selected) Color(0xFF07192D) else white,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 11.sp,maxLines = 1
+                                )
+                            }
                         }
                     }
-
                     Text(
-                        "O modo Moto muda o indicador no mapa. O provedor de rotas atual ainda usa vias de carro; não calcula restrições específicas para motocicletas.",
-                        color = muted,
-                        fontSize = 11.sp,
-                        lineHeight = 15.sp,
-                        modifier = Modifier.padding(bottom = 16.dp)
+                        text = com.example.viavox.model.SupportedRoutingProfile.disclosure(chosenMode),
+                        color = muted, fontSize = 11.sp,lineHeight = 15.sp,
+                        modifier = Modifier.padding(bottom = 15.dp)
                     )
-                    
+
                     SectionTitle("Voz da navegação")
                     Text(
                         text = "Escolha entre as vozes em português disponíveis no seu celular.",
@@ -454,8 +445,11 @@ fun SettingsDialog(
                         onPoiNarrationToggled(it)
                     }
                     Text(
-                        "Apenas controla os avisos falados. Não remove os pontos do mapa.",
-                        color = muted, fontSize = 11.sp,
+                        "Somente hospitais, escolas, praças e órgãos públicos relevantes, " +
+                            "com endereço comprovado na mesma rua, a até 30 metros. " +
+                            "Farmácias, lojas, postos e empresas não serão narrados. " +
+                            "O mapa continua exibindo outros locais normalmente.",
+                        color = muted, fontSize = 11.sp, lineHeight = 15.sp,
                         modifier = Modifier.padding(bottom = 10.dp)
                     )
                     CategoryToggle(stringResource(R.string.category_health), config.enableHealthPoi) {
@@ -466,9 +460,6 @@ fun SettingsDialog(
                     }
                     CategoryToggle(stringResource(R.string.category_parks), config.enableParksPoi) {
                         onPoiCategoryToggled(PoiCategory.PARK, it)
-                    }
-                    CategoryToggle(stringResource(R.string.category_fuel), config.enableFuelPoi) {
-                        onPoiCategoryToggled(PoiCategory.FUEL, it)
                     }
                     CategoryToggle(stringResource(R.string.category_public), config.enablePublicPoi) {
                         onPoiCategoryToggled(PoiCategory.PUBLIC, it)

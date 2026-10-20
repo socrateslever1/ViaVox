@@ -16,7 +16,7 @@ data class ViaVoxConfig(
     val franciscaAccessToken: String = "",
     val voiceProvider: String = "android",
     val nativeVoiceId: String = "",
-    val vehicleType: String = "car", // "car" or "motorcycle"
+    val vehicleType: String = "car", // "car", "motorcycle" or "walking"
     val enableSafetyAlerts: Boolean = true, // Speed cameras and tolls
     val enablePoliceCircumscription: Boolean = true, // Police districts / DIPs / CICOMs
     val googleMapsApiKey: String = "" // Optional hybrid data enrichment
@@ -26,7 +26,8 @@ data class ViaVoxConfig(
         franciscaBrokerUrl.trim().startsWith("https://", ignoreCase = true) &&
             franciscaAccessToken.isNotBlank()
 
-    fun isMotorcycle(): Boolean = vehicleType.equals("motorcycle", ignoreCase = true)
+    fun isMotorcycle(): Boolean = VehicleMode.from(vehicleType) == VehicleMode.MOTORCYCLE
+    fun isWalking(): Boolean = VehicleMode.from(vehicleType) == VehicleMode.WALKING
 
     fun hasGoogleMapsKey(): Boolean = googleMapsApiKey.trim().isNotBlank()
 
@@ -68,7 +69,7 @@ data class ViaVoxConfig(
                 franciscaAccessToken = prefs.getString("francisca_access_token", "")?.trim().orEmpty(),
                 voiceProvider = prefs.getString("voice_provider", "android")?.takeIf { it == "francisca" } ?: "android",
                 nativeVoiceId = prefs.getString("native_voice_id", "")?.trim().orEmpty(),
-                vehicleType = prefs.getString("vehicle_type", "car")?.takeIf { it == "motorcycle" } ?: "car",
+                vehicleType = VehicleMode.from(prefs.getString("vehicle_type", "car")).storedValue,
                 enableSafetyAlerts = prefs.getBoolean("safety_alerts", true),
                 enablePoliceCircumscription = prefs.getBoolean("police_circ", true),
                 googleMapsApiKey = prefs.getString("google_maps_key", "")?.trim().orEmpty()

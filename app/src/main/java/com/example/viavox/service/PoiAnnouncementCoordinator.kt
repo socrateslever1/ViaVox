@@ -41,7 +41,8 @@ class PoiAnnouncementCoordinator {
         longitude: Double,
         accuracyMeters: Float,
         speedMps: Float,
-        bearingDegrees: Float?
+        bearingDegrees: Float?,
+        currentRoad: String
     ): PointOfInterest? {
         val poi = pending ?: return null
         if (!voiceEnabled || ttsBusy) return null
@@ -59,7 +60,8 @@ class PoiAnnouncementCoordinator {
 
         // Current GPS must still place the landmark nearby and not behind us.
         val stillRelevant = PoiSelectionPolicy.choose(
-            listOf(poi), latitude, longitude, accuracyMeters, speedMps, bearingDegrees
+            listOf(poi), latitude, longitude, accuracyMeters, speedMps, bearingDegrees,
+            currentRoad
         ) != null
         if (!stillRelevant) {
             pending = null

@@ -67,6 +67,7 @@ import com.example.viavox.data.ManausArcGisLayer
 import com.example.viavox.model.NavigationCameraMath
 import com.example.viavox.model.MapPlace
 import com.example.viavox.model.NavigationRoute
+import com.example.viavox.model.VehicleMode
 import com.example.viavox.model.TripPoint
 import com.example.viavox.ui.theme.ViaVoxHeader
 import com.example.viavox.ui.theme.ViaVoxTeal
@@ -95,7 +96,7 @@ import org.maplibre.android.style.expressions.Expression
 import kotlin.math.abs
 import kotlin.math.max
 
-private const val INITIAL_ZOOM = 17.2
+private const val INITIAL_ZOOM = 18.05
 private const val DARK_MAP_STYLE = "https://tiles.openfreemap.org/styles/dark"
 private const val BRIGHT_MAP_STYLE = "https://tiles.openfreemap.org/styles/bright"
 private const val FALLBACK_MAP_STYLE = "https://tiles.openfreemap.org/styles/liberty"
@@ -127,7 +128,7 @@ fun OpenStreetMapComponent(
     favorites: List<MapPlace> = emptyList(),
     savedTrack: List<TripPoint> = emptyList(),
     liveTrack: List<TripPoint> = emptyList(),
-    isMotorcycle: Boolean = false,
+    vehicleType: String = "car",
     safetyFeatures: List<com.example.viavox.service.SafetyAlertEngine.SafetyFeature> = emptyList(),
     onMapLongPress: (Double, Double) -> Unit = { _, _ -> },
     onReferenceSelected: (MapPlace) -> Unit = {},
@@ -150,14 +151,27 @@ fun OpenStreetMapComponent(
     var showArcGisReferences by remember {
         mutableStateOf(prefs.getBoolean("map_arcgis_references",true))
     }
+    var showAdminBoundaries by remember {
+        mutableStateOf(prefs.getBoolean("map_admin_boundaries",false))
+    }
     val arcGisService = remember { ArcGisManausPlacesService() }
     var arcGisViewport by remember { mutableStateOf<GisBounds?>(null) }
     var arcGisZoom by remember { mutableStateOf(0.0) }
     var arcGisReferences by remember { mutableStateOf<List<GisReference>>(emptyList()) }
-    var headingUp by remember { mutableStateOf(true) }
+    var headingUp by remember {
+        mutableStateOf(prefs.getBoolean("map_heading_up",true))
+    }
+    // Bússola follows the orientation of the phone even at zero speed.
+    // GPS-course mode follows movement direction, ignoring phone rotation.
+    var followPhoneCompass by remember {
+        mutableStateOf(prefs.getBoolean("map_follow_device_compass",true))
+    }
+    val vehicleMode = VehicleMode.from(vehicleType)
     var threeDView by remember { mutableStateOf(true) }
     var mapCameraBearing by remember { mutableStateOf(0f) }
     var marker by remember { mutableStateOf<Marker?>(null) }
+    var markerIconKey by remember { mutableStateOf("") }
+    val vehicleIconCache = remember { mutableMapOf<String, org.maplibre.android.annotations.Icon>() }
     val puckAnimator = remember { arrayOfNulls<ValueAnimator>(1) }
     var lastNavigationBearing by remember { mutableStateOf<Double?>(null) }
     var wasNavigating by remember { mutableStateOf(false) }
@@ -237,10 +251,10 @@ fun OpenStreetMapComponent(
                 )
                 val hit = features.firstOrNull()
                 if (hit == null) {
-                    longPressCallback(coordinate.latitude, coordinate.longitude)
-                    true
-                }
-                else {
+                    // Regular taps must not open a random destination preview.
+                    // Choosing an arbitrary GPS coordinate requires a long press.
+                    false
+                } else {
                     val name = hit.getStringProperty("name") ?: ""
                     val label = hit.getStringProperty("label") ?: ""
                     val lat = hit.getNumberProperty("lat")?.toDouble()
@@ -304,7 +318,7 @@ fun OpenStreetMapComponent(
     LaunchedEffect(
         map, isStyleReady, latitude, longitude, bearing, hasBearing,
         speedKmh, followUser, hasLocationFix, headingUp, threeDView,
-        navigating, isMotorcycle
+        navigating,vehicleType,compassHeading,followPhoneCompass
     ) {
         val currentMap = map ?: return@LaunchedEffect
         if (!isStyleReady || !hasLocationFix) return@LaunchedEffect
@@ -317,7 +331,7 @@ fun OpenStreetMapComponent(
         val existing = marker
         if (existing == null) {
             val initialIcon = IconFactory.getInstance(context).fromBitmap(
-                createBlueLocationMarkerBitmap(0f,false,isMotorcycle)
+                createVehicleLocationMarkerBitmap(0f,false,vehicleMode)
             )
             marker = currentMap.addMarker(MarkerOptions().position(point).icon(initialIcon))
         } else {
@@ -344,9 +358,13 @@ fun OpenStreetMapComponent(
         }
 
         val reliableCourse = hasBearing && speedKmh >= 7f
-        val sensorHeading = compassHeading
-        val targetBearing = if (reliableCourse) bearing.toDouble()
-            else lastNavigationBearing ?: sensorHeading?.toDouble()
+        val sensorHeading = compassHeading?.toDouble()
+        val targetBearing = NavigationCameraMath.resolveHeading(
+            phoneHeading = sensorHeading,
+            gpsCourse = bearing.toDouble().takeIf { reliableCourse },
+            lastCourse = lastNavigationBearing,
+            followCompass = followPhoneCompass
+        )
         if (reliableCourse) lastNavigationBearing = bearing.toDouble()
 
         if (followUser) {
@@ -354,9 +372,9 @@ fun OpenStreetMapComponent(
             val cameraBearing = when {
                 !headingUp -> 0.0
                 navigating && targetBearing != null ->
-                    NavigationCameraMath.smoothBearing(current.bearing,targetBearing)
+                    NavigationCameraMath.smoothBearing(current.bearing,targetBearing,0.72)
                 targetBearing != null ->
-                    NavigationCameraMath.smoothBearing(current.bearing,targetBearing,0.4)
+                    NavigationCameraMath.smoothBearing(current.bearing,targetBearing,0.72)
                 else -> current.bearing
             }
             val target = if (navigating && headingUp && targetBearing != null)
@@ -368,22 +386,42 @@ fun OpenStreetMapComponent(
             val cameraZoom = when {
                 navigating && !wasNavigating ->
                     NavigationCameraMath.followZoom(speedKmh)
-                navigating && current.zoom < 16.6 ->
+                navigating && current.zoom < 17.0 ->
                     NavigationCameraMath.followZoom(speedKmh)
-                navigating && current.zoom > 18.4 -> 18.4
+                navigating && current.zoom > 18.5 -> 18.5
                 existing == null -> INITIAL_ZOOM
-                else -> current.zoom // respect a deliberate gesture/recenter zoom
+                !navigating && wasNavigating ->
+                    NavigationCameraMath.EXPLORE_FOLLOW_ZOOM
+                !navigating && current.zoom < 16.8 ->
+                    NavigationCameraMath.EXPLORE_FOLLOW_ZOOM
+                else -> current.zoom // respect a deliberate pinch/zoom after recenter
             }
-            currentMap.animateCamera(
-                CameraUpdateFactory.newCameraPosition(
-                    CameraPosition.Builder()
-                        .target(LatLng(target.first,target.second))
-                        .zoom(cameraZoom)
-                        .bearing(cameraBearing)
-                        .tilt(if (threeDView) NavigationCameraMath.GUIDE_TILT else 0.0)
-                        .build()
-                ), if (navigating) 1000 else 740
+            // Never start an overlapping camera animation for tiny GPS noise.
+            // Keep guidance responsive without interrupting 1-second transitions
+            // with another full 1-second movement on each fix.
+            val previousCameraTarget = current.target ?: point
+            val remainingCameraMovement = com.example.viavox.model.NavigationMath.meters(
+                previousCameraTarget.latitude,previousCameraTarget.longitude,
+                target.first,target.second
             )
+            val turning = abs(
+                NavigationCameraMath.angularDelta(current.bearing,cameraBearing)
+            )
+            if (remainingCameraMovement > 2.5 || turning > 2.5 ||
+                abs(current.zoom-cameraZoom) > 0.04 ||
+                abs(current.tilt - if (threeDView) NavigationCameraMath.GUIDE_TILT else 0.0) > 1.5
+            ) {
+                currentMap.animateCamera(
+                    CameraUpdateFactory.newCameraPosition(
+                        CameraPosition.Builder()
+                            .target(LatLng(target.first,target.second))
+                            .zoom(cameraZoom)
+                            .bearing(cameraBearing)
+                            .tilt(if (threeDView) NavigationCameraMath.GUIDE_TILT else 0.0)
+                            .build()
+                    ), if (navigating) 370 else 320
+                )
+            }
         }
         wasNavigating = navigating
     }
@@ -392,18 +430,35 @@ fun OpenStreetMapComponent(
     // Crucially, never animate the camera in this effect.
     LaunchedEffect(
         map, isStyleReady, marker, compassHeading, bearing, hasBearing,
-        speedKmh, mapCameraBearing, isMotorcycle, headingUp, navigating
+        speedKmh, mapCameraBearing, vehicleType, headingUp, navigating,
+        followPhoneCompass, hasLocationFix
     ) {
         val currentMarker = marker ?: return@LaunchedEffect
         if (!isStyleReady || !hasLocationFix) return@LaunchedEffect
         val reliable = hasBearing && speedKmh >= 7f
-        val direction = if (reliable) bearing.toDouble()
-            else lastNavigationBearing ?: compassHeading?.toDouble()
-        val displayAngle = if (direction == null) 0f
-            else ((direction.toFloat() - mapCameraBearing) % 360f + 360f) % 360f
-        currentMarker.icon = IconFactory.getInstance(context).fromBitmap(
-            createBlueLocationMarkerBitmap(displayAngle,direction != null,isMotorcycle)
+        val direction = NavigationCameraMath.resolveHeading(
+            phoneHeading = compassHeading?.toDouble(),
+            gpsCourse = bearing.toDouble().takeIf { reliable },
+            lastCourse = lastNavigationBearing,
+            followCompass = followPhoneCompass
         )
+        val angle = if (direction == null) 0.0
+            else NavigationCameraMath.angularDelta(mapCameraBearing.toDouble(),direction)
+        // MapLibre uses a native sprite atlas. Reuse a bounded set of images
+        // instead of allocating a new bitmap every compass notification.
+        val bucket = if (direction == null) 0 else
+            (((angle + 360.0) % 360.0 / 10.0).toInt() * 10) % 360
+        val key = "${vehicleMode.storedValue}:${direction != null}:$bucket"
+        if (key != markerIconKey) {
+            if (vehicleIconCache.size > 45) vehicleIconCache.clear()
+            val icon = vehicleIconCache.getOrPut(key) {
+                IconFactory.getInstance(context).fromBitmap(
+                    createVehicleLocationMarkerBitmap(bucket.toFloat(),direction != null,vehicleMode)
+                )
+            }
+            currentMarker.icon = icon
+            markerIconKey = key
+        }
     }
 
     // Load references only for the visible zoomed-in view.  This is independent
@@ -429,6 +484,19 @@ fun OpenStreetMapComponent(
         updateArcGisReferenceLayers(
             style,
             if (showArcGisReferences) arcGisReferences else emptyList()
+        )
+    }
+
+    LaunchedEffect(map, isStyleReady, showAdminBoundaries) {
+        val currentMap = map ?: return@LaunchedEffect
+        if (!isStyleReady) return@LaunchedEffect
+        val style = currentMap.style ?: return@LaunchedEffect
+        ensureCircumscriptionLayers(context,style)
+        style.getLayer("bairros-fill")?.setProperties(
+            PropertyFactory.fillOpacity(if (showAdminBoundaries) 0.13f else 0f)
+        )
+        style.getLayer("bairros-border")?.setProperties(
+            PropertyFactory.lineOpacity(if (showAdminBoundaries) 0.48f else 0f)
         )
     }
 
@@ -499,28 +567,13 @@ fun OpenStreetMapComponent(
             mapRef.animateCamera(
                 CameraUpdateFactory.newLatLngBounds(bounds, 95), 720
             )
-        } else if (navigating) {
-            followUser = true
         }
+        // A navigation transition itself re-enables following above. Subsequent
+        // route updates must NOT undo a user's chosen manual zoom/overview.
     }
 
     Box(modifier = modifier.fillMaxSize().testTag("map_view")) {
         AndroidView(factory = { mapView }, modifier = Modifier.fillMaxSize())
-
-        if (!navigating && showArcGisReferences && arcGisReferences.isNotEmpty()) {
-            Surface(
-                color = Color(0xE9082336),
-                shape = RoundedCornerShape(10.dp),
-                modifier = Modifier.align(Alignment.BottomStart)
-                    .padding(start = 12.dp,bottom = 185.dp)
-            ) {
-                Text(
-                    "${arcGisReferences.size} referências · GeoSegurança/ArcGIS",
-                    color = Color.White,fontSize = 10.sp,
-                    modifier = Modifier.padding(horizontal = 9.dp,vertical = 5.dp)
-                )
-            }
-        }
 
         if (!isStyleReady) {
             CircularProgressIndicator(
@@ -529,17 +582,23 @@ fun OpenStreetMapComponent(
             )
         }
 
-        // Floating map controls, all wired to MapLibre camera or style actions.
-        // Keep the map interactive and visible beneath the controls.
+        // The map owns the screen. Frequent operations stay under one small
+        // control menu; the rail never overlaps the street/navigation HUD.
         Column(
-            modifier = Modifier.align(Alignment.CenterEnd).padding(end = 12.dp, bottom = if (navigating) 170.dp else 40.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            // Keep the rail within the middle-right safe region; bottom cards,
+            // gesture navigation and the navigation strip must never cover it.
+            modifier = Modifier.align(Alignment.TopEnd)
+                // Anchor beneath the top search/navigation header. Do not
+                // measure from screen center: on short phones it collides
+                // with the bottom street panel and clips the recenter button.
+                .padding(end = 14.dp, top = if (navigating) 112.dp else 146.dp),
+            verticalArrangement = Arrangement.spacedBy(9.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             if (!navigating) Box {
                 MapControlButton(
                     icon = Icons.Default.Layers,
-                    label = "Selecionar mapa: ruas, detalhado ou noturno",
+                    label = "Camadas, orientação e nível de zoom",
                     testTag = "map_style_button"
                 ) { styleMenuExpanded = true }
 
@@ -548,133 +607,193 @@ fun OpenStreetMapComponent(
                     onDismissRequest = { styleMenuExpanded = false }
                 ) {
                     listOf(
-                        "bright" to "Ruas · colorido",
-                        "liberty" to "Detalhado · bairros e pontos",
-                        "dark" to "Noturno · escuro"
-                    ).forEach { (key, title) ->
+                        "bright" to "Mapa claro",
+                        "liberty" to "Mapa detalhado",
+                        "dark" to "Mapa noturno"
+                    ).forEach { (key,title) ->
                         DropdownMenuItem(
                             text = { Text(if (selectedMapStyle == key) "✓ $title" else title) },
                             onClick = {
                                 styleMenuExpanded = false
-                                if (selectedMapStyle == key) return@DropdownMenuItem
-                                selectedMapStyle = key
-                                prefs.edit().putString("map_style", key).apply()
-                                val current = map ?: return@DropdownMenuItem
-                                marker?.let { current.removeMarker(it) }
-                                marker = null
-                                isStyleReady = false
-                                current.setStyle(Style.Builder().fromUri(mapStyleUrl(key))) { style ->
-                                    if (key == "dark") enhanceRealRoadContrast(style, true)
-                                    if (threeDView) addBuildings3DIfAvailable(style)
-                                    ensureNavigationLayers(style)
-                                    ensureArcGisReferenceLayers(style)
-                                    isStyleReady = true
+                                if (selectedMapStyle != key) {
+                                    selectedMapStyle = key
+                                    prefs.edit().putString("map_style",key).apply()
+                                    val current = map
+                                    if (current != null) {
+                                        marker?.let { current.removeMarker(it) }
+                                        marker = null
+                                        markerIconKey = ""
+                                        isStyleReady = false
+                                        current.setStyle(
+                                            Style.Builder().fromUri(mapStyleUrl(key))
+                                        ) { style ->
+                                            enhanceRealRoadContrast(style,key == "dark")
+                                            if (threeDView) addBuildings3DIfAvailable(style)
+                                            ensureNavigationLayers(style)
+                                            ensureArcGisReferenceLayers(style)
+                                            isStyleReady = true
+                                        }
+                                    }
                                 }
                             }
                         )
                     }
                     androidx.compose.material3.HorizontalDivider()
                     DropdownMenuItem(
-                        text = {
-                            Text(
-                                if (showArcGisReferences) "✓ Referências de Manaus" else "Referências de Manaus"
-                            )
-                        },
+                        text = { Text(if (showArcGisReferences)
+                            "✓ Mostrar referências" else "Mostrar referências") },
                         onClick = {
                             showArcGisReferences = !showArcGisReferences
-                            prefs.edit().putBoolean("map_arcgis_references",showArcGisReferences).apply()
+                            prefs.edit().putBoolean(
+                                "map_arcgis_references",showArcGisReferences
+                            ).apply()
                             styleMenuExpanded = false
                             if (showArcGisReferences) {
-                                val current = map
-                                if (current != null) {
-                                    val b = current.projection.visibleRegion.latLngBounds
-                                    arcGisZoom = current.cameraPosition.zoom
+                                map?.let { activeMap ->
+                                    val b = activeMap.projection.visibleRegion.latLngBounds
+                                    arcGisZoom = activeMap.cameraPosition.zoom
                                     arcGisViewport = GisBounds(
-                                        b.longitudeWest,b.latitudeSouth,b.longitudeEast,b.latitudeNorth
+                                        b.longitudeWest,b.latitudeSouth,
+                                        b.longitudeEast,b.latitudeNorth
                                     )
                                 }
                             }
                         },
                         modifier = Modifier.testTag("arcgis_references_toggle")
                     )
+                    DropdownMenuItem(
+                        text = { Text(if (showAdminBoundaries)
+                            "✓ Limites de bairros" else "Limites de bairros") },
+                        onClick = {
+                            showAdminBoundaries = !showAdminBoundaries
+                            prefs.edit().putBoolean(
+                                "map_admin_boundaries",showAdminBoundaries
+                            ).apply()
+                            styleMenuExpanded = false
+                        },
+                        modifier = Modifier.testTag("map_admin_boundaries_toggle")
+                    )
+                    androidx.compose.material3.HorizontalDivider()
+                    DropdownMenuItem(
+                        text = { Text(
+                            if (headingUp && followPhoneCompass)
+                                "✓ Bússola · girar com o celular" else "Bússola · girar com o celular"
+                        ) },
+                        onClick = {
+                            followPhoneCompass = true
+                            headingUp = true
+                            followUser = true
+                            prefs.edit().putBoolean("map_follow_device_compass",true)
+                                .putBoolean("map_heading_up",true).apply()
+                            styleMenuExpanded = false
+                        },
+                        modifier = Modifier.testTag("compass_button")
+                    )
+                    DropdownMenuItem(
+                        text = { Text(
+                            if (headingUp && !followPhoneCompass)
+                                "✓ Rumo do GPS · movimento" else "Rumo do GPS · movimento"
+                        ) },
+                        onClick = {
+                            followPhoneCompass = false
+                            headingUp = true
+                            followUser = true
+                            prefs.edit().putBoolean("map_follow_device_compass",false)
+                                .putBoolean("map_heading_up",true).apply()
+                            styleMenuExpanded = false
+                        },
+                        modifier = Modifier.testTag("gps_course_button")
+                    )
+                    DropdownMenuItem(
+                        text = { Text(if (!headingUp)
+                            "✓ Norte para cima" else "Norte para cima") },
+                        onClick = {
+                            headingUp = false
+                            followUser = true
+                            prefs.edit().putBoolean("map_heading_up",false).apply()
+                            styleMenuExpanded = false
+                            map?.animateCamera(CameraUpdateFactory.bearingTo(0.0),350)
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text(if (threeDView)
+                            "✓ Perspectiva 3D" else "Perspectiva 3D") },
+                        onClick = {
+                            threeDView = !threeDView
+                            styleMenuExpanded = false
+                            map?.animateCamera(CameraUpdateFactory.tiltTo(
+                                if (threeDView) NavigationCameraMath.GUIDE_TILT else 0.0
+                            ),450)
+                        },
+                        modifier = Modifier.testTag("map_3d_button")
+                    )
+                    androidx.compose.material3.HorizontalDivider()
+                    DropdownMenuItem(
+                        text = { Text("Aproximar mapa") },
+                        leadingIcon = { Icon(Icons.Default.Add,null) },
+                        onClick = {
+                            styleMenuExpanded = false
+                            followUser = false
+                            map?.animateCamera(CameraUpdateFactory.zoomIn(),280)
+                        },
+                        modifier = Modifier.testTag("zoom_in_button")
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Afastar mapa") },
+                        leadingIcon = { Icon(Icons.Default.Remove,null) },
+                        onClick = {
+                            styleMenuExpanded = false
+                            followUser = false
+                            map?.animateCamera(CameraUpdateFactory.zoomOut(),280)
+                        },
+                        modifier = Modifier.testTag("zoom_out_button")
+                    )
                     Text(
-                        "GeoSegurança · ArcGIS Online",
-                        color = Color.Gray,fontSize = 11.sp,
+                        "Referências: GeoSegurança / ArcGIS Online",
+                        color = Color.Gray,fontSize = 10.sp,
                         modifier = Modifier.padding(horizontal = 14.dp,vertical = 4.dp)
                     )
                 }
             }
 
-            if (!navigating) Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                MapControlButton(
-                    icon = Icons.Default.Explore,
-                    label = if (headingUp) "Fixar norte na tela" else "Seguir direção à frente",
-                    testTag = "compass_button"
-                ) {
-                    headingUp = !headingUp
-                    followUser = true
-                    if (!headingUp) {
-                        map?.animateCamera(CameraUpdateFactory.bearingTo(0.0), 450)
-                    }
-                }
-                Text(
-                    if (headingUp) "FRENTE" else "NORTE",
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 9.sp,
-                    modifier = Modifier
-                        .background(Color(0xE0102642), RoundedCornerShape(7.dp))
-                        .padding(horizontal = 5.dp, vertical = 3.dp)
-                )
-            }
-
-            if (!navigating) MapControlButton(
-                icon = Icons.Default.Terrain,
-                label = if (threeDView) "Vista de cima (2D)" else "Vista inclinada (3D)",
-                testTag = "map_3d_button"
-            ) {
-                threeDView = !threeDView
-                map?.animateCamera(CameraUpdateFactory.tiltTo(if (threeDView) 48.0 else 0.0), 550)
-            }
-
             MapControlButton(
                 icon = Icons.Default.MyLocation,
-                label = "Recentralizar minha posição",
+                label = "Seguir minha posição, na direção do movimento",
                 testTag = "recenter_button"
             ) {
+                headingUp = true
                 followUser = true
-                val current = map
-                if (navigating && current != null) {
-                    current.animateCamera(CameraUpdateFactory.zoomTo(
-                        NavigationCameraMath.followZoom(speedKmh)
-                    ), 350)
-                }
-            }
-
-            if (!navigating) Surface(
-                shape = RoundedCornerShape(23.dp),
-                color = Color(0xF0081A30),
-                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.13f)),
-                shadowElevation = 8.dp
-            ) {
-                Column {
-                    IconButton(
-                        onClick = { map?.animateCamera(CameraUpdateFactory.zoomIn(), 260) },
-                        modifier = Modifier.size(44.dp).testTag("zoom_in_button")
-                    ) {
-                        Icon(Icons.Default.Add, "Ampliar mapa", tint = Color.White)
-                    }
-                    Box(
-                        modifier = Modifier
-                            .padding(horizontal = 10.dp)
-                            .size(width = 24.dp, height = 1.dp)
-                            .background(Color.White.copy(alpha = 0.18f))
-                    )
-                    IconButton(
-                        onClick = { map?.animateCamera(CameraUpdateFactory.zoomOut(), 260) },
-                        modifier = Modifier.size(44.dp).testTag("zoom_out_button")
-                    ) {
-                        Icon(Icons.Default.Remove, "Reduzir mapa", tint = Color.White)
+                prefs.edit().putBoolean("map_heading_up",true).apply()
+                map?.let { activeMap ->
+                    if (hasLocationFix) {
+                        val targetBearing = NavigationCameraMath.resolveHeading(
+                            phoneHeading = compassHeading?.toDouble(),
+                            gpsCourse = bearing.toDouble().takeIf { hasBearing && speedKmh >= 7f },
+                            lastCourse = lastNavigationBearing,
+                            followCompass = followPhoneCompass
+                        )
+                        val mapDirection = targetBearing ?: activeMap.cameraPosition.bearing
+                        val targetCoords = if (navigating && targetBearing != null)
+                            NavigationCameraMath.cameraTarget(
+                                latitude,longitude,mapDirection,
+                                NavigationCameraMath.lookAheadMeters(speedKmh)
+                            )
+                        else latitude to longitude
+                        activeMap.animateCamera(
+                            CameraUpdateFactory.newCameraPosition(
+                                CameraPosition.Builder()
+                                    .target(LatLng(targetCoords.first,targetCoords.second))
+                                    .zoom(if (navigating)
+                                        NavigationCameraMath.followZoom(speedKmh)
+                                        else NavigationCameraMath.EXPLORE_FOLLOW_ZOOM
+                                    )
+                                    .bearing(mapDirection)
+                                    .tilt(if (threeDView)
+                                        NavigationCameraMath.GUIDE_TILT else 0.0
+                                    )
+                                    .build()
+                            ),520
+                        )
                     }
                 }
             }
@@ -753,14 +872,14 @@ private fun ensureCircumscriptionLayers(context: android.content.Context, style:
             style.addLayer(
                 FillLayer("bairros-fill", "bairros-source").withProperties(
                     PropertyFactory.fillColor(Expression.get("color")),
-                    PropertyFactory.fillOpacity(0.24f)
+                    PropertyFactory.fillOpacity(0f)
                 )
             )
             style.addLayer(
                 LineLayer("bairros-border", "bairros-source").withProperties(
                     PropertyFactory.lineColor(Expression.get("color")),
                     PropertyFactory.lineWidth(1.8f),
-                    PropertyFactory.lineOpacity(0.85f)
+                    PropertyFactory.lineOpacity(0f)
                 )
             )
         }
@@ -776,94 +895,121 @@ private fun updateLine(style: Style, id: String, route: List<Pair<Double,Double>
 }
 
 /**
- * Generates a high-DPI blue GPS location puck bitmap with an optional directional heading cone.
+ * Three genuinely different top-down GPS symbols, facing screen-up before
+ * rotation: car, two-wheel motorcycle and walking person. No tiny stock
+ * arrow is layered over them. The GPS position remains the image center.
+ *
+ * A visible compass direction rotates the symbol and a small forward pointer.
+ * When sensors/course are unavailable, do not invent a direction.
  */
-private fun createBlueLocationMarkerBitmap(bearing: Float, showHeading: Boolean, isMotorcycle: Boolean = false): Bitmap {
-    val sizePx = 112
-    val center = sizePx / 2f
-    val bitmap = Bitmap.createBitmap(sizePx,sizePx,Bitmap.Config.ARGB_8888)
+private fun createVehicleLocationMarkerBitmap(
+    bearing: Float,
+    showHeading: Boolean,
+    mode: VehicleMode
+): Bitmap {
+    // Pixel dimensions are intentional: MapLibre markers use bitmap pixels.
+    // The previous 164px sprite covered too much of the street at urban zoom.
+    val side = 104
+    val center = side / 2f
+    val bitmap = Bitmap.createBitmap(side,side,Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bitmap)
-    val teal = android.graphics.Color.rgb(31,221,207)
-    val blue = android.graphics.Color.rgb(28,120,248)
-    val highlight = if (isMotorcycle) teal else blue
-    val aura = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = android.graphics.Color.argb(56,
-            android.graphics.Color.red(highlight),
-            android.graphics.Color.green(highlight),
-            android.graphics.Color.blue(highlight))
+    val white = android.graphics.Color.WHITE
+    val navy = android.graphics.Color.rgb(9,27,42)
+    val teal = android.graphics.Color.rgb(32,221,195)
+    val accent = when(mode) {
+        VehicleMode.MOTORCYCLE -> teal
+        VehicleMode.CAR -> android.graphics.Color.rgb(35,146,255)
+        VehicleMode.WALKING -> android.graphics.Color.rgb(255,180,76)
     }
-    canvas.drawCircle(center,center,43f,aura)
-
-    if (!showHeading) {
-        // When the heading is unknown, explicitly use a nondirectional dot.
-        val outline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = android.graphics.Color.WHITE
+    fun paint(color: Int, width: Float = 0f): Paint =
+        Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            this.color = color
+            if (width > 0f) {
+                style = Paint.Style.STROKE
+                strokeWidth = width
+                strokeJoin = Paint.Join.ROUND
+                strokeCap = Paint.Cap.ROUND
+            }
         }
-        canvas.drawCircle(center,center,22f,outline)
-        outline.color = highlight
-        canvas.drawCircle(center,center,17f,outline)
-        return bitmap
-    }
-
+    canvas.drawCircle(center,center,37f,paint(android.graphics.Color.argb(32,32,221,195)))
+    canvas.drawCircle(center,center,31f,paint(android.graphics.Color.argb(222,9,27,42)))
+    canvas.drawCircle(center,center,30f,paint(android.graphics.Color.argb(198,32,221,195),1.5f))
     canvas.save()
-    canvas.rotate(bearing,center,center)
-    val direction = Path().apply {
-        moveTo(center,5f)
-        lineTo(center-14f,center-16f)
-        lineTo(center+14f,center-16f)
-        close()
-    }
-    canvas.drawPath(direction,Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = android.graphics.Color.argb(190,
-            android.graphics.Color.red(highlight),
-            android.graphics.Color.green(highlight),
-            android.graphics.Color.blue(highlight))
-    })
+    if (showHeading) canvas.rotate(bearing,center,center)
+    canvas.translate(center,center)
 
-    val white = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = android.graphics.Color.WHITE
-        style = Paint.Style.FILL
-    }
-    val body = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = highlight
-        style = Paint.Style.FILL
-    }
-    if (isMotorcycle) {
-        // A real two-wheel vehicle silhouette, not just a teal car dot.
-        val darkWheel = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = android.graphics.Color.rgb(12,32,51)
-            style = Paint.Style.STROKE
-            strokeWidth = 4.5f
+    if (showHeading) {
+        // Heading points up. It never overlays the motorcycle's front tyre.
+        val triangle = Path().apply {
+            moveTo(0f,-45f);lineTo(-6f,-34f);lineTo(6f,-34f);close()
         }
-        canvas.drawCircle(center,center-18f,9f,darkWheel)
-        canvas.drawCircle(center,center+19f,9f,darkWheel)
-        canvas.drawRoundRect(android.graphics.RectF(center-5f,center-21f,
-            center+5f,center+25f),5f,5f,white)
-        canvas.drawRoundRect(android.graphics.RectF(center-4f,center-16f,
-            center+4f,center+12f),3f,3f,body)
-        canvas.drawLine(center-12f,center-13f,center+12f,center-13f,darkWheel)
-        canvas.drawCircle(center,center+10f,6.5f,white)
-    } else {
-        // Car icon with windshield, body and wheels.
-        val dark = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = android.graphics.Color.rgb(12,32,51)
+        canvas.drawPath(triangle,paint(accent))
+    }
+    when(mode) {
+        VehicleMode.MOTORCYCLE -> {
+            // Recognizable top view: front/rear tyres, handlebar, streamlined
+            // tank, seat and helmet. No white "stacked rings" or giant halo.
+            canvas.drawRoundRect(
+                android.graphics.RectF(-5.5f,-28f,5.5f,-17f),
+                5f,5f,paint(android.graphics.Color.rgb(22,31,39))
+            )
+            canvas.drawLine(0f,-27f,0f,-19f,paint(white,1.8f))
+            canvas.drawRoundRect(
+                android.graphics.RectF(-5.5f,18f,5.5f,28f),
+                5f,5f,paint(android.graphics.Color.rgb(22,31,39))
+            )
+            canvas.drawLine(0f,21f,0f,26f,paint(white,1.7f))
+            canvas.drawLine(-19f,-14f,19f,-14f,paint(white,3.2f))
+            canvas.drawCircle(-19f,-14f,2.2f,paint(navy))
+            canvas.drawCircle(19f,-14f,2.2f,paint(navy))
+            val fairing = Path().apply {
+                moveTo(0f,-20f)
+                cubicTo(-11f,-19f,-12f,-4f,-10f,8f)
+                lineTo(-6f,18f);lineTo(6f,18f);lineTo(10f,8f)
+                cubicTo(12f,-4f,11f,-19f,0f,-20f)
+                close()
+            }
+            canvas.drawPath(fairing,paint(accent))
+            canvas.drawPath(fairing,paint(white,1.5f))
+            canvas.drawRoundRect(
+                android.graphics.RectF(-7f,9f,7f,23f),
+                5f,5f,paint(navy)
+            )
+            canvas.drawRoundRect(
+                android.graphics.RectF(-5f,10f,5f,20f),
+                3f,3f,paint(android.graphics.Color.rgb(39,79,91))
+            )
+            // Single helmet, small enough not to resemble a second wheel.
+            canvas.drawCircle(0f,-6f,7.5f,paint(navy))
+            canvas.drawArc(
+                android.graphics.RectF(-7.5f,-13.5f,7.5f,1.5f),
+                204f,132f,false,paint(white,2.5f)
+            )
         }
-        canvas.drawRoundRect(android.graphics.RectF(center-16f,center-27f,
-            center+16f,center+28f),10f,10f,white)
-        canvas.drawRoundRect(android.graphics.RectF(center-12.5f,center-24f,
-            center+12.5f,center+24f),7f,7f,body)
-        canvas.drawRoundRect(android.graphics.RectF(center-10f,center-19f,
-            center+10f,center-6f),4f,4f,dark)
-        canvas.drawRoundRect(android.graphics.RectF(center-10f,center+6f,
-            center+10f,center+19f),4f,4f,dark)
-        canvas.drawRoundRect(android.graphics.RectF(center-21f,center-16f,
-            center-15f,center-3f),2f,2f,dark)
-        canvas.drawRoundRect(android.graphics.RectF(center+15f,center-16f,
-            center+21f,center-3f),2f,2f,dark)
-        canvas.drawRoundRect(android.graphics.RectF(center-21f,center+9f,
-            center-15f,center+22f),2f,2f,dark)
-        canvas.drawRoundRect(android.graphics.RectF(center+15f,center+9f,
-            center+21f,center+22f),2f,2f,dark)
+        VehicleMode.CAR -> {
+            canvas.drawRoundRect(android.graphics.RectF(-22f,-19f,-15f,-4f),3f,3f,paint(navy))
+            canvas.drawRoundRect(android.graphics.RectF(15f,-19f,22f,-4f),3f,3f,paint(navy))
+            canvas.drawRoundRect(android.graphics.RectF(-22f,10f,-15f,24f),3f,3f,paint(navy))
+            canvas.drawRoundRect(android.graphics.RectF(15f,10f,22f,24f),3f,3f,paint(navy))
+            canvas.drawRoundRect(android.graphics.RectF(-17f,-29f,17f,29f),
+                9f,9f,paint(accent))
+            canvas.drawRoundRect(android.graphics.RectF(-13f,-22f,13f,-5f),
+                4f,4f,paint(navy))
+            canvas.drawRoundRect(android.graphics.RectF(-12f,6f,12f,23f),
+                4f,4f,paint(android.graphics.Color.rgb(35,82,119)))
+            canvas.drawRoundRect(android.graphics.RectF(-17f,-29f,17f,29f),
+                9f,9f,paint(white,1.8f))
+        }
+        VehicleMode.WALKING -> {
+            canvas.drawCircle(0f,-19f,6f,paint(white))
+            canvas.drawLine(0f,-12f,0f,9f,paint(white,5f))
+            canvas.drawLine(0f,-5f,-15f,6f,paint(white,4f))
+            canvas.drawLine(0f,-5f,15f,1f,paint(white,4f))
+            canvas.drawLine(0f,9f,-12f,23f,paint(white,4f))
+            canvas.drawLine(0f,9f,12f,23f,paint(white,4f))
+            canvas.drawRoundRect(android.graphics.RectF(-6f,-10f,6f,9f),
+                5f,5f,paint(accent))
+        }
     }
     canvas.restore()
     return bitmap

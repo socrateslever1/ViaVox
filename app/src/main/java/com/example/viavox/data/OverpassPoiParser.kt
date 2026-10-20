@@ -19,8 +19,14 @@ object OverpassPoiParser {
             val name = tags.optString("name").trim()
             if (name.isBlank()) continue
             val category = categoryFor(tags) ?: continue
+            // No street in the OSM source => it cannot be confirmed on the
+            // currently traveled street. Never infer it from nearby geometry.
+            val street = tags.optString("addr:street").trim()
+            if (street.isBlank()) continue
             val type = element.optString("type")
-            if (type !in listOf("node", "way", "relation")) continue
+            // A polygon centroid is not a street-side entrance. For a
+            // strict 30m voice rule, accept actual mapped GPS nodes only.
+            if (type != "node") continue
             val id = element.optLong("id")
             if (id <= 0L) continue
 
@@ -36,7 +42,8 @@ object OverpassPoiParser {
                 name = name,
                 category = category,
                 latitude = lat,
-                longitude = lon
+                longitude = lon,
+                streetAddress = street
             )
 
             // Some landmarks are mapped both as a POI node and as a building.
@@ -56,19 +63,15 @@ object OverpassPoiParser {
         val leisure = tags.optString("leisure")
         val historic = tags.optString("historic")
         val tourism = tags.optString("tourism")
-        val building = tags.optString("building")
-
         return when {
-            amenity in setOf("hospital", "clinic", "doctors", "health_post") ->
-                PoiCategory.HEALTH
-            amenity in setOf("school", "university", "college", "kindergarten") ->
-                PoiCategory.EDUCATION
-            amenity in setOf("fuel") -> PoiCategory.FUEL
-            amenity in setOf("townhall", "police", "fire_station", "courthouse", "library", "bus_station") ||
+            // Major community landmarks only: no pharmacies, shops, fuel
+            // stations, clinics, eateries or individual businesses.
+            amenity in setOf("hospital", "health_post") -> PoiCategory.HEALTH
+            amenity in setOf("school", "university", "college") -> PoiCategory.EDUCATION
+            amenity in setOf("townhall", "police", "fire_station", "courthouse", "library") ||
                 historic in setOf("monument", "memorial") ||
-                tourism in setOf("museum", "attraction") ||
-                building in setOf("civic", "public") -> PoiCategory.PUBLIC
-            leisure in setOf("park", "garden", "playground", "pitch") -> PoiCategory.PARK
+                tourism == "museum" -> PoiCategory.PUBLIC
+            leisure == "park" -> PoiCategory.PARK
             else -> null
         }
     }

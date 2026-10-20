@@ -14,7 +14,7 @@ class NavigationCameraAndProgressTest {
         val target = NavigationCameraMath.cameraTarget(-3.10,-60.00,0.0,80.0)
         assertTrue(target.first > -3.10)
         assertEquals(-60.00,target.second,0.000001)
-        assertEquals(17.8,NavigationCameraMath.followZoom(16f),0.001)
+        assertEquals(18.35,NavigationCameraMath.followZoom(16f),0.001)
     }
 
     @Test fun headingEastLooksAheadInLongitudeAndWrapsCourseSmoothly() {
@@ -24,6 +24,17 @@ class NavigationCameraAndProgressTest {
         assertEquals(20.0,NavigationCameraMath.angularDelta(350.0,10.0),0.00001)
         assertEquals(-20.0,NavigationCameraMath.angularDelta(10.0,350.0),0.00001)
         assertEquals(1.0,NavigationCameraMath.smoothBearing(350.0,10.0,0.55),0.00001)
+    }
+
+    @Test fun closeGuidanceDoesNotLeaveVehicleAtCityWideZoom() {
+        assertEquals(18.35,NavigationCameraMath.followZoom(0f),0.001)
+        assertEquals(18.05,NavigationCameraMath.followZoom(35f),0.001)
+        assertEquals(17.65,NavigationCameraMath.followZoom(65f),0.001)
+        assertEquals(17.3,NavigationCameraMath.followZoom(105f),0.001)
+        assertEquals(17.9,NavigationCameraMath.closeAfterPreview(13.6,false),0.001)
+        assertEquals(17.9,NavigationCameraMath.closeAfterPreview(15.0,true),0.001)
+        assertEquals(17.55,NavigationCameraMath.closeAfterPreview(17.55,false),0.001)
+        assertTrue(NavigationCameraMath.lookAheadMeters(20f) < 55.0)
     }
 
     private fun sampleRoute() = NavigationRoute(

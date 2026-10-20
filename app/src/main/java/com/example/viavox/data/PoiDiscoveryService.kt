@@ -44,8 +44,17 @@ class PoiDiscoveryService(
         config: ViaVoxConfig,
         gpsAccuracyMeters: Float = 30f,
         speedMps: Float = 0f,
-        bearingDegrees: Float? = null
+        bearingDegrees: Float? = null,
+        currentRoad: String = ""
     ): PointOfInterest? {
+        // Do not make an expensive remote request without a confirmed
+        // current street and accurate GPS; guessing landmarks is worse
+        // than a quiet trip.
+        if (!config.narratePoiEnabled || currentRoad.isBlank() ||
+            !gpsAccuracyMeters.isFinite() ||
+            gpsAccuracyMeters <= 0f ||
+            gpsAccuracyMeters > PoiSelectionPolicy.MAX_GPS_ACCURACY_METERS
+        ) return null
         val now = System.currentTimeMillis()
         synchronized(announced) {
             announced.entries.removeAll { now - it.value >= ANNOUNCE_COOLDOWN_MS }
@@ -68,8 +77,27 @@ class PoiDiscoveryService(
                 .map { it.id }.toSet()
         }
         return PoiSelectionPolicy.choose(
-            candidates, userLat, userLon, gpsAccuracyMeters, speedMps, bearingDegrees, seen
+            candidates, userLat, userLon, gpsAccuracyMeters, speedMps, bearingDegrees,
+            currentRoad, seen
         )
+    }
+
+    /**
+     * Spoken landmarks must still be on the user's current street and within
+     * 30m at the *start* of speech. A queued landmark expires when the rider
+     * turns, drives past it, or loses precise GPS.
+     */
+    fun isStillRelevant(
+        id: String, latitude: Double, longitude: Double,
+        accuracyMeters: Float, speedMps: Float, bearingDegrees: Float?,
+        currentRoad: String
+    ): Boolean {
+        val poi = synchronized(cachedPois) { cachedPois.firstOrNull { it.id == id } }
+            ?: return false
+        return PoiSelectionPolicy.choose(
+            listOf(poi), latitude, longitude, accuracyMeters,
+            speedMps, bearingDegrees, currentRoad
+        ) != null
     }
 
     /**
@@ -105,13 +133,12 @@ class PoiDiscoveryService(
                 val ql = """
                     [out:json][timeout:9];
                     (
-                      nwr["amenity"~"^(hospital|clinic|doctors|health_post|school|university|college|kindergarten|fuel|townhall|police|fire_station|courthouse|library|bus_station)$"]["name"](around:390,$latText,$lonText);
-                      nwr["leisure"~"^(park|garden|playground|pitch)$"]["name"](around:390,$latText,$lonText);
-                      nwr["historic"~"^(monument|memorial)$"]["name"](around:390,$latText,$lonText);
-                      nwr["tourism"~"^(museum|attraction)$"]["name"](around:390,$latText,$lonText);
-                      nwr["building"~"^(civic|public)$"]["name"](around:390,$latText,$lonText);
+                      node["amenity"~"^(hospital|school|university|college|townhall|police|fire_station|courthouse|library)$"]["name"](around:220,$latText,$lonText);
+                      node["leisure"~"^(park)$"]["name"](around:220,$latText,$lonText);
+                      node["historic"~"^(monument|memorial)$"]["name"](around:220,$latText,$lonText);
+                      node["tourism"~"^(museum)$"]["name"](around:220,$latText,$lonText);
                     );
-                    out center 100;
+                    out 80;
                 """.trimIndent()
                 // Use the published Manaus ArcGIS points as the first source
                 // for important landmarks; this also works when Overpass returns 502.
@@ -120,7 +147,8 @@ class PoiDiscoveryService(
                         GisBounds(lon-0.0034,lat-0.0034,lon+0.0034,lat+0.0034),
                         16.0
                     ).mapNotNull { it.asSpokenReference() }
-                        .filter { it.distanceTo(lat,lon) <= 420.0 }
+                        .filter(PoiSelectionPolicy::isImportantForSpeech)
+                        .filter { it.distanceTo(lat,lon) <= 220.0 }
                 } else emptyList()
                 // Do not query both public GIS services if enough landmarks
                 // are already available in the local dataset.

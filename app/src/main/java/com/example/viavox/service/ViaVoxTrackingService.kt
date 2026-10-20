@@ -89,7 +89,22 @@ class ViaVoxTrackingService : Service() {
         speechQueue = SpeechOrchestrator(
             play = { text, finished -> ttsManager.speakManaged(
                 SpeechTextNormalizer.normalize(text), finished
-            ) }
+            ) },
+            canPlay = { event ->
+                if (event.kind != SpeechKind.POI) true
+                else {
+                    val latest = TrackingRepository.state.value
+                    val poiId = event.key.removePrefix("poi:")
+                    latest.hasLocationFix && currentConfig.narratePoiEnabled &&
+                        poiService.isStillRelevant(
+                            poiId, latest.latitude,latest.longitude,
+                            latest.accuracyMeters?.toFloat() ?: 100f,
+                            latest.speedKmh / 3.6f,
+                            latest.bearing.takeIf { latest.hasBearing },
+                            latest.place?.road.orEmpty()
+                        )
+                }
+            }
         )
         speechQueue.setEnabled(initialVoiceEnabled)
 
@@ -401,9 +416,10 @@ class ViaVoxTrackingService : Service() {
                 config = currentConfig,
                 gpsAccuracyMeters = accuracyMeters,
                 speedMps = if (location.hasSpeed()) location.speed else 0f,
-                bearingDegrees = if (location.hasBearing()) location.bearing else null
+                bearingDegrees = if (location.hasBearing()) location.bearing else null,
+                currentRoad = TrackingRepository.state.value.place?.road.orEmpty()
             )
-            if (!isTrackingRunning) return@launch
+            if (!isTrackingRunning || !currentConfig.narratePoiEnabled) return@launch
             if (poi != null) {
                 poiAnnouncements.offer(poi, System.currentTimeMillis())
                 TrackingRepository.updatePoiStatus("Referência detectada: ${poi.name}")
@@ -551,7 +567,8 @@ class ViaVoxTrackingService : Service() {
             longitude = longitude,
             accuracyMeters = accuracyMeters,
             speedMps = speedMps,
-            bearingDegrees = bearingDegrees
+            bearingDegrees = bearingDegrees,
+            currentRoad = position.place?.road.orEmpty()
         ) ?: return
 
         // Polygon/relation centroid is not precise enough to claim a particular

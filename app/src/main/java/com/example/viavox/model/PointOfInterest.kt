@@ -19,7 +19,9 @@ data class PointOfInterest(
     val name: String,
     val category: PoiCategory,
     val latitude: Double,
-    val longitude: Double
+    val longitude: Double,
+    /** Street from the source's address field, not from nearby guessed geometry. */
+    val streetAddress: String = ""
 ) {
     /**
      * Calculates great-circle distance in meters between this POI and given coordinate.

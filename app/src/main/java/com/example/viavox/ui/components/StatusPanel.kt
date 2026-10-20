@@ -110,6 +110,13 @@ fun StatusPanel(
                 }
                 Spacer(Modifier.weight(1f))
                 TextButton(
+                    onClick = { detailsExpanded = !detailsExpanded },
+                    contentPadding = PaddingValues(horizontal = 4.dp,vertical = 0.dp),
+                    modifier = Modifier.height(29.dp).testTag("street_more_details")
+                ) {
+                    Text(if (detailsExpanded) "Ocultar" else "Detalhes",color = teal,fontSize = 11.sp)
+                }
+                TextButton(
                     onClick = { if (state.isActive) onStopTracking() else onStartTracking() },
                     contentPadding = PaddingValues(horizontal = 8.dp,vertical = 0.dp),
                     modifier = Modifier.height(29.dp).testTag("tracking_toggle")
@@ -166,44 +173,28 @@ fun StatusPanel(
                 }
             }
 
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                place?.zone?.takeIf(String::isNotBlank)?.let { zone ->
-                    TinyLabel(zone)
-                }
-                if (policeLabel != null) TinyLabel("Área policial")
-                if (voiceIssue != null) {
-                    Text("Voz requer atenção", fontSize = 10.sp, color = warning, maxLines = 1)
-                }
-                Spacer(Modifier.weight(1f))
-                TextButton(
-                    onClick = { detailsExpanded = !detailsExpanded },
-                    contentPadding = PaddingValues(horizontal = 3.dp,vertical = 0.dp),
-                    modifier = Modifier.height(29.dp).testTag("street_more_details")
-                ) {
-                    Icon(Icons.Default.Info, null, tint = teal, modifier = Modifier.size(15.dp))
-                    Spacer(Modifier.width(3.dp))
-                    Text(if (detailsExpanded) "Ocultar" else "Detalhes", color = teal, fontSize = 11.sp)
-                }
-            }
-
-            // Real nearby POIs are useful driving information; raw backend errors aren't.
-            if (poiSummary != null) {
-                Text(
-                    poiSummary,
-                    color = teal,
-                    fontSize = 11.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.testTag("poi_summary")
-                )
-            }
-
             if (detailsExpanded) {
                 HorizontalDivider(color = Color.White.copy(alpha = 0.13f))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    place?.zone?.takeIf(String::isNotBlank)?.let { zone ->
+                        TinyLabel(zone)
+                    }
+                    if (policeLabel != null) TinyLabel("Área policial")
+                    if (voiceIssue != null) {
+                        Text("Voz requer atenção",fontSize = 10.sp,color = warning,maxLines = 1)
+                    }
+                }
+                if (poiSummary != null) {
+                    Text(
+                        poiSummary,color = teal,fontSize = 11.sp,
+                        maxLines = 1,overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.testTag("poi_summary")
+                    )
+                }
                 if (policeLabel != null) {
                     Text(
                         "Circunscrição (estimativa): $policeLabel",

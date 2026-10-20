@@ -28,7 +28,6 @@ import com.example.viavox.ui.components.NavigationStreetStrip
 import com.example.viavox.ui.components.NavigationLibraryDialog
 import com.example.viavox.viewmodel.NavigationUiState
 import com.example.viavox.viewmodel.NavigationViewModel
-import com.example.viavox.ui.components.HeaderBar
 import com.example.viavox.ui.components.OpenStreetMapComponent
 import com.example.viavox.ui.components.SettingsDialog
 import com.example.viavox.ui.components.StatusPanel
@@ -69,6 +68,7 @@ fun ViaVoxMainScreen(
             .testTag("main_screen")
     ) {
         val isWide = maxWidth >= 700.dp
+        val compactHeight = maxHeight < 730.dp || maxWidth < 355.dp
 
         // Full-bleed GPU vector map occupying the entire screen
         OpenStreetMapComponent(
@@ -85,7 +85,7 @@ fun ViaVoxMainScreen(
             favorites = navigationUi.savedPlaces.map { it.second },
             savedTrack = navigationUi.showingTrip?.points.orEmpty(),
             liveTrack = navigationUi.livePoints,
-            isMotorcycle = state.config.isMotorcycle(),
+            vehicleType = state.config.vehicleType,
             safetyFeatures = state.safetyFeatures,
             onMapLongPress = { lat, lon -> navigation.selectMapPoint(lat, lon) },
             onReferenceSelected = navigation::select,
@@ -98,14 +98,8 @@ fun ViaVoxMainScreen(
                 .fillMaxSize()
                 .safeDrawingPadding()
         ) {
-            // Top essential controls bar
-            if (!navigationUi.navigating) HeaderBar(
-                onOpenSettings = onOpenSettings,
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .widthIn(max = 720.dp)
-            )
-
+            // One compact search/action strip replaces the two stacked headers.
+            // The map keeps the space previously consumed by brand and shortcuts.
             if (!navigationUi.navigating) NavigationSearchAndActions(
                 ui = navigationUi,
                 onQueryChanged = navigation::updateQuery,
@@ -125,10 +119,12 @@ fun ViaVoxMainScreen(
                 onSaveCurrentPosition = navigation::saveCurrentPoint,
                 onStartRecording = navigation::beginRecording,
                 onStopRecording = navigation::finishRecording,
+                onOpenSettings = onOpenSettings,
+                compactHeight = compactHeight,
                 modifier = Modifier
                     .align(Alignment.TopCenter)
-                    .padding(top = 77.dp)
-                    .widthIn(max = 720.dp)
+                    .padding(top = if (compactHeight) 5.dp else 9.dp)
+                    .widthIn(max = 680.dp)
             )
 
             val searchOpen = navigationUi.suggestionsVisible && navigationUi.query.trim().length >= 3
@@ -146,7 +142,7 @@ fun ViaVoxMainScreen(
                     modifier = Modifier
                         .align(if (isWide) Alignment.BottomEnd else Alignment.BottomCenter)
                         .padding(horizontal = 14.dp)
-                        .padding(bottom = 12.dp)
+                        .padding(bottom = 8.dp)
                         .widthIn(max = if (isWide) 430.dp else 560.dp)
                         .fillMaxWidth()
                 )
@@ -155,8 +151,8 @@ fun ViaVoxMainScreen(
             AnimatedVisibility(
                 visible = navigationUi.navigating,
                 modifier = Modifier.align(Alignment.TopCenter)
-                    .padding(horizontal = 12.dp, vertical = 10.dp)
-                    .widthIn(max = 720.dp),
+                    .padding(horizontal = 10.dp, vertical = 5.dp)
+                    .widthIn(max = 680.dp),
                 enter = fadeIn() + slideInVertically { -it / 2 },
                 exit = fadeOut() + slideOutVertically { -it / 2 }
             ) {
@@ -170,8 +166,8 @@ fun ViaVoxMainScreen(
             AnimatedVisibility(
                 visible = navigationUi.navigating,
                 modifier = Modifier.align(Alignment.BottomCenter)
-                    .padding(horizontal = 12.dp,vertical = 12.dp)
-                    .widthIn(max = 720.dp),
+                    .padding(horizontal = 10.dp,vertical = 7.dp)
+                    .widthIn(max = 680.dp),
                 enter = fadeIn() + slideInVertically { it / 2 },
                 exit = fadeOut() + slideOutVertically { it / 2 }
             ) {
@@ -182,6 +178,17 @@ fun ViaVoxMainScreen(
                     voiceEnabled = state.isVoiceEnabled,
                     onToggleVoice = onToggleVoice,
                     onRepeat = onRepeatSpeech,
+                    destinationName = navigationUi.selected?.name.orEmpty(),
+                    remainingMeters = navigationUi.remainingDistanceMeters.coerceAtLeast(0.0),
+                    estimatedMinutes = navigationUi.route?.let { route ->
+                        if (route.distanceMeters > 0.0) {
+                            kotlin.math.ceil(
+                                (route.durationSeconds / 60.0) *
+                                    (navigationUi.remainingDistanceMeters
+                                        .coerceAtLeast(0.0) / route.distanceMeters)
+                            ).toInt().coerceAtLeast(0)
+                        } else 0
+                    } ?: 0,
                     modifier = Modifier.fillMaxWidth()
                 )
             }
@@ -191,8 +198,9 @@ fun ViaVoxMainScreen(
                     color = androidx.compose.ui.graphics.Color(0xED863437),
                     shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
                     modifier = Modifier
-                        .align(Alignment.Center)
-                        .padding(20.dp)
+                        .align(Alignment.BottomCenter)
+                        .padding(horizontal = 20.dp)
+                        .padding(bottom = if (navigationUi.navigating) 100.dp else 155.dp)
                         .clickable(onClick = navigation::dismissError)
                 ) {
                     androidx.compose.material3.Text(
@@ -215,7 +223,7 @@ fun ViaVoxMainScreen(
                 onTestVoice = onTestVoice,
                 modifier = Modifier
                     .align(if (isWide) Alignment.BottomStart else Alignment.BottomCenter)
-                    .padding(horizontal = 14.dp, vertical = 12.dp)
+                    .padding(horizontal = 10.dp, vertical = 8.dp)
                     .widthIn(max = if (isWide) 420.dp else 560.dp)
                     .fillMaxWidth()
             )

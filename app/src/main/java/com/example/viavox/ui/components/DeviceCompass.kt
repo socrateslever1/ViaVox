@@ -76,7 +76,7 @@ fun rememberDeviceCompassHeading(
                         return
                     }
                     val now = SystemClock.elapsedRealtime()
-                    if (now - lastUpdateMs < 700L) return
+                    if (now - lastUpdateMs < 350L) return
 
                     val matrix = FloatArray(9)
                     SensorManager.getRotationMatrixFromVector(matrix, event.values)
@@ -107,7 +107,7 @@ fun rememberDeviceCompassHeading(
                     val previous = heading
                     val delta = if (previous == null) 360f
                         else abs(((corrected - previous + 540f) % 360f) - 180f)
-                    if (delta >= 5f || now - lastUpdateMs >= 2_200L) {
+                    if (delta >= 3f || now - lastUpdateMs >= 1_250L) {
                         heading = corrected
                         lastUpdateMs = now
                     }
