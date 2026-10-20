@@ -384,8 +384,10 @@ fun OpenStreetMapComponent(
             // Never start an overlapping camera animation for tiny GPS noise.
             // Keep guidance responsive without interrupting 1-second transitions
             // with another full 1-second movement on each fix.
+            val previousCameraTarget = current.target ?: point
             val remainingCameraMovement = com.example.viavox.model.NavigationMath.meters(
-                current.target.latitude,current.target.longitude,target.first,target.second
+                previousCameraTarget.latitude,previousCameraTarget.longitude,
+                target.first,target.second
             )
             val turning = abs(
                 NavigationCameraMath.angularDelta(current.bearing,cameraBearing)
