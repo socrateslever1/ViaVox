@@ -25,7 +25,9 @@ class SpeechOrchestrator(
     private val play: (text: String, done: () -> Unit) -> Unit,
     private val clock: () -> Long = System::currentTimeMillis,
     private val maxQueue: Int = 12,
-    private val onDrop: (SpeechEvent) -> Unit = {}
+    private val onDrop: (SpeechEvent) -> Unit = {},
+    /** Revalidate a queued POI against the latest GPS *before* TTS starts. */
+    private val canPlay: (SpeechEvent) -> Boolean = { true }
 ) {
     private val waiting = mutableListOf<SpeechEvent>()
     private var active: SpeechEvent? = null
@@ -84,6 +86,13 @@ class SpeechOrchestrator(
             compareBy<SpeechEvent> { it.kind.priority }.thenByDescending { it.createdAt }
         ) ?: return
         waiting.remove(next)
+        // The vehicle may have driven past this POI while navigation or a
+        // road name was being spoken. Never say it without fresh evidence.
+        if (!canPlay(next)) {
+            onDrop(next)
+            pump()
+            return
+        }
         active = next
         val ticket = ++generation
         try {
