@@ -24,7 +24,9 @@ object OverpassPoiParser {
             val street = tags.optString("addr:street").trim()
             if (street.isBlank()) continue
             val type = element.optString("type")
-            if (type !in listOf("node", "way", "relation")) continue
+            // A polygon centroid is not a street-side entrance. For a
+            // strict 30m voice rule, accept actual mapped GPS nodes only.
+            if (type != "node") continue
             val id = element.optLong("id")
             if (id <= 0L) continue
 
