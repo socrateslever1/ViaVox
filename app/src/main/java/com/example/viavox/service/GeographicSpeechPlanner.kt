@@ -39,12 +39,23 @@ object SpeechTextNormalizer {
             "PMAM" to "Polícia Militar do Amazonas",
             "UFAM" to "Universidade Federal do Amazonas",
             "UEA" to "Universidade do Estado do Amazonas",
+            "IFAM" to "Instituto Federal do Amazonas",
+            "CETI" to "Centro Educacional de Tempo Integral",
+            "DIP" to "Distrito Integrado de Polícia",
+            "SENAI" to "senai",
+            "SESC" to "sesc",
             "CMDOGERAL" to "Comando Geral",
             "CICOM" to "cícom"
         )
         audioNames.forEach { (acronym, spoken) ->
             text = text.replace(Regex("(?i)\\b" + acronym + "\\b"), spoken)
         }
+        // Speak common map abbreviations as ordinary words. The source
+        // display name is not modified; expansions are audio-only.
+        text = text.replace(Regex("""(?i)\\b(?:av|avda)\\.\\s*"""),"Avenida ")
+        text = text.replace(Regex("""(?i)\\b(?:r)\\.\\s*"""),"Rua ")
+        text = text.replace(Regex("""(?i)\\b(?:trav|tv)\\.\\s*"""),"Travessa ")
+        text = text.replace(Regex("""(?i)\\b(?:prof|profa)\\.\\s*"""),"Professor ")
         // Full-uppercase GIS labels are words, not a sequence of initials.
         text = text.replace(Regex("""\b\p{Lu}{4,}\b""")) {
             it.value.lowercase(java.util.Locale.forLanguageTag("pt-BR"))
