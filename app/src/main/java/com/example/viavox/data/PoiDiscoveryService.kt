@@ -44,7 +44,8 @@ class PoiDiscoveryService(
         config: ViaVoxConfig,
         gpsAccuracyMeters: Float = 30f,
         speedMps: Float = 0f,
-        bearingDegrees: Float? = null
+        bearingDegrees: Float? = null,
+        currentRoad: String = ""
     ): PointOfInterest? {
         val now = System.currentTimeMillis()
         synchronized(announced) {
@@ -68,7 +69,8 @@ class PoiDiscoveryService(
                 .map { it.id }.toSet()
         }
         return PoiSelectionPolicy.choose(
-            candidates, userLat, userLon, gpsAccuracyMeters, speedMps, bearingDegrees, seen
+            candidates, userLat, userLon, gpsAccuracyMeters, speedMps, bearingDegrees,
+            currentRoad, seen
         )
     }
 
@@ -105,11 +107,10 @@ class PoiDiscoveryService(
                 val ql = """
                     [out:json][timeout:9];
                     (
-                      nwr["amenity"~"^(hospital|clinic|doctors|health_post|school|university|college|kindergarten|fuel|townhall|police|fire_station|courthouse|library|bus_station)$"]["name"](around:390,$latText,$lonText);
-                      nwr["leisure"~"^(park|garden|playground|pitch)$"]["name"](around:390,$latText,$lonText);
+                      nwr["amenity"~"^(hospital|health_post|school|university|college|townhall|police|fire_station|courthouse|library)$"]["name"](around:390,$latText,$lonText);
+                      nwr["leisure"~"^(park)$"]["name"](around:390,$latText,$lonText);
                       nwr["historic"~"^(monument|memorial)$"]["name"](around:390,$latText,$lonText);
-                      nwr["tourism"~"^(museum|attraction)$"]["name"](around:390,$latText,$lonText);
-                      nwr["building"~"^(civic|public)$"]["name"](around:390,$latText,$lonText);
+                      nwr["tourism"~"^(museum)$"]["name"](around:390,$latText,$lonText);
                     );
                     out center 100;
                 """.trimIndent()
