@@ -89,6 +89,23 @@ class SpeechOrchestratorTest {
             GeographicTransition(neighbourhood="Centro").sentence())
     }
 
+    @Test fun queuedPoiIsSilencedIfPositionIsNoLongerValidWhenItWouldSpeak() {
+        var finish: (() -> Unit)? = null
+        val utterances = mutableListOf<String>()
+        var poiNearby = true
+        val queue = SpeechOrchestrator(
+            play = { text, callback -> utterances.add(text); finish = callback },
+            canPlay = { event -> event.kind != SpeechKind.POI || poiNearby }
+        )
+        queue.offer(SpeechKind.NAVIGATION,"Vire na próxima rua","nav:1")
+        queue.offer(SpeechKind.POI,"Delegacia próxima","poi:12")
+        poiNearby = false // Rode away from the 30m geofence during navigation
+        finish?.invoke()
+        assertEquals(listOf("Vire na próxima rua"),utterances)
+        assertFalse(queue.isBusy)
+        assertEquals(0,queue.pendingCount)
+    }
+
     @Test fun acronymAndRoadNamesAreReadNaturallyWithoutCorruptingGISNames() {
         assertEquals("vigésima quarta cícom",
             SpeechTextNormalizer.normalize("24ª CICOM"))
@@ -102,5 +119,9 @@ class SpeechOrchestratorTest {
         assertEquals("úpa São Jorge",SpeechTextNormalizer.normalize("UPA São Jorge"))
         assertEquals("Polícia Militar do Amazonas",SpeechTextNormalizer.normalize("PMAM"))
         assertEquals("Hospital Geral",SpeechTextNormalizer.normalize("HOSPITAL GERAL"))
+        assertEquals("Distrito Integrado de Polícia",SpeechTextNormalizer.normalize("DIP"))
+        assertEquals("Instituto Federal do Amazonas",SpeechTextNormalizer.normalize("IFAM"))
+        assertEquals("Avenida Eduardo Ribeiro",SpeechTextNormalizer.normalize("Av. Eduardo Ribeiro"))
+        assertEquals("Rua Pará",SpeechTextNormalizer.normalize("R. Pará"))
     }
 }
