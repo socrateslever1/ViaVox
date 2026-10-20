@@ -85,7 +85,7 @@ fun ViaVoxMainScreen(
             favorites = navigationUi.savedPlaces.map { it.second },
             savedTrack = navigationUi.showingTrip?.points.orEmpty(),
             liveTrack = navigationUi.livePoints,
-            isMotorcycle = state.config.isMotorcycle(),
+            vehicleType = state.config.vehicleType,
             safetyFeatures = state.safetyFeatures,
             onMapLongPress = { lat, lon -> navigation.selectMapPoint(lat, lon) },
             onReferenceSelected = navigation::select,
