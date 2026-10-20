@@ -178,6 +178,17 @@ fun ViaVoxMainScreen(
                     voiceEnabled = state.isVoiceEnabled,
                     onToggleVoice = onToggleVoice,
                     onRepeat = onRepeatSpeech,
+                    destinationName = navigationUi.selected?.name.orEmpty(),
+                    remainingMeters = navigationUi.remainingDistanceMeters.coerceAtLeast(0.0),
+                    estimatedMinutes = navigationUi.route?.let { route ->
+                        if (route.distanceMeters > 0.0) {
+                            kotlin.math.ceil(
+                                (route.durationSeconds / 60.0) *
+                                    (navigationUi.remainingDistanceMeters
+                                        .coerceAtLeast(0.0) / route.distanceMeters)
+                            ).toInt().coerceAtLeast(0)
+                        } else 0
+                    } ?: 0,
                     modifier = Modifier.fillMaxWidth()
                 )
             }
