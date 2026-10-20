@@ -22,9 +22,7 @@ class OverpassPoiParserTest {
         ]}
         """.trimIndent()
         val found=OverpassPoiParser.parse(json)
-        assertEquals(listOf("osm_way_12","osm_relation_13"),found.map { it.id })
-        assertEquals(listOf(PoiCategory.HEALTH,PoiCategory.PARK),found.map { it.category })
-        assertEquals("Rua Benjamin Constant",found.first().streetAddress)
+        assertTrue(found.isEmpty()) // Way/relation centroids are not precise entrances.
     }
 
     @Test fun neverInventsLocationsOrStreets() {
