@@ -22,11 +22,21 @@ object PoiSelectionPolicy {
     fun streetMatches(currentRoad: String, sourceAddress: String): Boolean {
         if (currentRoad.isBlank() || sourceAddress.isBlank()) return false
         val road = normalize(currentRoad).replace(STREET_PREFIX, "").trim()
-        val address = normalize(sourceAddress)
-        // Short names like "Rua A" are ambiguous across neighborhoods.
+        // Street names shorter than 5 characters produce too many false matches.
         if (road.length < 5) return false
-        return Regex("(?:^|\\s)" + Regex.escape(road) + "(?:\\s|$)")
-            .containsMatchIn(address)
+        // Compare a canonical street field (before building number or locality)
+        // instead of substring search: "São José" != "São José Operário".
+        val sourceStreet = sourceAddress
+            .substringBefore(',').substringBefore(';')
+            .trim()
+            .let(::normalize)
+            .replace(Regex("^(?:endereco\\s+)?"), "")
+            .replace(STREET_PREFIX, "")
+            .replace(Regex("\\s+(?:numero|n)\\s+\\d+.*$"), "")
+            .replace(Regex("\\s+\\d+[a-z]?\\s*$"), "")
+            .replace(Regex("\\s+s\\s+n$"), "")
+            .trim()
+        return road == sourceStreet
     }
 
     private fun normalize(text: String): String = Normalizer
