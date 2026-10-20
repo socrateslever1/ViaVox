@@ -15,9 +15,48 @@ import kotlin.math.sin
  */
 object PoiSelectionPolicy {
     const val MAX_POI_DISTANCE_METERS = 30.0
-    const val MAX_GPS_ACCURACY_METERS = 18.0f
+    // A 30m criterion is meaningless when GPS uncertainty approaches 30m.
+    const val MAX_GPS_ACCURACY_METERS = 12.0f
     private const val HEADING_MIN_SPEED_MPS = 2.5f
     private val STREET_PREFIX = Regex("^(?:rua|r|avenida|av|travessa|tv|alameda|al|praca|pca|rodovia|rod)\\s+")
+
+    /** Only civic landmarks worth interrupting navigation for. Map POIs are unaffected. */
+    fun isImportantForSpeech(poi: PointOfInterest): Boolean {
+        if (poi.category == PoiCategory.FUEL) return false
+        val name = normalize(poi.name)
+        // Named commercial venues and pharmacies are deliberately silent.
+        val prohibited = listOf("farmacia","drogaria","posto de combustivel",
+            "posto de gasolina","shopping","supermercado","restaurante",
+            "mercado","lanchonete","loja","empresa","atacado","comercio")
+        if (prohibited.any(name::contains)) return false
+        val landmarks = when(poi.category) {
+            PoiCategory.HEALTH -> listOf("hospital","upa","unidade basica","ubs","maternidade")
+            PoiCategory.EDUCATION -> listOf("escola","colegio","universidade",
+                "faculdade","instituto federal","ifam","ufam","uea")
+            PoiCategory.PARK -> listOf("praca","parque","jardim botanico")
+            PoiCategory.PUBLIC -> listOf("policia","batalhao","cicom",
+                "delegacia","comando geral","corpo de bombeiro","bombeiro",
+                "prefeitura","forum","tribunal","museu","monumento",
+                "memorial","camara municipal","biblioteca publica",
+                "palacio da justica")
+            PoiCategory.FUEL -> emptyList()
+        }
+        return landmarks.any(name::contains)
+    }
+
+    private fun roadClass(text: String): String? {
+        val normalized = normalize(text)
+        val prefix = Regex("""^(rua|r|avenida|av|travessa|tv|alameda|al|praca|pca|rodovia|rod)\s+""")
+            .find(normalized)?.groupValues?.get(1) ?: return null
+        return when(prefix) {
+            "rua","r" -> "rua"
+            "avenida","av" -> "avenida"
+            "travessa","tv" -> "travessa"
+            "alameda","al" -> "alameda"
+            "praca","pca" -> "praca"
+            else -> "rodovia"
+        }
+    }
 
     fun streetMatches(currentRoad: String, sourceAddress: String): Boolean {
         if (currentRoad.isBlank() || sourceAddress.isBlank()) return false
@@ -36,6 +75,10 @@ object PoiSelectionPolicy {
             .replace(Regex("\\s+\\d+[a-z]?\\s*$"), "")
             .replace(Regex("\\s+s\\s+n$"), "")
             .trim()
+        // A rua and an avenida with the same name are different roads.
+        val currentType = roadClass(currentRoad)
+        val sourceType = roadClass(sourceAddress)
+        if (currentType != null && sourceType != null && currentType != sourceType) return false
         return road == sourceStreet
     }
 
@@ -67,7 +110,7 @@ object PoiSelectionPolicy {
         }
         return pois.asSequence()
             .filter { it.id !in excludedIds }
-            .filter { it.category != PoiCategory.FUEL }
+            .filter(::isImportantForSpeech)
             .filter { streetMatches(currentRoad, it.streetAddress) }
             .map { it to it.distanceTo(latitude, longitude) }
             .filter { (_, distance) -> distance <= MAX_POI_DISTANCE_METERS }
