@@ -890,94 +890,126 @@ private fun updateLine(style: Style, id: String, route: List<Pair<Double,Double>
 }
 
 /**
- * Generates a high-DPI blue GPS location puck bitmap with an optional directional heading cone.
+ * Three genuinely different top-down GPS symbols, facing screen-up before
+ * rotation: car, two-wheel motorcycle and walking person. No tiny stock
+ * arrow is layered over them. The GPS position remains the image center.
+ *
+ * A visible compass direction rotates the symbol and a small forward pointer.
+ * When sensors/course are unavailable, do not invent a direction.
  */
-private fun createBlueLocationMarkerBitmap(bearing: Float, showHeading: Boolean, isMotorcycle: Boolean = false): Bitmap {
-    val sizePx = 112
+private fun createVehicleLocationMarkerBitmap(
+    bearing: Float,
+    showHeading: Boolean,
+    mode: VehicleMode
+): Bitmap {
+    val sizePx = 164
     val center = sizePx / 2f
     val bitmap = Bitmap.createBitmap(sizePx,sizePx,Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bitmap)
-    val teal = android.graphics.Color.rgb(31,221,207)
-    val blue = android.graphics.Color.rgb(28,120,248)
-    val highlight = if (isMotorcycle) teal else blue
-    val aura = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = android.graphics.Color.argb(56,
-            android.graphics.Color.red(highlight),
-            android.graphics.Color.green(highlight),
-            android.graphics.Color.blue(highlight))
+    val white = android.graphics.Color.WHITE
+    val ink = android.graphics.Color.rgb(9,29,45)
+    val accent = when (mode) {
+        VehicleMode.CAR -> android.graphics.Color.rgb(31,133,255)
+        VehicleMode.MOTORCYCLE -> android.graphics.Color.rgb(15,211,190)
+        VehicleMode.WALKING -> android.graphics.Color.rgb(255,172,66)
     }
-    canvas.drawCircle(center,center,43f,aura)
-
-    if (!showHeading) {
-        // When the heading is unknown, explicitly use a nondirectional dot.
-        val outline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = android.graphics.Color.WHITE
-        }
-        canvas.drawCircle(center,center,22f,outline)
-        outline.color = highlight
-        canvas.drawCircle(center,center,17f,outline)
-        return bitmap
+    val bubble = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.argb(
+            52,android.graphics.Color.red(accent),
+            android.graphics.Color.green(accent),
+            android.graphics.Color.blue(accent)
+        )
     }
-
-    canvas.save()
-    canvas.rotate(bearing,center,center)
-    val direction = Path().apply {
-        moveTo(center,5f)
-        lineTo(center-14f,center-16f)
-        lineTo(center+14f,center-16f)
-        close()
-    }
-    canvas.drawPath(direction,Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = android.graphics.Color.argb(190,
-            android.graphics.Color.red(highlight),
-            android.graphics.Color.green(highlight),
-            android.graphics.Color.blue(highlight))
+    canvas.drawCircle(center,center,65f,bubble)
+    canvas.drawCircle(center,center,48f,Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.argb(198,8,30,49)
     })
-
-    val white = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = android.graphics.Color.WHITE
-        style = Paint.Style.FILL
+    canvas.drawCircle(center,center,47f,Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.argb(220,34,204,191)
+        style = Paint.Style.STROKE
+        strokeWidth = 2.7f
+    })
+    canvas.save()
+    if (showHeading) canvas.rotate(bearing,center,center)
+    canvas.translate(center,center)
+    val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = accent
+        strokeJoin = Paint.Join.ROUND
+        strokeCap = Paint.Cap.ROUND
     }
-    val body = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = highlight
-        style = Paint.Style.FILL
+    val outline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = white
+        strokeJoin = Paint.Join.ROUND
+        strokeCap = Paint.Cap.ROUND
     }
-    if (isMotorcycle) {
-        // A real two-wheel vehicle silhouette, not just a teal car dot.
-        val darkWheel = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = android.graphics.Color.rgb(12,32,51)
-            style = Paint.Style.STROKE
-            strokeWidth = 4.5f
+    val dark = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = ink
+        strokeJoin = Paint.Join.ROUND
+        strokeCap = Paint.Cap.ROUND
+    }
+    val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = white
+        style = Paint.Style.STROKE
+        strokeWidth = 5f
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+    if (showHeading) {
+        // Small pointer above the silhouette; not a second full-size arrow.
+        canvas.drawPath(Path().apply {
+            moveTo(0f,-76f)
+            lineTo(-13f,-52f)
+            lineTo(13f,-52f)
+            close()
+        },Paint(Paint.ANTI_ALIAS_FLAG).apply { color = accent })
+    }
+    when(mode) {
+        VehicleMode.CAR -> {
+            // Front and rear wheels, large windshield, roof and tail lights.
+            canvas.drawRoundRect(android.graphics.RectF(-26f,-24f,-17f,-5f),4f,4f,dark)
+            canvas.drawRoundRect(android.graphics.RectF(17f,-24f,26f,-5f),4f,4f,dark)
+            canvas.drawRoundRect(android.graphics.RectF(-26f,10f,-17f,30f),4f,4f,dark)
+            canvas.drawRoundRect(android.graphics.RectF(17f,10f,26f,30f),4f,4f,dark)
+            canvas.drawRoundRect(android.graphics.RectF(-21f,-38f,21f,37f),12f,12f,outline)
+            canvas.drawRoundRect(android.graphics.RectF(-17f,-34f,17f,33f),9f,9f,fill)
+            canvas.drawRoundRect(android.graphics.RectF(-14f,-24f,14f,-5f),5f,5f,dark)
+            canvas.drawRoundRect(android.graphics.RectF(-14f,8f,14f,25f),5f,5f,dark)
+            canvas.drawRoundRect(android.graphics.RectF(-17f,-36f,-7f,-31f),2f,2f,outline)
+            canvas.drawRoundRect(android.graphics.RectF(7f,-36f,17f,-31f),2f,2f,outline)
         }
-        canvas.drawCircle(center,center-18f,9f,darkWheel)
-        canvas.drawCircle(center,center+19f,9f,darkWheel)
-        canvas.drawRoundRect(android.graphics.RectF(center-5f,center-21f,
-            center+5f,center+25f),5f,5f,white)
-        canvas.drawRoundRect(android.graphics.RectF(center-4f,center-16f,
-            center+4f,center+12f),3f,3f,body)
-        canvas.drawLine(center-12f,center-13f,center+12f,center-13f,darkWheel)
-        canvas.drawCircle(center,center+10f,6.5f,white)
-    } else {
-        // Car icon with windshield, body and wheels.
-        val dark = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = android.graphics.Color.rgb(12,32,51)
+        VehicleMode.MOTORCYCLE -> {
+            // Top-down bike: two visible tyres on the centerline, a full-width
+            // handlebar with mirrors, headlamp, fuel tank and rider seat.
+            val tyre = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = white
+                style = Paint.Style.STROKE
+                strokeWidth = 6f
+            }
+            canvas.drawRoundRect(android.graphics.RectF(-10f,-44f,10f,-23f),8f,8f,dark)
+            canvas.drawRoundRect(android.graphics.RectF(-10f,25f,10f,45f),8f,8f,dark)
+            canvas.drawRoundRect(android.graphics.RectF(-10f,-44f,10f,-23f),8f,8f,tyre)
+            canvas.drawRoundRect(android.graphics.RectF(-10f,25f,10f,45f),8f,8f,tyre)
+            canvas.drawLine(-30f,-19f,30f,-19f,stroke)
+            canvas.drawCircle(-30f,-22f,5.5f,fill)
+            canvas.drawCircle(30f,-22f,5.5f,fill)
+            canvas.drawRoundRect(android.graphics.RectF(-18f,-17f,18f,22f),11f,11f,outline)
+            canvas.drawRoundRect(android.graphics.RectF(-14f,-14f,14f,18f),10f,10f,fill)
+            canvas.drawOval(android.graphics.RectF(-10f,-6f,10f,16f),dark)
+            canvas.drawRoundRect(android.graphics.RectF(-9f,12f,9f,28f),6f,6f,outline)
+            canvas.drawCircle(0f,-28f,6f,fill)
         }
-        canvas.drawRoundRect(android.graphics.RectF(center-16f,center-27f,
-            center+16f,center+28f),10f,10f,white)
-        canvas.drawRoundRect(android.graphics.RectF(center-12.5f,center-24f,
-            center+12.5f,center+24f),7f,7f,body)
-        canvas.drawRoundRect(android.graphics.RectF(center-10f,center-19f,
-            center+10f,center-6f),4f,4f,dark)
-        canvas.drawRoundRect(android.graphics.RectF(center-10f,center+6f,
-            center+10f,center+19f),4f,4f,dark)
-        canvas.drawRoundRect(android.graphics.RectF(center-21f,center-16f,
-            center-15f,center-3f),2f,2f,dark)
-        canvas.drawRoundRect(android.graphics.RectF(center+15f,center-16f,
-            center+21f,center-3f),2f,2f,dark)
-        canvas.drawRoundRect(android.graphics.RectF(center-21f,center+9f,
-            center-15f,center+22f),2f,2f,dark)
-        canvas.drawRoundRect(android.graphics.RectF(center+15f,center+9f,
-            center+21f,center+22f),2f,2f,dark)
+        VehicleMode.WALKING -> {
+            // Distinct pedestrian figure: head, torso, bent arms and legs.
+            canvas.drawCircle(0f,-26f,10f,outline)
+            stroke.strokeWidth = 9f
+            canvas.drawLine(0f,-12f,0f,15f,stroke)
+            canvas.drawLine(0f,-6f,-22f,9f,stroke)
+            canvas.drawLine(0f,-6f,22f,-1f,stroke)
+            canvas.drawLine(0f,15f,-18f,36f,stroke)
+            canvas.drawLine(0f,15f,20f,35f,stroke)
+            // Colored torso distinguishes walking mode at a glance.
+            canvas.drawRoundRect(android.graphics.RectF(-9f,-8f,9f,16f),7f,7f,fill)
+        }
     }
     canvas.restore()
     return bitmap
