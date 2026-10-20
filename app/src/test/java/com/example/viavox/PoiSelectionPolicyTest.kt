@@ -10,7 +10,7 @@ class PoiSelectionPolicyTest {
     private val road = "Rua Benjamin Constant"
     private fun poi(id: String, lat: Double, address: String = road,
                     category: PoiCategory = PoiCategory.PUBLIC) =
-        PointOfInterest(id, "Referência $id", category, lat, 0.0, streetAddress = address)
+        PointOfInterest(id, "Delegacia $id", category, lat, 0.0, streetAddress = address)
 
     @Test fun onlyLandmarksWithinThirtyMetersOnSameStreet() {
         val close = poi("close",0.00018, "R. Benjamin Constant, 12")
@@ -56,6 +56,25 @@ class PoiSelectionPolicyTest {
         assertNull(PoiSelectionPolicy.choose(
             listOf(poi("gas",0.0001,category=PoiCategory.FUEL)),
             0.0,0.0,4f,0f,null,road
+        ))
+    }
+
+    @Test fun strictVoiceFilterExcludesBusinessesAndSimilarStreetNames() {
+        val data = listOf(
+            PointOfInterest("a","Farmácia Boa Saúde",PoiCategory.HEALTH,0.0001,0.0,road),
+            PointOfInterest("b","Supermercado Parintins",PoiCategory.PUBLIC,0.0001,0.0,road),
+            PointOfInterest("c","Delegacia de Polícia",PoiCategory.PUBLIC,0.0002,0.0,road)
+        )
+        assertEquals("c", PoiSelectionPolicy.choose(
+            data,0.0,0.0,8f,0f,null,road
+        )?.id)
+        assertFalse(PoiSelectionPolicy.streetMatches("Rua Benjamin Constant",
+            "Avenida Benjamin Constant, 10"))
+        assertNull(PoiSelectionPolicy.choose(
+            listOf(data.last()),0.0,0.0,15f,0f,null,road
+        ))
+        assertNull(PoiSelectionPolicy.choose(
+            listOf(data.last()),0.0,0.0,8f,0f,null,"Rua Aristides Rocha"
         ))
     }
 
