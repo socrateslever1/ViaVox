@@ -109,7 +109,12 @@ class MainActivity : ComponentActivity() {
                     onBackgroundVoiceToggled = { viewModel.toggleBackgroundVoice(it) },
                     onFranciscaBrokerUrlChanged = { url -> viewModel.updateFranciscaBrokerUrl(url) },
                     onFranciscaAccessTokenChanged = { token -> viewModel.updateFranciscaAccessToken(token) },
-                    onVehicleTypeChanged = { viewModel.updateVehicleType(it) },
+                    onVehicleTypeChanged = { choice ->
+                        if (choice == "walking" && currentNavigation.navigating) {
+                            navigation.stopNavigation()
+                        }
+                        viewModel.updateVehicleType(choice)
+                    },
                     onSafetyAlertsToggled = { viewModel.updateSafetyAlerts(it) },
                     onPoliceCircumscriptionToggled = { viewModel.updatePoliceCircumscription(it) },
                     onGoogleMapsApiKeyChanged = { viewModel.updateGoogleMapsApiKey(it) },
