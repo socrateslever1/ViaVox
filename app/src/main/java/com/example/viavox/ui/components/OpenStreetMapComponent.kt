@@ -67,6 +67,7 @@ import com.example.viavox.data.ManausArcGisLayer
 import com.example.viavox.model.NavigationCameraMath
 import com.example.viavox.model.MapPlace
 import com.example.viavox.model.NavigationRoute
+import com.example.viavox.model.VehicleMode
 import com.example.viavox.model.TripPoint
 import com.example.viavox.ui.theme.ViaVoxHeader
 import com.example.viavox.ui.theme.ViaVoxTeal
@@ -127,7 +128,7 @@ fun OpenStreetMapComponent(
     favorites: List<MapPlace> = emptyList(),
     savedTrack: List<TripPoint> = emptyList(),
     liveTrack: List<TripPoint> = emptyList(),
-    isMotorcycle: Boolean = false,
+    vehicleType: String = "car",
     safetyFeatures: List<com.example.viavox.service.SafetyAlertEngine.SafetyFeature> = emptyList(),
     onMapLongPress: (Double, Double) -> Unit = { _, _ -> },
     onReferenceSelected: (MapPlace) -> Unit = {},
@@ -157,10 +158,20 @@ fun OpenStreetMapComponent(
     var arcGisViewport by remember { mutableStateOf<GisBounds?>(null) }
     var arcGisZoom by remember { mutableStateOf(0.0) }
     var arcGisReferences by remember { mutableStateOf<List<GisReference>>(emptyList()) }
-    var headingUp by remember { mutableStateOf(true) }
+    var headingUp by remember {
+        mutableStateOf(prefs.getBoolean("map_heading_up",true))
+    }
+    // Bússola follows the orientation of the phone even at zero speed.
+    // GPS-course mode follows movement direction, ignoring phone rotation.
+    var followPhoneCompass by remember {
+        mutableStateOf(prefs.getBoolean("map_follow_device_compass",true))
+    }
+    val vehicleMode = VehicleMode.from(vehicleType)
     var threeDView by remember { mutableStateOf(true) }
     var mapCameraBearing by remember { mutableStateOf(0f) }
     var marker by remember { mutableStateOf<Marker?>(null) }
+    var markerIconKey by remember { mutableStateOf("") }
+    val vehicleIconCache = remember { mutableMapOf<String, org.maplibre.android.annotations.Icon>() }
     val puckAnimator = remember { arrayOfNulls<ValueAnimator>(1) }
     var lastNavigationBearing by remember { mutableStateOf<Double?>(null) }
     var wasNavigating by remember { mutableStateOf(false) }
@@ -307,7 +318,7 @@ fun OpenStreetMapComponent(
     LaunchedEffect(
         map, isStyleReady, latitude, longitude, bearing, hasBearing,
         speedKmh, followUser, hasLocationFix, headingUp, threeDView,
-        navigating, isMotorcycle
+        navigating,vehicleType,compassHeading,followPhoneCompass
     ) {
         val currentMap = map ?: return@LaunchedEffect
         if (!isStyleReady || !hasLocationFix) return@LaunchedEffect
@@ -320,7 +331,7 @@ fun OpenStreetMapComponent(
         val existing = marker
         if (existing == null) {
             val initialIcon = IconFactory.getInstance(context).fromBitmap(
-                createBlueLocationMarkerBitmap(0f,false,isMotorcycle)
+                createVehicleLocationMarkerBitmap(0f,false,vehicleMode)
             )
             marker = currentMap.addMarker(MarkerOptions().position(point).icon(initialIcon))
         } else {
@@ -347,9 +358,13 @@ fun OpenStreetMapComponent(
         }
 
         val reliableCourse = hasBearing && speedKmh >= 7f
-        val sensorHeading = compassHeading
-        val targetBearing = if (reliableCourse) bearing.toDouble()
-            else lastNavigationBearing ?: sensorHeading?.toDouble()
+        val sensorHeading = compassHeading?.toDouble()
+        val targetBearing = NavigationCameraMath.resolveHeading(
+            phoneHeading = sensorHeading,
+            gpsCourse = bearing.toDouble().takeIf { reliableCourse },
+            lastCourse = lastNavigationBearing,
+            followCompass = followPhoneCompass
+        )
         if (reliableCourse) lastNavigationBearing = bearing.toDouble()
 
         if (followUser) {
@@ -357,9 +372,9 @@ fun OpenStreetMapComponent(
             val cameraBearing = when {
                 !headingUp -> 0.0
                 navigating && targetBearing != null ->
-                    NavigationCameraMath.smoothBearing(current.bearing,targetBearing)
+                    NavigationCameraMath.smoothBearing(current.bearing,targetBearing,0.72)
                 targetBearing != null ->
-                    NavigationCameraMath.smoothBearing(current.bearing,targetBearing,0.4)
+                    NavigationCameraMath.smoothBearing(current.bearing,targetBearing,0.72)
                 else -> current.bearing
             }
             val target = if (navigating && headingUp && targetBearing != null)
@@ -404,7 +419,7 @@ fun OpenStreetMapComponent(
                             .bearing(cameraBearing)
                             .tilt(if (threeDView) NavigationCameraMath.GUIDE_TILT else 0.0)
                             .build()
-                    ), if (navigating) 630 else 570
+                    ), if (navigating) 370 else 320
                 )
             }
         }
@@ -415,18 +430,35 @@ fun OpenStreetMapComponent(
     // Crucially, never animate the camera in this effect.
     LaunchedEffect(
         map, isStyleReady, marker, compassHeading, bearing, hasBearing,
-        speedKmh, mapCameraBearing, isMotorcycle, headingUp, navigating
+        speedKmh, mapCameraBearing, vehicleType, headingUp, navigating,
+        followPhoneCompass, hasLocationFix
     ) {
         val currentMarker = marker ?: return@LaunchedEffect
         if (!isStyleReady || !hasLocationFix) return@LaunchedEffect
         val reliable = hasBearing && speedKmh >= 7f
-        val direction = if (reliable) bearing.toDouble()
-            else lastNavigationBearing ?: compassHeading?.toDouble()
-        val displayAngle = if (direction == null) 0f
-            else ((direction.toFloat() - mapCameraBearing) % 360f + 360f) % 360f
-        currentMarker.icon = IconFactory.getInstance(context).fromBitmap(
-            createBlueLocationMarkerBitmap(displayAngle,direction != null,isMotorcycle)
+        val direction = NavigationCameraMath.resolveHeading(
+            phoneHeading = compassHeading?.toDouble(),
+            gpsCourse = bearing.toDouble().takeIf { reliable },
+            lastCourse = lastNavigationBearing,
+            followCompass = followPhoneCompass
         )
+        val angle = if (direction == null) 0.0
+            else NavigationCameraMath.angularDelta(mapCameraBearing.toDouble(),direction)
+        // MapLibre uses a native sprite atlas. Reuse a bounded set of images
+        // instead of allocating a new bitmap every compass notification.
+        val bucket = if (direction == null) 0 else
+            (((angle + 360.0) % 360.0 / 10.0).toInt() * 10) % 360
+        val key = "${vehicleMode.storedValue}:${direction != null}:$bucket"
+        if (key != markerIconKey) {
+            if (vehicleIconCache.size > 45) vehicleIconCache.clear()
+            val icon = vehicleIconCache.getOrPut(key) {
+                IconFactory.getInstance(context).fromBitmap(
+                    createVehicleLocationMarkerBitmap(bucket.toFloat(),direction != null,vehicleMode)
+                )
+            }
+            currentMarker.icon = icon
+            markerIconKey = key
+        }
     }
 
     // Load references only for the visible zoomed-in view.  This is independent
@@ -585,6 +617,7 @@ fun OpenStreetMapComponent(
                                     if (current != null) {
                                         marker?.let { current.removeMarker(it) }
                                         marker = null
+                                        markerIconKey = ""
                                         isStyleReady = false
                                         current.setStyle(
                                             Style.Builder().fromUri(mapStyleUrl(key))
@@ -637,14 +670,34 @@ fun OpenStreetMapComponent(
                     )
                     androidx.compose.material3.HorizontalDivider()
                     DropdownMenuItem(
-                        text = { Text(if (headingUp)
-                            "✓ Seguir direção" else "Seguir direção") },
+                        text = { Text(
+                            if (headingUp && followPhoneCompass)
+                                "✓ Bússola · girar com o celular" else "Bússola · girar com o celular"
+                        ) },
                         onClick = {
+                            followPhoneCompass = true
                             headingUp = true
                             followUser = true
+                            prefs.edit().putBoolean("map_follow_device_compass",true)
+                                .putBoolean("map_heading_up",true).apply()
                             styleMenuExpanded = false
                         },
                         modifier = Modifier.testTag("compass_button")
+                    )
+                    DropdownMenuItem(
+                        text = { Text(
+                            if (headingUp && !followPhoneCompass)
+                                "✓ Rumo do GPS · movimento" else "Rumo do GPS · movimento"
+                        ) },
+                        onClick = {
+                            followPhoneCompass = false
+                            headingUp = true
+                            followUser = true
+                            prefs.edit().putBoolean("map_follow_device_compass",false)
+                                .putBoolean("map_heading_up",true).apply()
+                            styleMenuExpanded = false
+                        },
+                        modifier = Modifier.testTag("gps_course_button")
                     )
                     DropdownMenuItem(
                         text = { Text(if (!headingUp)
@@ -652,6 +705,7 @@ fun OpenStreetMapComponent(
                         onClick = {
                             headingUp = false
                             followUser = true
+                            prefs.edit().putBoolean("map_heading_up",false).apply()
                             styleMenuExpanded = false
                             map?.animateCamera(CameraUpdateFactory.bearingTo(0.0),350)
                         }
@@ -704,10 +758,15 @@ fun OpenStreetMapComponent(
             ) {
                 headingUp = true
                 followUser = true
+                prefs.edit().putBoolean("map_heading_up",true).apply()
                 map?.let { activeMap ->
                     if (hasLocationFix) {
-                        val targetBearing = if (hasBearing && speedKmh >= 7f)
-                            bearing.toDouble() else lastNavigationBearing
+                        val targetBearing = NavigationCameraMath.resolveHeading(
+                            phoneHeading = compassHeading?.toDouble(),
+                            gpsCourse = bearing.toDouble().takeIf { hasBearing && speedKmh >= 7f },
+                            lastCourse = lastNavigationBearing,
+                            followCompass = followPhoneCompass
+                        )
                         val mapDirection = targetBearing ?: activeMap.cameraPosition.bearing
                         val targetCoords = if (navigating && targetBearing != null)
                             NavigationCameraMath.cameraTarget(
