@@ -240,10 +240,10 @@ fun OpenStreetMapComponent(
                 )
                 val hit = features.firstOrNull()
                 if (hit == null) {
-                    longPressCallback(coordinate.latitude, coordinate.longitude)
-                    true
-                }
-                else {
+                    // Regular taps must not open a random destination preview.
+                    // Choosing an arbitrary GPS coordinate requires a long press.
+                    false
+                } else {
                     val name = hit.getStringProperty("name") ?: ""
                     val label = hit.getStringProperty("label") ?: ""
                     val lat = hit.getNumberProperty("lat")?.toDouble()
