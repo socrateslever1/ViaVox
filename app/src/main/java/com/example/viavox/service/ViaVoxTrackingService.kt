@@ -401,9 +401,10 @@ class ViaVoxTrackingService : Service() {
                 config = currentConfig,
                 gpsAccuracyMeters = accuracyMeters,
                 speedMps = if (location.hasSpeed()) location.speed else 0f,
-                bearingDegrees = if (location.hasBearing()) location.bearing else null
+                bearingDegrees = if (location.hasBearing()) location.bearing else null,
+                currentRoad = TrackingRepository.state.value.place?.road.orEmpty()
             )
-            if (!isTrackingRunning) return@launch
+            if (!isTrackingRunning || !currentConfig.narratePoiEnabled) return@launch
             if (poi != null) {
                 poiAnnouncements.offer(poi, System.currentTimeMillis())
                 TrackingRepository.updatePoiStatus("Referência detectada: ${poi.name}")
@@ -551,7 +552,8 @@ class ViaVoxTrackingService : Service() {
             longitude = longitude,
             accuracyMeters = accuracyMeters,
             speedMps = speedMps,
-            bearingDegrees = bearingDegrees
+            bearingDegrees = bearingDegrees,
+            currentRoad = position.place?.road.orEmpty()
         ) ?: return
 
         // Polygon/relation centroid is not precise enough to claim a particular
