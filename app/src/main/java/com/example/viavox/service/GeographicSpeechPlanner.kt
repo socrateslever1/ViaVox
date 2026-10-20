@@ -31,6 +31,24 @@ object SpeechTextNormalizer {
         }
         text = text.replace(Regex("""(?i)\bCICOM\b"""), "cicom")
         text = text.replace(Regex("""(?i)\bCOMANDO GERALCMDOGERAL\b"""), "Comando Geral")
+        // Acronyms are expanded only for audio. Otherwise Android TTS may
+        // spell the letters even though the POI name is a pronounceable word.
+        val audioNames = listOf(
+            "UPA" to "úpa",
+            "UBS" to "unidade básica de saúde",
+            "PMAM" to "Polícia Militar do Amazonas",
+            "UFAM" to "Universidade Federal do Amazonas",
+            "UEA" to "Universidade do Estado do Amazonas",
+            "CMDOGERAL" to "Comando Geral",
+            "CICOM" to "cícom"
+        )
+        audioNames.forEach { (acronym, spoken) ->
+            text = text.replace(Regex("(?i)\\b" + acronym + "\\b"), spoken)
+        }
+        // Full-uppercase GIS labels are words, not a sequence of initials.
+        text = text.replace(Regex("""\b\p{Lu}{4,}\b""")) {
+            it.value.lowercase(java.util.Locale.forLanguageTag("pt-BR"))
+        }
         text = text.replace(Regex("""(?i)\bBR[-\s]*(\d{2,3})\b""")) {
             "BR " + it.groupValues[1].map(Char::digitToInt).joinToString(" ")
         }
