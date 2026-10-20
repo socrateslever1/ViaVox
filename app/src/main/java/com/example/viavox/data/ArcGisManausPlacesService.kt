@@ -96,8 +96,14 @@ data class GisReference(
             else -> null
         } ?: return null
         if (address.isBlank()) return null
+        val spokenName = when {
+            alias.contains("CICOM",ignoreCase = true) -> alias.trim()
+            alias.length >= 3 && name.endsWith(alias,ignoreCase = true) ->
+                name.dropLast(alias.length).trim()
+            else -> name.trim()
+        }
         return PointOfInterest(
-            "arcgis_$id", shortLabel, category, latitude, longitude,
+            "arcgis_$id", spokenName, category, latitude, longitude,
             streetAddress = address
         )
     }
