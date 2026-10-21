@@ -1263,7 +1263,7 @@ private fun createVehicleLocationMarkerBitmap(
                 moveTo(0f, -21f)
                 cubicTo(-8f, -18f, -10f, -7f, -9f, 2f)
                 lineTo(-6f, 16f)
-                quadraticTo(0f, 23f, 6f, 16f)
+                quadTo(0f, 23f, 6f, 16f)
                 lineTo(9f, 2f)
                 cubicTo(10f, -7f, 8f, -18f, 0f, -21f)
                 close()
