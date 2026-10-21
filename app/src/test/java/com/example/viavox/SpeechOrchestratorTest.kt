@@ -107,7 +107,7 @@ class SpeechOrchestratorTest {
     }
 
     @Test fun unpronounceableGisAcronymsAreSilencedInsteadOfSpelled() {
-        assertEquals("vigésima quarta cícom",
+        assertEquals("vigésima quarta companhia interativa comunitária",
             SpeechTextNormalizer.normalizeReferenceName("24ª CICOM"))
         assertEquals("Hospital Geral",
             SpeechTextNormalizer.normalizeReferenceName("HOSPITAL GERAL"))
@@ -124,7 +124,7 @@ class SpeechOrchestratorTest {
     }
 
     @Test fun acronymAndRoadNamesAreReadNaturallyWithoutCorruptingGISNames() {
-        assertEquals("vigésima quarta cícom",
+        assertEquals("vigésima quarta companhia interativa comunitária",
             SpeechTextNormalizer.normalize("24ª CICOM"))
         assertEquals("Comando Geral",
             SpeechTextNormalizer.normalize("COMANDO GERALCMDOGERAL"))
@@ -133,8 +133,13 @@ class SpeechOrchestratorTest {
         assertEquals("AM 0 1 0",
             SpeechTextNormalizer.normalize("AM-010"))
         assertEquals("Rua Pará",SpeechTextNormalizer.normalize("Rua Pará"))
-        assertEquals("úpa São Jorge",SpeechTextNormalizer.normalize("UPA São Jorge"))
+        assertEquals("unidade de pronto atendimento São Jorge",SpeechTextNormalizer.normalize("UPA São Jorge"))
         assertEquals("Polícia Militar do Amazonas",SpeechTextNormalizer.normalize("PMAM"))
+        assertEquals("Centro Municipal de Educação Infantil",
+            SpeechTextNormalizer.normalizeReferenceName("CMEI"))
+        assertEquals("Instituto Médico Legal",
+            SpeechTextNormalizer.normalizeReferenceName("IML"))
+        assertNull(SpeechTextNormalizer.normalizeReferenceName("Drogaria Ltda"))
         assertEquals("Hospital Geral",SpeechTextNormalizer.normalize("HOSPITAL GERAL"))
         assertEquals("Distrito Integrado de Polícia",SpeechTextNormalizer.normalize("DIP"))
         assertEquals("Instituto Federal do Amazonas",SpeechTextNormalizer.normalize("IFAM"))
