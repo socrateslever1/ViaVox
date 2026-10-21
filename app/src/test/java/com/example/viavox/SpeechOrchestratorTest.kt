@@ -106,6 +106,23 @@ class SpeechOrchestratorTest {
         assertEquals(0,queue.pendingCount)
     }
 
+    @Test fun unpronounceableGisAcronymsAreSilencedInsteadOfSpelled() {
+        assertEquals("vigésima quarta cícom",
+            SpeechTextNormalizer.normalizeReferenceName("24ª CICOM"))
+        assertEquals("Hospital Geral",
+            SpeechTextNormalizer.normalizeReferenceName("HOSPITAL GERAL"))
+        assertEquals("Comando Geral",
+            SpeechTextNormalizer.normalizeReferenceName("COMANDO GERALCMDOGERAL"))
+        assertEquals("Polícia Militar do Amazonas",
+            SpeechTextNormalizer.normalizeReferenceName("PMAM"))
+        assertEquals("Secretaria de Segurança Pública",
+            SpeechTextNormalizer.normalizeReferenceName("SSP"))
+        assertEquals(null,
+            SpeechTextNormalizer.normalizeReferenceName("HOSPITAL QWRT"))
+        assertEquals(null,
+            SpeechTextNormalizer.normalizeReferenceName("DELEGACIA XPT"))
+    }
+
     @Test fun acronymAndRoadNamesAreReadNaturallyWithoutCorruptingGISNames() {
         assertEquals("vigésima quarta cícom",
             SpeechTextNormalizer.normalize("24ª CICOM"))
