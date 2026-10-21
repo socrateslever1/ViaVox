@@ -20,19 +20,23 @@ object PoiSelectionPolicy {
     private const val HEADING_MIN_SPEED_MPS = 2.5f
     private val STREET_PREFIX = Regex("^(?:rua|r|avenida|av|travessa|tv|alameda|al|praca|pca|rodovia|rod)\\s+")
 
-    /** Only civic landmarks worth interrupting navigation for. Map POIs are unaffected. */
+    /** Public institutions and prominent civic landmarks only. */
     fun isImportantForSpeech(poi: PointOfInterest): Boolean {
         if (poi.category == PoiCategory.FUEL) return false
         val name = normalize(poi.name)
         // Named commercial venues and pharmacies are deliberately silent.
-        val prohibited = listOf("farmacia","drogaria","posto de combustivel",
-            "posto de gasolina","shopping","supermercado","restaurante",
-            "mercado","lanchonete","loja","empresa","atacado","comercio")
+        val prohibited = listOf(
+            "farmacia","drogaria","posto de combustivel","posto de gasolina",
+            "shopping","supermercado","restaurante","mercado","lanchonete",
+            "loja","empresa","atacado","comercio","clinica","laboratorio",
+            "pet shop","hotel","oficina","posto ipiranga","posto shell",
+            "deposito","distribuidora","recapadora"
+        )
         if (prohibited.any(name::contains)) return false
         val landmarks = when(poi.category) {
-            PoiCategory.HEALTH -> listOf("hospital","upa","unidade basica","ubs","maternidade")
-            PoiCategory.EDUCATION -> listOf("escola","colegio","universidade",
-                "faculdade","instituto federal","ifam","ufam","uea")
+            PoiCategory.HEALTH -> listOf("hospital","upa","maternidade","pronto socorro")
+            PoiCategory.EDUCATION -> listOf("escola","colegio militar",
+                "universidade","instituto federal","ifam","ufam","uea")
             PoiCategory.PARK -> listOf("praca","parque","jardim botanico")
             PoiCategory.PUBLIC -> listOf("policia","batalhao","cicom",
                 "delegacia","comando geral","corpo de bombeiro","bombeiro",
@@ -78,7 +82,10 @@ object PoiSelectionPolicy {
         // A rua and an avenida with the same name are different roads.
         val currentType = roadClass(currentRoad)
         val sourceType = roadClass(sourceAddress)
-        if (currentType != null && sourceType != null && currentType != sourceType) return false
+        // The landmark must have a road designation in the source; an untyped
+        // neighborhood/address is not reliable enough for "same street".
+        if (sourceType == null) return false
+        if (currentType != null && currentType != sourceType) return false
         return road == sourceStreet
     }
 
@@ -113,7 +120,11 @@ object PoiSelectionPolicy {
             .filter(::isImportantForSpeech)
             .filter { streetMatches(currentRoad, it.streetAddress) }
             .map { it to it.distanceTo(latitude, longitude) }
-            .filter { (_, distance) -> distance <= MAX_POI_DISTANCE_METERS }
+            // Respect the whole 30 m proximity criterion including GPS error.
+            // A reported 29 m + 12 m uncertainty is not a confirmed 30 m POI.
+            .filter { (_, distance) ->
+                distance + gpsAccuracyMeters <= MAX_POI_DISTANCE_METERS
+            }
             .filter { (poi, _) ->
                 if (trustworthyHeading == null) true
                 else {
