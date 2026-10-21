@@ -583,10 +583,20 @@ class ViaVoxTrackingService : Service() {
             )
         } else RelativeDirection.NEARBY
 
+        // Some raw GIS names contain opaque identifiers. Never make the engine
+        // spell those out as though they were useful landmarks. Only pronounce
+        // the validated, human-readable description; the map retains raw labels.
+        val readableName = SpeechTextNormalizer.normalizeReferenceName(poi.name)
+        if (readableName == null) {
+            poiService.markAnnounced(poi)
+            poiAnnouncements.clear()
+            TrackingRepository.updatePoiStatus("Referência ignorada: nome não confiável")
+            return
+        }
         val speech = when (relativeDir) {
-            RelativeDirection.RIGHT -> getString(R.string.tts_poi_right, poi.name)
-            RelativeDirection.LEFT -> getString(R.string.tts_poi_left, poi.name)
-            RelativeDirection.NEARBY -> getString(R.string.tts_poi_nearby, poi.name)
+            RelativeDirection.RIGHT -> getString(R.string.tts_poi_right, readableName)
+            RelativeDirection.LEFT -> getString(R.string.tts_poi_left, readableName)
+            RelativeDirection.NEARBY -> getString(R.string.tts_poi_nearby, readableName)
         }
         if (speakIfAllowed(speech, false,SpeechKind.POI,"poi:" + poi.id)) {
             poiAnnouncements.poiWasAnnounced(System.currentTimeMillis())
