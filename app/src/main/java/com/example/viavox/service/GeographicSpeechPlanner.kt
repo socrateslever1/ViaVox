@@ -22,6 +22,31 @@ data class GeographicTransition(
 
 /** Audio-only normalization; never mutate GIS strings or saved destination names. */
 object SpeechTextNormalizer {
+    /**
+     * Reference labels are often raw GIS names with internal identifiers.
+     * Unknown consonant-only initialisms are not spoken: omit that landmark
+     * rather than have the TTS spell a garbage company/acronym.
+     */
+    fun normalizeReferenceName(raw: String): String? {
+        val trimmed = raw.trim().replace(Regex("""\s+"""), " ")
+        if (trimmed.isBlank() || trimmed.length > 100) return null
+        val spokenAliases = setOf(
+            "UPA","UBS","PMAM","UFAM","UEA","IFAM","CETI","DIP","SENAI",
+            "SESC","CICOM","SSP","PCAM","PM","PC","SAMU","DETRAN",
+            "BR","AM","CMDOGERAL","INSS"
+        )
+        val grammatical = setOf("DE","DA","DO","DAS","DOS","EM","AO","AOS",
+            "E","NA","NO","PA","AV","R")
+        val unknownInitialism = Regex("""\b[A-Z]{2,9}\b""").findAll(trimmed).any { match ->
+            val word = match.value
+            word !in spokenAliases && word !in grammatical &&
+                !word.any { it in "AEIOU" } // unpronounceable acronym
+        }
+        if (unknownInitialism) return null
+        val normalized = normalize(trimmed)
+        return normalized.takeIf { it.isNotBlank() }
+    }
+
     fun normalize(raw: String): String {
         var text = raw.replace(Regex("""\s+"""), " ").trim()
         text = text.replace(Regex("""(?i)\b(\d{1,2})\s*[ªaºo]?\s*CICOM\b""")) {
@@ -45,6 +70,13 @@ object SpeechTextNormalizer {
             "SENAI" to "senai",
             "SESC" to "sesc",
             "CMDOGERAL" to "Comando Geral",
+            "SSP" to "Secretaria de Segurança Pública",
+            "PCAM" to "Polícia Civil do Amazonas",
+            "PM" to "Polícia Militar",
+            "PC" to "Polícia Civil",
+            "SAMU" to "samu",
+            "DETRAN" to "Detran",
+            "INSS" to "Instituto Nacional do Seguro Social",
             "CICOM" to "cícom"
         )
         audioNames.forEach { (acronym, spoken) ->
