@@ -63,7 +63,7 @@ class PoiSelectionPolicyTest {
         val data = listOf(
             PointOfInterest("a","Farmácia Boa Saúde",PoiCategory.HEALTH,0.0001,0.0,road),
             PointOfInterest("b","Supermercado Parintins",PoiCategory.PUBLIC,0.0001,0.0,road),
-            PointOfInterest("c","Delegacia de Polícia",PoiCategory.PUBLIC,0.0002,0.0,road)
+            PointOfInterest("c","Delegacia de Polícia",PoiCategory.PUBLIC,0.00018,0.0,road)
         )
         assertEquals("c", PoiSelectionPolicy.choose(
             data,0.0,0.0,8f,0f,null,road
