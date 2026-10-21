@@ -23,6 +23,12 @@ data class PointOfInterest(
     /** Street from the source's address field, not from nearby guessed geometry. */
     val streetAddress: String = ""
 ) {
+    fun passingSpeech(direction: RelativeDirection, spokenName: String = name): String = when (direction) {
+        RelativeDirection.RIGHT -> "Você está passando por $spokenName, à sua direita."
+        RelativeDirection.LEFT -> "Você está passando por $spokenName, à sua esquerda."
+        RelativeDirection.NEARBY -> "Você está passando próximo a $spokenName."
+    }
+
     /**
      * Calculates great-circle distance in meters between this POI and given coordinate.
      */

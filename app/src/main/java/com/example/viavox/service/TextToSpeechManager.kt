@@ -13,15 +13,10 @@ import android.speech.tts.Voice
 import android.util.Log
 import java.util.Locale
 
-/**
- * Speech routing is independent of the Android engine so it can be unit tested.
- * The selected online voice is attempted only after a real endpoint is configured.
- */
+/** Speech gating is independent of the Android engine so it can be unit tested. */
 class SpeechFallbackRouter(
     var isVoiceEnabled: Boolean = true,
-    var franciscaEndpoint: String? = null,
-    private val primarySpeak: (text: String, endpoint: String, onUnavailable: () -> Unit) -> Unit,
-    private val fallbackSpeak: (text: String) -> Unit,
+    private val localSpeak: (text: String) -> Unit,
     private val stopAll: () -> Unit
 ) {
     private var lastSpokenMessage: String? = null
@@ -40,12 +35,7 @@ class SpeechFallbackRouter(
         }
         lastSpokenMessage = clean
         lastSpokenTimeMs = nowMs
-        val endpoint = franciscaEndpoint?.trim().orEmpty()
-        if (endpoint.startsWith("https://")) {
-            primarySpeak(clean, endpoint) {
-                if (isVoiceEnabled) fallbackSpeak(clean)
-            }
-        } else fallbackSpeak(clean)
+        localSpeak(clean)
         return true
     }
 
@@ -76,13 +66,11 @@ class TextToSpeechManager(
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private var tts: TextToSpeech? = null
-    private val francisca = AzureFranciscaSpeech(context.applicationContext, onSpeakingStateChanged)
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
     private var audioFocusRequest: AudioFocusRequest? = null
 
     private var isInitialized = false
     private var initFailed = false
-    private var voiceProvider = "android"
     private var nativeVoiceId = ""
     private var currentSpeechRate = 0.95f
     private var queuedBeforeInit: String? = null
@@ -94,32 +82,14 @@ class TextToSpeechManager(
     private var retriedMissingData = false
     private var lastFailedVoice = ""
 
-    var franciscaEndpoint: String?
-        get() = francisca.endpoint
-        set(value) {
-            francisca.endpoint = value
-            router.franciscaEndpoint = if (voiceProvider == "francisca") value else null
-        }
-
-    var franciscaAccessToken: String?
-        get() = francisca.accessToken
-        set(value) { francisca.accessToken = value }
-
     private val router = SpeechFallbackRouter(
-        primarySpeak = { text, endpoint, fallback ->
-            tts?.stop()
-            francisca.endpoint = endpoint
-            requestAudioFocus()
-            francisca.speak(text, fallback) { onManagedFinished() }
-        },
-        fallbackSpeak = { speakLocally(it) },
+        localSpeak = { speakLocally(it) },
         stopAll = {
             queuedBeforeInit = null
             completionCallback = null
             managedTimeout?.let { mainHandler.removeCallbacks(it) }
             managedTimeout = null
             activeUtteranceId = ""
-            francisca.stop()
             tts?.stop()
             releaseAudioFocus()
             onSpeakingStateChanged(false)
@@ -240,10 +210,8 @@ class TextToSpeechManager(
         onManagedFinished()
     }
 
-    fun setVoiceSelection(provider: String, androidVoiceId: String) {
-        voiceProvider = if (provider == "francisca") "francisca" else "android"
+    fun setVoiceSelection(androidVoiceId: String) {
         nativeVoiceId = androidVoiceId
-        router.franciscaEndpoint = if (voiceProvider == "francisca") francisca.endpoint else null
         if (isInitialized) applyInstalledVoiceSelection()
     }
 
@@ -272,15 +240,13 @@ class TextToSpeechManager(
             if (completionCallback === onFinished) {
                 Log.e(TAG,"Managed speech timed out; recovering serialized queue")
                 reportVoiceIssue("A voz demorou demais para responder. Tente novamente.")
-                francisca.stop()
                 tts?.stop()
                 onSpeakingStateChanged(false)
                 onManagedFinished()
             }
         }
         managedTimeout = watchdog
-        // Cloud synthesis can take a few seconds; the bound prevents an
-        // offline/remote engine that never emits onDone from blocking all speech.
+        // The bound prevents an engine that never emits onDone from blocking all speech.
         val timeoutMs = (text.length * 150L + 10_000L).coerceIn(16_000L,45_000L)
         mainHandler.postDelayed(watchdog,timeoutMs)
         if (!router.speak(text, forceRepeat = true)) onManagedFinished()
@@ -311,7 +277,6 @@ class TextToSpeechManager(
             } else queuedBeforeInit = text
             return
         }
-        francisca.stop()
         tts?.stop()
         activeText = text
         retriedMissingData = false
@@ -375,7 +340,6 @@ class TextToSpeechManager(
     fun shutdown() {
         stop()
         tts?.shutdown()
-        francisca.shutdown()
         tts = null
         isInitialized = false
     }

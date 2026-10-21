@@ -10,7 +10,6 @@ import kotlin.math.*
 object NavigationCameraMath {
     const val GUIDANCE_ZOOM = 18.1
     const val EXPLORE_FOLLOW_ZOOM = 17.9
-    const val GUIDE_TILT = 51.0
 
     fun lookAheadMeters(speedKmh: Float): Double =
         (39.0 + speedKmh.coerceIn(0f, 90f) * 0.42).coerceIn(39.0, 77.0)

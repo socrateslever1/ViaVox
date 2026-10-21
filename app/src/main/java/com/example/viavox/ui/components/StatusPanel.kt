@@ -66,11 +66,7 @@ fun StatusPanel(
         stringResource(R.string.empty_address_hint)
     }
     val policeLabel = place?.policeDistrict?.takeIf(String::isNotBlank)
-    val voiceIssue = when {
-        state.config.voiceProvider == "francisca" && !state.config.hasFranciscaSettings() ->
-            "Francisca não está configurada. A voz Android continua disponível."
-        else -> state.voiceIssue
-    }
+    val voiceIssue = state.voiceIssue
     val poiSummary = when {
         state.poiStatus.startsWith("Referência detectada:") ->
             state.poiStatus

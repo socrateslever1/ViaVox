@@ -69,7 +69,7 @@ class NavigationSessionEngineTest {
         val close = session.update(-3.10388,-60.0000,8f,12f,30_000L)!!
         assertTrue(close.arrived)
         assertFalse(close.state.navigating)
-        assertEquals(listOf("Você chegou ao destino."),close.speech)
+        assertEquals(listOf("Você está em Hospital."),close.speech)
         assertNull(session.update(-3.10390,-60.0000,8f,10f,31_000L))
     }
 

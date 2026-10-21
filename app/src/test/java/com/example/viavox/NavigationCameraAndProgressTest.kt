@@ -26,6 +26,19 @@ class NavigationCameraAndProgressTest {
         assertEquals(1.0,NavigationCameraMath.smoothBearing(350.0,10.0,0.55),0.00001)
     }
 
+    @Test fun navigationCourseWinsOverPhoneCompass() {
+        assertEquals(
+            92.0,
+            NavigationCameraMath.resolveHeading(
+                phoneHeading = 270.0,
+                gpsCourse = 92.0,
+                lastCourse = 90.0,
+                followCompass = false
+            )!!,
+            0.00001
+        )
+    }
+
     @Test fun closeGuidanceDoesNotLeaveVehicleAtCityWideZoom() {
         assertEquals(18.35,NavigationCameraMath.followZoom(0f),0.001)
         assertEquals(18.05,NavigationCameraMath.followZoom(35f),0.001)

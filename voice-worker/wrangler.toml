@@ -1,7 +1,0 @@
-name = "viavox-francisca"
-main = "worker.js"
-compatibility_date = "2026-10-01"
-
-# Configure all credentials using 'npx wrangler secret put ...'.
-# Never commit Azure subscription keys or client access tokens.
-# Optional web CORS: npx wrangler secret put ALLOWED_ORIGIN

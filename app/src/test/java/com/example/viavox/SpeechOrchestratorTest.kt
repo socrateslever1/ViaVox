@@ -89,6 +89,23 @@ class SpeechOrchestratorTest {
             GeographicTransition(neighbourhood="Centro").sentence())
     }
 
+    @Test fun cicomFollowsRoadAndIsExpandedNaturallyForAudio() {
+        val transition = GeographicTransition(
+            zone = "Zona Leste",
+            neighbourhood = "Coroado",
+            road = "Avenida Cosme Ferreira",
+            policeCircumscription = "11ª CICOM"
+        )
+        assertEquals(
+            "Entrando na Zona Leste. Bairro Coroado. Avenida Cosme Ferreira. Área da 11ª CICOM.",
+            transition.sentence()
+        )
+        assertEquals(
+            "Entrando na Zona Leste. Bairro Coroado. Avenida Cosme Ferreira. Área da décima primeira companhia interativa comunitária.",
+            SpeechTextNormalizer.normalize(transition.sentence())
+        )
+    }
+
     @Test fun queuedPoiIsSilencedIfPositionIsNoLongerValidWhenItWouldSpeak() {
         var finish: (() -> Unit)? = null
         val utterances = mutableListOf<String>()

@@ -2,7 +2,7 @@ package com.example.viavox.service
 
 /**
  * Single admission point for navigation audio. Playback starts only when the
- * previous provider (Android or remote Francisca) reports actual completion.
+ * the Android speech engine reports actual completion.
  * All calls must run on the service's main thread.
  */
 enum class SpeechKind(val priority: Int, val maxAgeMs: Long) {

@@ -9,8 +9,6 @@ import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.RectF
 import android.util.LruCache
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas as ComposeCanvas
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -57,7 +55,6 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
@@ -111,8 +108,8 @@ private const val TILE_SIZE = 256.0
  * Pure Kotlin + Jetpack Compose hardware-accelerated OpenStreetMap Slippy Map Engine.
  * Eliminates native C++ libmaplibre.so / GL2Encoder::s_glDrawElements SIGSEGV crashes
  * on Android emulators and mobile GPUs while rendering real OpenStreetMap / CartoDB tiles,
- * 3D perspective tilt, smooth camera tracking, routes, safety alerts, ArcGIS references,
- * neighborhood boundaries, and custom top-down vehicle markers.
+ * smooth 2D camera tracking, routes, safety alerts, ArcGIS references,
+ * neighborhood boundaries, and custom top-down vehicle markers in a flat 2D view.
  */
 @Composable
 fun OpenStreetMapComponent(
@@ -160,7 +157,6 @@ fun OpenStreetMapComponent(
     var followPhoneCompass by remember {
         mutableStateOf(prefs.getBoolean("map_follow_device_compass", true))
     }
-    var threeDView by remember { mutableStateOf(true) }
     var followUser by remember { mutableStateOf(true) }
 
     val vehicleMode = VehicleMode.from(vehicleType)
@@ -174,13 +170,6 @@ fun OpenStreetMapComponent(
     var cameraZoom by remember { mutableDoubleStateOf(if (hasLocationFix) INITIAL_ZOOM else 12.5) }
     var cameraBearing by remember { mutableFloatStateOf(0f) }
     var viewportSize by remember { mutableStateOf(IntSize(1080, 1920)) }
-
-    // Animated 3D tilt angle
-    val animatedTilt by animateFloatAsState(
-        targetValue = if (threeDView) 28f else 0f,
-        animationSpec = tween(durationMillis = 380),
-        label = "camera_tilt"
-    )
 
     // Tile loader & cache
     var tileTick by remember { mutableIntStateOf(0) }
@@ -247,7 +236,7 @@ fun OpenStreetMapComponent(
             phoneHeading = compassHeading?.toDouble(),
             gpsCourse = bearing.toDouble().takeIf { reliableCourse },
             lastCourse = lastNavigationBearing,
-            followCompass = followPhoneCompass
+            followCompass = followPhoneCompass && !navigating
         )
         if (reliableCourse) {
             lastNavigationBearing = bearing.toDouble()
@@ -323,7 +312,7 @@ fun OpenStreetMapComponent(
         phoneHeading = compassHeading?.toDouble(),
         gpsCourse = bearing.toDouble().takeIf { reliableCourse },
         lastCourse = lastNavigationBearing,
-        followCompass = followPhoneCompass
+        followCompass = followPhoneCompass && !navigating
     )
     val relativeVehicleAngle = if (resolvedDirection == null) 0f else {
         NavigationCameraMath.angularDelta(cameraBearing.toDouble(), resolvedDirection).toFloat()
@@ -384,10 +373,6 @@ fun OpenStreetMapComponent(
         ComposeCanvas(
             modifier = Modifier
                 .fillMaxSize()
-                .graphicsLayer {
-                    rotationX = animatedTilt
-                    cameraDistance = 18f * density
-                }
                 .pointerInput(Unit) {
                     detectTransformGestures { _, pan, zoomChange, rotationChange ->
                         if (abs(pan.x) > 1.5f || abs(pan.y) > 1.5f || abs(zoomChange - 1f) > 0.01f) {
@@ -714,7 +699,8 @@ fun OpenStreetMapComponent(
                     listOf(
                         "bright" to "Mapa claro",
                         "liberty" to "Mapa detalhado",
-                        "dark" to "Mapa noturno"
+                        "dark" to "Mapa noturno",
+                        "satellite" to "Satélite aberto (referência 2016)"
                     ).forEach { (key, title) ->
                         DropdownMenuItem(
                             text = { Text(if (selectedMapStyle == key) "✓ $title" else title) },
@@ -809,16 +795,6 @@ fun OpenStreetMapComponent(
                             styleMenuExpanded = false
                         }
                     )
-                    DropdownMenuItem(
-                        text = {
-                            Text(if (threeDView) "✓ Perspectiva 3D" else "Perspectiva 3D")
-                        },
-                        onClick = {
-                            threeDView = !threeDView
-                            styleMenuExpanded = false
-                        },
-                        modifier = Modifier.testTag("map_3d_button")
-                    )
                     HorizontalDivider()
                     DropdownMenuItem(
                         text = { Text("Aproximar mapa") },
@@ -862,7 +838,7 @@ fun OpenStreetMapComponent(
                         phoneHeading = compassHeading?.toDouble(),
                         gpsCourse = bearing.toDouble().takeIf { hasBearing && speedKmh >= 7f },
                         lastCourse = lastNavigationBearing,
-                        followCompass = followPhoneCompass
+                        followCompass = followPhoneCompass && !navigating
                     )
                     val mapDirection = targetBearing ?: cameraBearing.toDouble()
                     val targetCoords = if (navigating && targetBearing != null) {
@@ -883,6 +859,21 @@ fun OpenStreetMapComponent(
                     cameraBearing = mapDirection.toFloat()
                 }
             }
+        }
+        Surface(
+            color = Color.White.copy(alpha = 0.82f),
+            modifier = Modifier.align(Alignment.BottomStart).padding(start = 8.dp, bottom = 6.dp)
+        ) {
+            Text(
+                text = if (selectedMapStyle == "satellite") {
+                    "EOxCloudless / EOX · Copernicus Sentinel 2016–2017"
+                } else {
+                    "© OpenStreetMap contributors · CARTO"
+                },
+                color = Color(0xFF334155),
+                fontSize = 8.sp,
+                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+            )
         }
     }
 }
@@ -1075,6 +1066,11 @@ private class OsmTileRepository(
         y: Int,
         scope: kotlinx.coroutines.CoroutineScope
     ): Bitmap? {
+        if (style == "satellite" && z > 14) {
+            val shift = z - 14
+            getTileOrRequest(style, 14, x shr shift, y shr shift, scope)
+            return null
+        }
         val k = key(style, z, x, y)
         memoryCache.get(k)?.let { return it }
         if (inFlight.add(k)) {
@@ -1096,7 +1092,8 @@ private class OsmTileRepository(
     }
 
     fun findParentTile(style: String, z: Int, x: Int, y: Int): ParentTileSlice? {
-        for (step in 1..3) {
+        val maxSteps = if (style == "satellite") maxOf(3, z - 14) else 3
+        for (step in 1..maxSteps) {
             val pz = z - step
             if (pz < 3) break
             val px = x shr step
@@ -1121,6 +1118,9 @@ private class OsmTileRepository(
             BitmapFactory.decodeFile(diskFile.absolutePath)?.let { return it }
         }
         val urls = when (style) {
+            "satellite" -> listOf(
+                "https://tiles.maps.eox.at/wmts?layer=s2cloudless-2016_3857&style=default&tilematrixset=GoogleMapsCompatible&Service=WMTS&Request=GetTile&Version=1.0.0&Format=image/jpeg&TileMatrix=$z&TileCol=$x&TileRow=$y"
+            )
             "dark" -> listOf(
                 "https://a.basemaps.cartocdn.com/dark_all/$z/$x/$y.png",
                 "https://b.basemaps.cartocdn.com/dark_all/$z/$x/$y.png"

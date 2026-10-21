@@ -26,9 +26,9 @@
     <!-- TTS Templates -->
     <string name="tts_initial_street">Você está na %1$s, bairro %2$s.</string>
     <string name="tts_street_change">Agora você está na %1$s, bairro %2$s.</string>
-    <string name="tts_poi_right">À sua direita, encontra-se %1$s.</string>
-    <string name="tts_poi_left">À sua esquerda, encontra-se %1$s.</string>
-    <string name="tts_poi_nearby">Próximo daqui, encontra-se %1$s.</string>
+    <string name="tts_poi_right">Você está passando por %1$s, à sua direita.</string>
+    <string name="tts_poi_left">Você está passando por %1$s, à sua esquerda.</string>
+    <string name="tts_poi_nearby">Você está passando próximo a %1$s.</string>
 
     <!-- Foreground Service Notification -->
     <string name="notification_channel_name">Acompanhamento ViaVox</string>
@@ -49,7 +49,5 @@
     <string name="category_parks">Praças e parques</string>
     <string name="category_fuel">Postos de combustível</string>
     <string name="category_public">Prédios públicos e monumentos</string>
-    <string name="settings_francisca_label">Servidor de voz (HTTPS opcional)</string>
-    <string name="settings_francisca_hint">https://seu-servidor.exemplo/tts</string>
     <string name="btn_close">Concluir</string>
 </resources>

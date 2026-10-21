@@ -91,10 +91,9 @@ class ViaVoxViewModel(application: Application) : AndroidViewModel(application) 
         _isSettingsDialogOpen.value = false
     }
 
-    fun updateVoiceSelection(provider: String, nativeVoiceId: String) {
+    fun updateVoiceSelection(@Suppress("UNUSED_PARAMETER") provider: String, nativeVoiceId: String) {
         saveAndApplyConfig(
             state.value.config.copy(
-                voiceProvider = if (provider == "francisca") "francisca" else "android",
                 nativeVoiceId = nativeVoiceId
             )
         )
@@ -108,15 +107,6 @@ class ViaVoxViewModel(application: Application) : AndroidViewModel(application) 
     fun updateInterval(seconds: Int) {
         val newConfig = state.value.config.copy(minIntervalSeconds = seconds)
         saveAndApplyConfig(newConfig)
-    }
-
-    fun updateFranciscaBrokerUrl(url: String) {
-        val newConfig = state.value.config.copy(franciscaBrokerUrl = url.trim())
-        saveAndApplyConfig(newConfig)
-    }
-
-    fun updateFranciscaAccessToken(token: String) {
-        saveAndApplyConfig(state.value.config.copy(franciscaAccessToken = token.trim()))
     }
 
     fun togglePoiNarration(enabled: Boolean) {
@@ -149,11 +139,6 @@ class ViaVoxViewModel(application: Application) : AndroidViewModel(application) 
 
     fun updatePoliceCircumscription(enabled: Boolean) {
         val newConfig = state.value.config.copy(enablePoliceCircumscription = enabled)
-        saveAndApplyConfig(newConfig)
-    }
-
-    fun updateGoogleMapsApiKey(key: String) {
-        val newConfig = state.value.config.copy(googleMapsApiKey = key.trim())
         saveAndApplyConfig(newConfig)
     }
 

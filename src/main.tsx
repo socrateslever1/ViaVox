@@ -1,14 +1,16 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Map as MapLibreMap, Marker, NavigationControl, setWorkerUrl } from 'maplibre-gl';
-import type { LngLatLike } from 'maplibre-gl';
+import type { LngLatLike, StyleSpecification } from 'maplibre-gl';
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import './style.css';
 import {
   createNavigationSession,
+  navigationCameraTarget,
   parseOsrmRoutes,
   parsePhotonResponse,
+  routeBearingAtPosition,
   selectNavigationRoute,
   shouldApplyRequestResult,
   startNavigation,
@@ -25,6 +27,13 @@ import {
   type OfficialRoadAlert,
   type RoadAlert
 } from './roadAlerts';
+import {
+  extractCicom,
+  geographicAnnouncement,
+  parseDistrictPolygons,
+  resolveDistrictPolygon,
+  type DistrictPolygon
+} from './geography';
 
 setWorkerUrl(workerUrl);
 
@@ -122,10 +131,27 @@ type NavRoute = {
 
 type SearchResult = SearchPlace;
 
-const MAP_STYLES = {
+const SATELLITE_REFERENCE_STYLE: StyleSpecification = {
+  version: 8,
+  sources: {
+    'eox-sentinel-2016': {
+      type: 'raster',
+      tiles: [
+        'https://tiles.maps.eox.at/wmts?layer=s2cloudless-2016_3857&style=default&tilematrixset=GoogleMapsCompatible&Service=WMTS&Request=GetTile&Version=1.0.0&Format=image/jpeg&TileMatrix={z}&TileCol={x}&TileRow={y}'
+      ],
+      tileSize: 256,
+      maxzoom: 14,
+      attribution: 'EOxCloudless by EOX IT Services GmbH (modified Copernicus Sentinel data 2016 & 2017)'
+    }
+  },
+  layers: [{ id: 'eox-sentinel-2016', type: 'raster', source: 'eox-sentinel-2016' }]
+};
+
+const MAP_STYLES: Record<'bright' | 'dark' | 'liberty' | 'satellite', string | StyleSpecification> = {
   bright: 'https://tiles.openfreemap.org/styles/bright',
   dark: 'https://tiles.openfreemap.org/styles/dark',
-  liberty: 'https://tiles.openfreemap.org/styles/liberty'
+  liberty: 'https://tiles.openfreemap.org/styles/liberty',
+  satellite: SATELLITE_REFERENCE_STYLE
 };
 
 const clean = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
@@ -147,6 +173,17 @@ function normalizeKey(str: string): string {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-z0-9]/g, '');
+}
+
+function districtDisplayName(raw: string): string {
+  const known = Object.values(MANAUS_DISTRICTS).find(
+    district => normalizeKey(district.name) === normalizeKey(raw)
+  );
+  if (known) return known.name;
+  const minor = new Set(['a', 'as', 'da', 'das', 'de', 'do', 'dos', 'e']);
+  return raw.toLocaleLowerCase('pt-BR').split(/\s+/).map((word, index) =>
+    index > 0 && minor.has(word) ? word : word.charAt(0).toLocaleUpperCase('pt-BR') + word.slice(1)
+  ).join(' ');
 }
 
 function metersBetween(lat1: number, lon1: number, lat2: number, lon2: number): number {
@@ -179,7 +216,7 @@ function MapCanvas({
   route: NavRoute | null;
   destination: Coordinates | null;
   safetyCameras: RoadAlert[];
-  styleUrl: string;
+  styleUrl: string | StyleSpecification;
   showBairrosLayer?: boolean;
   showCicomsLayer?: boolean;
   showSedesLayer?: boolean;
@@ -205,7 +242,7 @@ function MapCanvas({
       style: styleUrl,
       center: [-60.0235, -3.1025],
       zoom: 15.5,
-      pitch: 45
+      pitch: 0
     });
     map.current = instance;
 
@@ -508,11 +545,17 @@ function MapCanvas({
     }
 
     if (followUser) {
+      const currentPosition = { latitude: position.lat, longitude: position.lon };
+      const routeBearing = route ? routeBearingAtPosition(route, currentPosition) : null;
+      const forwardBearing = routeBearing ?? heading;
+      const cameraPosition = route && forwardBearing !== null
+        ? navigationCameraTarget(currentPosition, forwardBearing, 55)
+        : currentPosition;
       map.current.easeTo({
-        center: point,
+        center: [cameraPosition.longitude, cameraPosition.latitude],
         zoom: route ? 17.0 : 16.5,
-        pitch: 48,
-        bearing: heading ?? map.current.getBearing(),
+        pitch: 0,
+        bearing: forwardBearing ?? map.current.getBearing(),
         duration: 550
       });
     }
@@ -541,7 +584,7 @@ export function App() {
   const [voice, setVoice] = useState(() => localStorage.getItem('viavox.voice') !== 'false');
   const [voiceRate, setVoiceRate] = useState(() => Number(localStorage.getItem('viavox.rate') || '0.95'));
   const [enablePolice, setEnablePolice] = useState(
-    () => localStorage.getItem('viavox.police') !== 'false'
+    () => localStorage.getItem('viavox.police') === 'true'
   );
   const [enableSafety, setEnableSafety] = useState(
     () => localStorage.getItem('viavox.safety') !== 'false'
@@ -607,7 +650,9 @@ export function App() {
   const lastPoint = useRef<Coordinates | null>(null);
   const confirmedRoad = useRef('');
   const confirmedNeighbourhood = useRef('');
+  const confirmedZone = useRef('');
   const confirmedVenue = useRef('');
+  const districtPolygons = useRef<DistrictPolygon[]>([]);
   const pending = useRef({ road: '', count: 0 });
   const busy = useRef(false);
   const session = useRef(0);
@@ -621,6 +666,21 @@ export function App() {
   useEffect(() => {
     navigationSessionRef.current = navigationSession;
   }, [navigationSession]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch(`${import.meta.env.BASE_URL}bairros_manaus.geojson`, { signal: controller.signal })
+      .then(response => response.ok ? response.json() : null)
+      .then(data => {
+        if (!controller.signal.aborted && data) {
+          districtPolygons.current = parseDistrictPolygons(data);
+        }
+      })
+      .catch(() => {
+        // Nominatim remains available as a fallback if the bundled file cannot load.
+      });
+    return () => controller.abort();
+  }, []);
 
   // Persist settings
   useEffect(() => {
@@ -946,16 +1006,24 @@ export function App() {
       // Manaus Official District Resolver (Prevents generic "bairro Manaus")
       const isManaus = city.toLowerCase() === 'manaus' || displayName.includes('manaus');
       if (isManaus) {
-        const foundKey = Object.keys(MANAUS_DISTRICTS).find(
-          k =>
-            (neighbourhood && normalizeKey(neighbourhood) === k) ||
-            displayName.includes(k)
-        );
-        if (foundKey) {
-          const d = MANAUS_DISTRICTS[foundKey];
-          neighbourhood = d.name;
-          zone = d.zone;
-          police = `${d.dip} · ${d.cicom}`;
+        const polygon = resolveDistrictPolygon(districtPolygons.current, lat, lon);
+        if (polygon) {
+          neighbourhood = districtDisplayName(polygon.name);
+          zone = polygon.zone;
+          const mapped = Object.values(MANAUS_DISTRICTS).find(
+            district => normalizeKey(district.name) === normalizeKey(neighbourhood)
+          );
+          police = mapped ? `${mapped.dip} · ${mapped.cicom}` : '';
+        } else {
+          const mapped = Object.values(MANAUS_DISTRICTS).find(district =>
+            (neighbourhood && normalizeKey(neighbourhood) === normalizeKey(district.name)) ||
+            normalizeKey(displayName).includes(normalizeKey(district.name))
+          );
+          if (mapped) {
+            neighbourhood = mapped.name;
+            zone = mapped.zone;
+            police = `${mapped.dip} · ${mapped.cicom}`;
+          }
         }
       }
 
@@ -985,8 +1053,6 @@ export function App() {
       // Check for venue entry
       if (venueName && confirmedVenue.current !== venueName) {
         confirmedVenue.current = venueName;
-        void say(`Você está no ${venueName}, bairro ${neighbourhood}.`);
-        return;
       }
 
       // Check for road and neighbourhood announcements
@@ -999,23 +1065,32 @@ export function App() {
       if (!currentNorm) {
         confirmedRoad.current = road;
         confirmedNeighbourhood.current = neighbourhood;
+        confirmedZone.current = zone;
         pending.current = { road: '', count: 0 };
-        const bairroPart = neighbourhood !== 'Bairro não identificado' ? `, bairro ${neighbourhood}` : '';
-        void say(`Você está na ${road}${bairroPart}.`);
+        void say(geographicAnnouncement({
+          zone,
+          neighbourhood: neighbourhood !== 'Bairro não identificado' ? neighbourhood : '',
+          road,
+          cicom: enablePolice ? extractCicom(police) : ''
+        }));
         return;
       }
 
       // Same road: check if crossed into a new neighbourhood
       if (norm === currentNorm) {
         pending.current = { road: '', count: 0 };
-        if (
+        const changedNeighbourhood =
           neighbourhood !== 'Bairro não identificado' &&
-          normalizeKey(neighbourhood) !== normalizeKey(confirmedNeighbourhood.current)
-        ) {
-          confirmedNeighbourhood.current = neighbourhood;
-          const zonePart = zone ? `, ${zone}` : '';
-          const policePart = enablePolice && police ? `. Circunscrição do ${police}` : '';
-          void say(`Entrando no bairro ${neighbourhood}${zonePart}${policePart}.`);
+          normalizeKey(neighbourhood) !== normalizeKey(confirmedNeighbourhood.current);
+        const changedZone = Boolean(zone) && normalizeKey(zone) !== normalizeKey(confirmedZone.current);
+        if (changedNeighbourhood || changedZone) {
+          if (changedNeighbourhood) confirmedNeighbourhood.current = neighbourhood;
+          if (changedZone) confirmedZone.current = zone;
+          void say(geographicAnnouncement({
+            zone: changedZone ? zone : '',
+            neighbourhood: changedNeighbourhood ? neighbourhood : '',
+            cicom: changedNeighbourhood && enablePolice ? extractCicom(police) : ''
+          }));
         }
         return;
       }
@@ -1029,9 +1104,15 @@ export function App() {
           const changedNeighbourhood =
             neighbourhood !== 'Bairro não identificado' &&
             normalizeKey(neighbourhood) !== normalizeKey(confirmedNeighbourhood.current);
+          const changedZone = Boolean(zone) && normalizeKey(zone) !== normalizeKey(confirmedZone.current);
           if (changedNeighbourhood) confirmedNeighbourhood.current = neighbourhood;
-          const bairroPart = changedNeighbourhood ? `, bairro ${neighbourhood}` : '';
-          void say(`Agora você está na ${road}${bairroPart}.`);
+          if (changedZone) confirmedZone.current = zone;
+          void say(geographicAnnouncement({
+            zone: changedZone ? zone : '',
+            neighbourhood: changedNeighbourhood ? neighbourhood : '',
+            road,
+            cicom: changedNeighbourhood && enablePolice ? extractCicom(police) : ''
+          }));
         }
       } else {
         pending.current = { road, count: 1 };
@@ -1052,6 +1133,7 @@ export function App() {
     lastPoint.current = null;
     confirmedRoad.current = '';
     confirmedNeighbourhood.current = '';
+    confirmedZone.current = '';
     confirmedVenue.current = '';
     pending.current = { road: '', count: 0 };
     if (watch.current !== null) navigator.geolocation.clearWatch(watch.current);
@@ -1368,16 +1450,20 @@ export function App() {
           </button>
         )}
 
-        {/* Map Style Switcher (Bright / Dark / Liberty) */}
+        {/* Map Style Switcher */}
         <button
           className="tool-circle-btn"
           onClick={() => {
-            const nextKey = mapStyleKey === 'bright' ? 'dark' : mapStyleKey === 'dark' ? 'liberty' : 'bright';
+            const nextKey = mapStyleKey === 'bright' ? 'dark'
+              : mapStyleKey === 'dark' ? 'liberty'
+                : mapStyleKey === 'liberty' ? 'satellite' : 'bright';
             setMapStyleKey(nextKey);
           }}
           title="Alternar estilo do mapa"
         >
-          {mapStyleKey === 'bright' ? '☀️' : mapStyleKey === 'dark' ? '🌙' : '🗺️'}
+          {mapStyleKey === 'bright' ? '☀️'
+            : mapStyleKey === 'dark' ? '🌙'
+              : mapStyleKey === 'satellite' ? '🛰️' : '🗺️'}
         </button>
       </div>
 
@@ -1408,7 +1494,7 @@ export function App() {
         {/* Badges: Police District, Venue, Safety */}
         <div className="badges-row">
           {place?.police && enablePolice && (
-            <div className="badge-police" title="Circunscrição Policial Competente">
+            <div className="badge-police" title="Referência territorial cadastrada">
               🛡️ {place.police}
             </div>
           )}
@@ -1512,9 +1598,9 @@ export function App() {
 
             <div className="setting-toggle-row" style={{ marginTop: 14 }}>
               <div className="setting-toggle-info">
-                <span className="setting-toggle-title">🛡️ Circunscrições das CICOMs / DIPs</span>
+                <span className="setting-toggle-title">🛡️ Áreas de referência das CICOMs / DIPs</span>
                 <span className="setting-toggle-desc">
-                  Áreas e subáreas territoriais de atuação operacional policial das 30 CICOMs.
+                  Camada informativa local; confirme a fonte oficial antes de uso operacional.
                 </span>
               </div>
               <input
@@ -1595,7 +1681,7 @@ export function App() {
                 className={`vehicle-choice-btn ${mapStyleKey === 'bright' ? 'selected' : ''}`}
                 onClick={() => setMapStyleKey('bright')}
               >
-                ☀️ Claro (Waze/G. Maps)
+                ☀️ Claro (navegação)
               </button>
               <button
                 className={`vehicle-choice-btn ${mapStyleKey === 'dark' ? 'selected' : ''}`}
@@ -1609,14 +1695,25 @@ export function App() {
               >
                 🗺️ Liberty
               </button>
+              <button
+                className={`vehicle-choice-btn ${mapStyleKey === 'satellite' ? 'selected' : ''}`}
+                onClick={() => setMapStyleKey('satellite')}
+              >
+                🛰️ Satélite aberto
+              </button>
             </div>
+            {mapStyleKey === 'satellite' && (
+              <p className="setting-note">
+                Sentinel-2 2016–2017: imagem de referência, sem atualização em tempo real.
+              </p>
+            )}
 
-            <div className="settings-section-title">Segurança & Circunscrição</div>
+            <div className="settings-section-title">Segurança & CICOM</div>
             <div className="setting-toggle-row">
               <div className="setting-toggle-info">
                 <span className="setting-toggle-title">Áreas de Atuação Policial</span>
                 <span className="setting-toggle-desc">
-                  Anuncia DIPs e CICOMs competentes (ex: 3º DIP e 3ª CICOM no Japiim).
+                  Anuncia a área de referência da CICOM somente quando esta opção for ativada.
                 </span>
               </div>
               <input

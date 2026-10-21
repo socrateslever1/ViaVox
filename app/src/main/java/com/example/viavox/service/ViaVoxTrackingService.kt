@@ -19,6 +19,7 @@ import androidx.core.content.ContextCompat
 import com.example.viavox.MainActivity
 import com.example.viavox.R
 import com.example.viavox.data.NavigationNetworkService
+import com.example.viavox.data.ManausDistrictResolver
 import com.example.viavox.model.NavigationRoute
 import com.example.viavox.data.NominatimService
 import com.example.viavox.data.PoiDiscoveryService
@@ -67,6 +68,7 @@ class ViaVoxTrackingService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        ManausDistrictResolver.initializeFromAssets(applicationContext)
         Log.d(TAG, "Creating ViaVoxTrackingService")
 
         val prefs = getSharedPreferences("viavox_prefs", Context.MODE_PRIVATE)
@@ -83,9 +85,7 @@ class ViaVoxTrackingService : Service() {
         )
         ttsManager.setVoiceEnabled(initialVoiceEnabled)
         ttsManager.setSpeechRate(currentConfig.speechRate)
-        ttsManager.franciscaEndpoint = currentConfig.franciscaBrokerUrl.ifBlank { null }
-        ttsManager.franciscaAccessToken = currentConfig.franciscaAccessToken.ifBlank { null }
-        ttsManager.setVoiceSelection(currentConfig.voiceProvider, currentConfig.nativeVoiceId)
+        ttsManager.setVoiceSelection(currentConfig.nativeVoiceId)
         speechQueue = SpeechOrchestrator(
             play = { text, finished -> ttsManager.speakManaged(
                 SpeechTextNormalizer.normalize(text), finished
@@ -109,7 +109,6 @@ class ViaVoxTrackingService : Service() {
         speechQueue.setEnabled(initialVoiceEnabled)
 
         nominatimService = NominatimService()
-        nominatimService.googleApiKey = currentConfig.googleMapsApiKey
         poiService = PoiDiscoveryService()
         safetyAlertEngine = SafetyAlertEngine(
             onAlert = { speechMessage ->
@@ -251,10 +250,7 @@ class ViaVoxTrackingService : Service() {
                 ttsManager.setVoiceEnabled(voiceEnabled)
                 speechQueue.setEnabled(voiceEnabled)
                 ttsManager.setSpeechRate(currentConfig.speechRate)
-                ttsManager.franciscaEndpoint = currentConfig.franciscaBrokerUrl.ifBlank { null }
-                ttsManager.franciscaAccessToken = currentConfig.franciscaAccessToken.ifBlank { null }
-                ttsManager.setVoiceSelection(currentConfig.voiceProvider, currentConfig.nativeVoiceId)
-                nominatimService.googleApiKey = currentConfig.googleMapsApiKey
+                ttsManager.setVoiceSelection(currentConfig.nativeVoiceId)
                 roadEngine.enablePoliceCircumscription = currentConfig.enablePoliceCircumscription
                 TrackingRepository.updateConfig(currentConfig)
                 TrackingRepository.updateVoiceEnabled(voiceEnabled)
@@ -593,11 +589,7 @@ class ViaVoxTrackingService : Service() {
             TrackingRepository.updatePoiStatus("Referência ignorada: nome não confiável")
             return
         }
-        val speech = when (relativeDir) {
-            RelativeDirection.RIGHT -> getString(R.string.tts_poi_right, readableName)
-            RelativeDirection.LEFT -> getString(R.string.tts_poi_left, readableName)
-            RelativeDirection.NEARBY -> getString(R.string.tts_poi_nearby, readableName)
-        }
+        val speech = poi.passingSpeech(relativeDir, readableName)
         if (speakIfAllowed(speech, false,SpeechKind.POI,"poi:" + poi.id)) {
             poiAnnouncements.poiWasAnnounced(System.currentTimeMillis())
             poiService.markAnnounced(poi)

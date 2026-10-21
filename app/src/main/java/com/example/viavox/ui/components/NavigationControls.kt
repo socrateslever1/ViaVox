@@ -617,7 +617,7 @@ fun NavigationRouteCard(
                     ) {
                         Icon(Icons.Default.Navigation,null,modifier = Modifier.size(17.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text(if (route == null) "Navegar atÃ© aqui" else "Navegar",fontSize = 13.sp)
+                        Text(if (route == null) "Navegar até aqui" else "Navegar",fontSize = 13.sp)
                     }
                     OutlinedButton(
                         onClick = onSaveRoute,enabled = route != null,

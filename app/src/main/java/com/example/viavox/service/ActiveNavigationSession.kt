@@ -66,11 +66,13 @@ class NavigationSessionEngine(
         )
         if (remaining <= 35.0 && speedKmh < 35f) {
             completed = true
+            val destinationName = route.destination.name.trim().ifBlank { "seu destino" }
+            val arrivalSpeech = "Você está em $destinationName."
             return NavigationTick(ActiveNavigationState(
                 navigating = false,route = route,
-                instruction = "Você chegou ao destino",
+                instruction = arrivalSpeech.removeSuffix("."),
                 metersToStep = 0.0,metersRemaining = 0.0,status = "Chegada"
-            ),listOf("Você chegou ao destino."),arrived = true)
+            ),listOf(arrivalSpeech),arrived = true)
         }
 
         val fix = progress.update(latitude,longitude,speedKmh,timestampMs) ?: return null

@@ -23,11 +23,13 @@ import com.example.viavox.ui.screens.ViaVoxMainScreen
 import com.example.viavox.ui.theme.ViaVoxTheme
 import com.example.viavox.viewmodel.ViaVoxViewModel
 import com.example.viavox.viewmodel.NavigationViewModel
+import com.example.viavox.data.ManausDistrictResolver
 
 class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        ManausDistrictResolver.initializeFromAssets(applicationContext)
         enableEdgeToEdge()
 
         setContent {
@@ -107,8 +109,6 @@ class MainActivity : ComponentActivity() {
                     onPoiCategoryToggled = { cat, enabled -> viewModel.togglePoiCategory(cat, enabled) },
                     onPoiNarrationToggled = { viewModel.togglePoiNarration(it) },
                     onBackgroundVoiceToggled = { viewModel.toggleBackgroundVoice(it) },
-                    onFranciscaBrokerUrlChanged = { url -> viewModel.updateFranciscaBrokerUrl(url) },
-                    onFranciscaAccessTokenChanged = { token -> viewModel.updateFranciscaAccessToken(token) },
                     onVehicleTypeChanged = { choice ->
                         if (choice == "walking" && currentNavigation.navigating) {
                             navigation.stopNavigation()
@@ -117,7 +117,6 @@ class MainActivity : ComponentActivity() {
                     },
                     onSafetyAlertsToggled = { viewModel.updateSafetyAlerts(it) },
                     onPoliceCircumscriptionToggled = { viewModel.updatePoliceCircumscription(it) },
-                    onGoogleMapsApiKeyChanged = { viewModel.updateGoogleMapsApiKey(it) },
                     onStartTracking = {
                         val fine = ContextCompat.checkSelfPermission(
                             this@MainActivity,

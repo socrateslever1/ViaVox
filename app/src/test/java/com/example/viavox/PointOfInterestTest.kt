@@ -88,4 +88,28 @@ class PointOfInterestTest {
 
         assertEquals(RelativeDirection.LEFT, dir)
     }
+
+    @Test
+    fun passingSpeechDescribesMotionAndSideWithoutClaimingArrival() {
+        val poi = PointOfInterest(
+            id = "hospital",
+            name = "Hospital Público",
+            category = PoiCategory.HEALTH,
+            latitude = -3.10,
+            longitude = -60.02
+        )
+
+        assertEquals(
+            "Você está passando por Hospital Público, à sua direita.",
+            poi.passingSpeech(RelativeDirection.RIGHT)
+        )
+        assertEquals(
+            "Você está passando por Hospital Público, à sua esquerda.",
+            poi.passingSpeech(RelativeDirection.LEFT)
+        )
+        assertEquals(
+            "Você está passando próximo a Hospital Público.",
+            poi.passingSpeech(RelativeDirection.NEARBY)
+        )
+    }
 }

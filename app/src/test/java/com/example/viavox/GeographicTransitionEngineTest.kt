@@ -53,4 +53,36 @@ class GeographicTransitionEngineTest {
             GeoFix(-3.1009,-60.0100,speedMps=6f))
         assertEquals(2,events.size)
     }
+
+    @Test fun includesCicomInFirstStructuredEventOnlyWhenEnabled() = runTest(UnconfinedTestDispatcher()) {
+        val enabledEvents = mutableListOf<GeographicTransition>()
+        val enabled = RoadDetectionEngine(
+            coroutineScope = backgroundScope,
+            onPlaceUpdated = {},
+            onRoadAnnounceNeeded = { _, _ -> },
+            onStatusMessage = {},
+            onGeographicTransition = enabledEvents::add
+        )
+        val place = Place(
+            road = "Avenida Cosme Ferreira",
+            neighbourhood = "Coroado",
+            city = "Manaus",
+            zone = "Zona Leste",
+            policeDistrict = "11ª CICOM"
+        )
+        enabled.processRoadDecision(place, GeoFix(-3.092517, -59.988227, speedMps = 5f))
+        assertEquals("11ª CICOM", enabledEvents.single().policeCircumscription)
+
+        val disabledEvents = mutableListOf<GeographicTransition>()
+        val disabled = RoadDetectionEngine(
+            coroutineScope = backgroundScope,
+            onPlaceUpdated = {},
+            onRoadAnnounceNeeded = { _, _ -> },
+            onStatusMessage = {},
+            onGeographicTransition = disabledEvents::add
+        )
+        disabled.enablePoliceCircumscription = false
+        disabled.processRoadDecision(place, GeoFix(-3.092517, -59.988227, speedMps = 5f))
+        assertEquals(null, disabledEvents.single().policeCircumscription)
+    }
 }

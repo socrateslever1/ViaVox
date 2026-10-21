@@ -53,7 +53,7 @@ class RoadDetectionEngine(
     private var pendingCandidateStartLat = 0.0
     private var pendingCandidateStartLon = 0.0
 
-    var enablePoliceCircumscription: Boolean = true
+    var enablePoliceCircumscription: Boolean = false
 
     fun getCurrentConfirmedRoad(): String? = currentConfirmedRoad
     fun getCurrentConfirmedVenue(): String? = currentConfirmedVenue
@@ -195,7 +195,8 @@ class RoadDetectionEngine(
             onGeographicTransition?.invoke(GeographicTransition(
                 zone = normalizedPlace.zone.takeIf { it.isNotBlank() },
                 neighbourhood = normalizedPlace.neighbourhood.takeIf { normalizedPlace.hasValidNeighbourhood() },
-                road = road
+                road = road,
+                policeCircumscription = cicomForSpeech(normalizedPlace)
             ))
             return
         }
@@ -235,7 +236,11 @@ class RoadDetectionEngine(
             }
             if (newZone != null || newNeighbourhood != null) {
                 onGeographicTransition?.invoke(GeographicTransition(
-                    zone = newZone, neighbourhood = newNeighbourhood
+                    zone = newZone,
+                    neighbourhood = newNeighbourhood,
+                    policeCircumscription = if (newNeighbourhood != null) {
+                        cicomForSpeech(normalizedPlace)
+                    } else null
                 ))
             }
             return
@@ -310,7 +315,10 @@ class RoadDetectionEngine(
                 onGeographicTransition?.invoke(GeographicTransition(
                     zone = normalizedPlace.zone.takeIf { zoneChanged },
                     neighbourhood = normalizedPlace.neighbourhood.takeIf { neighbourhoodChanged },
-                    road = road
+                    road = road,
+                    policeCircumscription = if (neighbourhoodChanged) {
+                        cicomForSpeech(normalizedPlace)
+                    } else null
                 ))
             }
         } else {
@@ -344,6 +352,18 @@ class RoadDetectionEngine(
 
     private fun sameNeighbourhood(previous: String?, current: String): Boolean =
         previous != null && normalizeForComparison(previous) == normalizeForComparison(current)
+
+    /**
+     * DIP and CICOM are different institutions. Keep the full label for display,
+     * but speak only the CICOM explicitly selected in settings.
+     */
+    private fun cicomForSpeech(place: Place): String? {
+        if (!enablePoliceCircumscription) return null
+        return Regex("""(?i)\b\d{1,2}\s*[ªa]\s*CICOM\b""")
+            .find(place.policeDistrict)
+            ?.value
+            ?.replace(Regex("""(?i)\s*CICOM$"""), " CICOM")
+    }
 
     companion object {
         const val MAX_ACCEPTABLE_ACCURACY_METERS = 45f

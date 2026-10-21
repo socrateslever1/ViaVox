@@ -90,12 +90,11 @@ object GeneralCircumscriptionService {
             if (ManausDistrictResolver.isManausCoordinates(lat, lon)) {
                 val manausDistrict = ManausDistrictResolver.resolveDistrict(lat, lon, displayName)
                 if (manausDistrict != null) {
-                    if (neighbourhood.isBlank() || neighbourhood.equals("Manaus", ignoreCase = true)) {
-                        neighbourhood = manausDistrict.name
-                    }
-                    if (zone.isBlank()) {
-                        zone = manausDistrict.zone
-                    }
+                    // Prefer the bundled polygon over reverse-geocoder labels inside Manaus.
+                    // Reverse geocoders frequently return the opposite side of
+                    // the Coroado/Aleixo boundary near the roundabout.
+                    neighbourhood = manausDistrict.name
+                    zone = manausDistrict.zone
                 }
             }
 

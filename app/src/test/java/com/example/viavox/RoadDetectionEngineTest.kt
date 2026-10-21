@@ -283,31 +283,21 @@ class RoadDetectionEngineTest {
         assertEquals("Você está na Avenida Brasil, bairro Compensa.", announcements[0])
     }
 
-    // Scenario 8 & 9: Indisponibilidade da voz Microsoft e Funcionamento da voz Android como fallback
+    // Scenario 8 & 9: the free installed Android voice is the only speech path
     @Test
-    fun scenario08_and_09_microsoftVoiceUnavailable_fallsBackToAndroidTts() {
-        var primaryAttempted = false
-        val fallbackSpoken = mutableListOf<String>()
+    fun scenario08_and_09_androidTtsSpeaksWithoutCloudConfiguration() {
+        val spoken = mutableListOf<String>()
 
         val router = SpeechFallbackRouter(
             isVoiceEnabled = true,
-            franciscaEndpoint = "https://broker.exemplo.com/tts",
-            primarySpeak = { _, _, onUnavailable ->
-                primaryAttempted = true
-                // Simulate Microsoft Francisca service failure/timeout
-                onUnavailable()
-            },
-            fallbackSpeak = { text ->
-                fallbackSpoken.add(text)
-            },
+            localSpeak = { text -> spoken.add(text) },
             stopAll = {}
         )
 
         val accepted = router.speak("Você está na Avenida Constantino Nery.")
         assertTrue(accepted)
-        assertTrue("Primary Microsoft Francisca voice should be attempted first", primaryAttempted)
-        assertEquals("Android TTS fallback must speak the street when Francisca fails", 1, fallbackSpoken.size)
-        assertEquals("Você está na Avenida Constantino Nery.", fallbackSpoken[0])
+        assertEquals(1, spoken.size)
+        assertEquals("Você está na Avenida Constantino Nery.", spoken[0])
     }
 
     // Scenario 10: Desativação e reativação da narração
@@ -318,9 +308,7 @@ class RoadDetectionEngineTest {
 
         val router = SpeechFallbackRouter(
             isVoiceEnabled = true,
-            franciscaEndpoint = null,
-            primarySpeak = { _, _, onUnavailable -> onUnavailable() },
-            fallbackSpeak = { text -> spokenMessages.add(text) },
+            localSpeak = { text -> spokenMessages.add(text) },
             stopAll = { stopCount++ }
         )
 

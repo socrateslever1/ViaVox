@@ -20,7 +20,7 @@ Abra o endereço exibido pelo Vite. No navegador:
 3. escolha um resultado para visualizar distância e tempo;
 4. pressione **Iniciar navegação**.
 
-Também é possível clicar com o botão direito ou manter pressionado um ponto no mapa para escolhê-lo como destino. A voz utiliza o sintetizador local do navegador/aparelho. A busca usa Photon, a rota usa OSRM e o mapa usa OpenFreeMap/MapLibre; nenhum login ou chave paga é necessário.
+Também é possível clicar com o botão direito ou manter pressionado um ponto no mapa para escolhê-lo como destino. A voz utiliza o sintetizador local do navegador/aparelho. A busca usa Photon, a rota usa OSRM e o mapa usa OpenFreeMap/MapLibre; nenhum login, cartão ou chave paga é necessário. Há uma camada opcional Sentinel-2 aberta, identificada como imagem de referência 2016–2017.
 
 Para validar a versão web:
 
@@ -51,9 +51,9 @@ npm run build
    - Categorias prioritárias: Hospitais e Unidades de Saúde, Escolas e Faculdades, Praças e Parques, Postos de Combustível e Prédios Públicos / Monumentos.
    - Sistema de cache espacial local por células de 250m com intervalo mínimo de 90s para respeitar as políticas públicas dos servidores OSM.
    - Determinação de posição relativa em tempo real quando o veículo está em movimento:
-     - **"À sua direita, encontra-se..."**
-     - **"À sua esquerda, encontra-se..."**
-     - **"Próximo daqui, encontra-se..."** (quando em baixa velocidade ou sem vetor de direção).
+     - **"Você está passando por..., à sua direita."**
+     - **"Você está passando por..., à sua esquerda."**
+     - **"Você está passando próximo a..."** (quando em baixa velocidade ou sem vetor de direção).
    - Memória de locais recentes para nunca repetir o mesmo ponto durante o trajeto.
 
 4. **Síntese de Voz Natural & Gerenciamento de Foco de Áudio (`TextToSpeechManager`)**:
@@ -88,3 +88,5 @@ npm run build
 - **Validações que dependem de dispositivo físico**:
   - Continuidade de narração por voz com a tela apagada (tela bloqueada).
   - Comportamento das políticas de economia de bateria agressivas de fabricantes (Doze mode / Battery Saver).
+
+O inventário atualizado do APK e da web, incluindo limitações e validações ainda pendentes, está em [`docs/STATUS_0.9.8_FREE_OPEN.md`](docs/STATUS_0.9.8_FREE_OPEN.md).

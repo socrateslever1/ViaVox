@@ -22,6 +22,51 @@ export interface NavigationRoute {
   steps: NavigationStep[];
 }
 
+export function routeBearingAtPosition(
+  route: {
+    coordinates: Array<{ latitude: number; longitude: number } | [number, number]>
+  },
+  position: { latitude: number; longitude: number }
+): number | null {
+  if (route.coordinates.length < 2) return null;
+  const coordinates = route.coordinates.map(coordinate => Array.isArray(coordinate)
+    ? { longitude: coordinate[0], latitude: coordinate[1] }
+    : coordinate
+  );
+  let closestIndex = 0;
+  let closestDistance = Number.POSITIVE_INFINITY;
+  coordinates.forEach((coordinate, index) => {
+    const distance = distanceMeters(position, coordinate);
+    if (distance < closestDistance) {
+      closestDistance = distance;
+      closestIndex = index;
+    }
+  });
+  const startIndex = Math.min(closestIndex, coordinates.length - 2);
+  const start = coordinates[startIndex];
+  const end = coordinates[startIndex + 1];
+  const latitude1 = start.latitude * Math.PI / 180;
+  const latitude2 = end.latitude * Math.PI / 180;
+  const deltaLongitude = (end.longitude - start.longitude) * Math.PI / 180;
+  const y = Math.sin(deltaLongitude) * Math.cos(latitude2);
+  const x = Math.cos(latitude1) * Math.sin(latitude2) -
+    Math.sin(latitude1) * Math.cos(latitude2) * Math.cos(deltaLongitude);
+  if (Math.abs(x) < 1e-12 && Math.abs(y) < 1e-12) return null;
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+
+export function navigationCameraTarget(
+  position: { latitude: number; longitude: number },
+  bearingDegrees: number,
+  lookAheadMeters = 55
+): { latitude: number; longitude: number } {
+  const radians = bearingDegrees * Math.PI / 180;
+  const latitude = position.latitude + Math.cos(radians) * lookAheadMeters / 111_320;
+  const longitudeScale = 111_320 * Math.max(0.01, Math.cos(position.latitude * Math.PI / 180));
+  const longitude = position.longitude + Math.sin(radians) * lookAheadMeters / longitudeScale;
+  return { latitude, longitude };
+}
+
 export function parsePhotonResponse(data: any): SearchPlace[] {
   if (!data || !Array.isArray(data.features)) return [];
   const results: SearchPlace[] = [];
@@ -322,15 +367,16 @@ export function updateNavigationSession(
   }
 
   if (distanceMeters(position, route.destination) <= 35) {
+    const arrival = `Você está em ${route.destination.name.trim() || 'seu destino'}.`;
     return {
       session: {
         ...session,
         status: 'arrived',
-        nextInstruction: 'Chegou ao destino',
+        nextInstruction: arrival.slice(0, -1),
         deviationSamples: [],
         arrivalAnnounced: true
       },
-      announcement: session.arrivalAnnounced ? null : 'Você chegou ao destino.',
+      announcement: session.arrivalAnnounced ? null : arrival,
       shouldReroute: false
     };
   }

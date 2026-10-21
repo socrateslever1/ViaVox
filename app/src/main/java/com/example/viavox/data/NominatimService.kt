@@ -14,11 +14,8 @@ class NominatimService(
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
-        .build(),
-    private val googlePlacesEnricher: GooglePlacesEnricher = GooglePlacesEnricher()
+        .build()
 ) {
-    var googleApiKey: String = ""
-
     private fun clean(value: String?): String {
         return value?.trim() ?: ""
     }
@@ -46,14 +43,6 @@ class NominatimService(
             val circ = GeneralCircumscriptionService.resolve(body, lat, lon)
             val police = PoliceCircumscriptionService.resolve(circ.neighbourhood, circ.city, circ.zoneOrDistrict)?.label.orEmpty()
 
-            var venue = circ.venueName
-            if (venue.isBlank() && googleApiKey.isNotBlank()) {
-                val enriched = googlePlacesEnricher.enrichLocation(lat, lon, googleApiKey)
-                if (enriched != null && enriched.name.isNotBlank()) {
-                    venue = enriched.name
-                }
-            }
-
             Result.success(
                 Place(
                     road = circ.road,
@@ -61,7 +50,7 @@ class NominatimService(
                     city = circ.city,
                     reference = circ.reference,
                     zone = circ.zoneOrDistrict,
-                    venueName = venue,
+                    venueName = circ.venueName,
                     policeDistrict = police
                 )
             )

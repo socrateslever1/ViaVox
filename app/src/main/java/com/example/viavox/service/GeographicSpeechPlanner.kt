@@ -4,19 +4,24 @@ package com.example.viavox.service
 data class GeographicTransition(
     val zone: String? = null,
     val neighbourhood: String? = null,
-    val road: String? = null
+    val road: String? = null,
+    val policeCircumscription: String? = null
 ) {
-    fun isEmpty(): Boolean = zone.isNullOrBlank() && neighbourhood.isNullOrBlank() && road.isNullOrBlank()
+    fun isEmpty(): Boolean = zone.isNullOrBlank() && neighbourhood.isNullOrBlank() &&
+        road.isNullOrBlank() && policeCircumscription.isNullOrBlank()
 
     fun sentence(): String {
         val parts = mutableListOf<String>()
         zone?.takeIf { it.isNotBlank() }?.let { parts.add("Entrando na $it") }
         neighbourhood?.takeIf { it.isNotBlank() }?.let { parts.add("Bairro $it") }
         road?.takeIf { it.isNotBlank() }?.let { parts.add(it) }
+        policeCircumscription?.takeIf { it.isNotBlank() }?.let { parts.add("Área da $it") }
         return if (parts.isEmpty()) "" else parts.joinToString(". ") + "."
     }
 
-    fun dedupeKey(): String = listOf(zone.orEmpty(),neighbourhood.orEmpty(),road.orEmpty())
+    fun dedupeKey(): String = listOf(
+        zone.orEmpty(), neighbourhood.orEmpty(), road.orEmpty(), policeCircumscription.orEmpty()
+    )
         .joinToString("|").lowercase()
 }
 

@@ -1,6 +1,11 @@
 # ViaVox Android — plano de implantação real (pós-0.7.1)
 
-Status: **PLANEJADO / NÃO IMPLEMENTADO**. Este documento é um contrato de engenharia e aceite; marcar tarefas concluídas somente depois de alteração efetiva do código, testes verdes e validação em aparelho real.
+Status histórico em 19/10/2026: **PLANEJADO / NÃO IMPLEMENTADO**.
+
+> Este diagnóstico descreve o commit `33569c8` e não representa sozinho o
+> estado atual. Várias etapas já foram implementadas depois dele. Consulte
+> `STATUS_0.9.8_FREE_OPEN.md` e `ROADMAP.md` para a separação atual entre pronto,
+> parcial e ainda dependente de CI Android ou validação em aparelho real.
 
 Data-base: 19/10/2026. Branch auditada: main, commit 33569c8296ba2f7258958bd4829b3f9c88599d05.
 

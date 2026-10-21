@@ -20,8 +20,6 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
@@ -38,8 +36,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -69,27 +65,16 @@ fun SettingsDialog(
     onPoiCategoryToggled: (PoiCategory, Boolean) -> Unit,
     onPoiNarrationToggled: (Boolean) -> Unit = {},
     onBackgroundVoiceToggled: (Boolean) -> Unit = {},
-    onFranciscaBrokerUrlChanged: (String) -> Unit = {},
-    onFranciscaAccessTokenChanged: (String) -> Unit = {},
     onVehicleTypeChanged: (String) -> Unit = {},
     onSafetyAlertsToggled: (Boolean) -> Unit = {},
     onPoliceCircumscriptionToggled: (Boolean) -> Unit = {},
-    onGoogleMapsApiKeyChanged: (String) -> Unit = {},
     onDismiss: () -> Unit
 ) {
-    var voiceUrl by remember(config.franciscaBrokerUrl) { mutableStateOf(config.franciscaBrokerUrl) }
-    var accessToken by remember(config.franciscaAccessToken) { mutableStateOf(config.franciscaAccessToken) }
-    var googleKey by remember(config.googleMapsApiKey) { mutableStateOf(config.googleMapsApiKey) }
-    var advancedGoogleExpanded by remember { mutableStateOf(config.hasGoogleMapsKey()) }
-    val invalidUrl = voiceUrl.isNotBlank() && !voiceUrl.trim().startsWith("https://")
-    val franciscaReady = config.hasFranciscaSettings()
-    val uriHandler = LocalUriHandler.current
     val context = LocalContext.current
     var availableVoices by remember { mutableStateOf<List<AndroidVoiceOption>>(emptyList()) }
     var isVoiceLoading by remember { mutableStateOf(true) }
     var voiceCatalog by remember { mutableStateOf<AndroidVoiceCatalog?>(null) }
     var voiceMenuExpanded by remember { mutableStateOf(false) }
-    var advancedFranciscaExpanded by remember { mutableStateOf(false) }
     var voicePreviewError by remember { mutableStateOf(false) }
 
     DisposableEffect(context) {
@@ -185,7 +170,6 @@ fun SettingsDialog(
                     )
 
                     val selectedVoiceName = when {
-                        config.voiceProvider == "francisca" -> "Francisca · Microsoft (online)"
                         config.nativeVoiceId.isEmpty() -> "Padrão do Android"
                         else -> availableVoices.find { it.id == config.nativeVoiceId }?.label
                             ?: "Voz do Android (indisponível no aparelho)"
@@ -224,23 +208,6 @@ fun SettingsDialog(
                                     }
                                 )
                             }
-                            DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        if (franciscaReady) "Francisca · Microsoft (configurada, testar)"
-                                        else "Francisca · Microsoft (configuração necessária)"
-                                    )
-                                },
-                                onClick = {
-                                    voiceMenuExpanded = false
-                                    if (franciscaReady) {
-                                        onVoiceSelectionChanged("francisca", config.nativeVoiceId)
-                                    } else {
-                                        // Do not silently select a paid cloud voice that has no endpoint.
-                                        advancedFranciscaExpanded = true
-                                    }
-                                }
-                            )
                         }
                     }
                     if (isVoiceLoading) {
@@ -257,42 +224,29 @@ fun SettingsDialog(
                             lineHeight = 17.sp
                         )
                     }
-                    if (config.voiceProvider == "android") {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            TextButton(
-                                onClick = {
-                                    voicePreviewError = voiceCatalog?.preview(
-                                        config.nativeVoiceId, config.speechRate
-                                    ) != true
-                                },
-                                enabled = !isVoiceLoading && availableVoices.isNotEmpty(),
-                                modifier = Modifier.testTag("preview_voice_button")
-                            ) {
-                                Text("▶ Ouvir exemplo", color = accent)
-                            }
-                            TextButton(
-                                onClick = { VoiceDataInstaller.open(context) },
-                                modifier = Modifier.testTag("install_voice_button")
-                            ) {
-                                Text("Instalar voz", color = white)
-                            }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(
+                            onClick = {
+                                voicePreviewError = voiceCatalog?.preview(
+                                    config.nativeVoiceId, config.speechRate
+                                ) != true
+                            },
+                            enabled = !isVoiceLoading && availableVoices.isNotEmpty(),
+                            modifier = Modifier.testTag("preview_voice_button")
+                        ) {
+                            Text("▶ Ouvir exemplo", color = accent)
                         }
-                        if (voicePreviewError) {
-                            Text(
-                                "Prévia indisponível. Instale os dados da voz e tente novamente.",
-                                color = Color(0xFFFFCA99), fontSize = 12.sp
-                            )
+                        TextButton(
+                            onClick = { VoiceDataInstaller.open(context) },
+                            modifier = Modifier.testTag("install_voice_button")
+                        ) {
+                            Text("Instalar voz", color = white)
                         }
-                    } else {
+                    }
+                    if (voicePreviewError) {
                         Text(
-                            if (franciscaReady)
-                                "Francisca selecionada. Toque em Testar voz no ViaVox para confirmar a conexão. Se falhar, usaremos a voz Android."
-                            else
-                                "Francisca não configurada. É necessário publicar o serviço Azure/Cloudflare e informar URL e token. A voz Android será utilizada.",
-                            color = if (franciscaReady) muted else Color(0xFFFFC99D),
-                            fontSize = 12.sp,
-                            lineHeight = 17.sp,
-                            modifier = Modifier.padding(vertical = 8.dp)
+                            "Prévia indisponível. Instale os dados da voz e tente novamente.",
+                            color = Color(0xFFFFCA99), fontSize = 12.sp
                         )
                     }
 
@@ -324,85 +278,6 @@ fun SettingsDialog(
                         )
                     )
 
-                    TextButton(
-                        onClick = { advancedFranciscaExpanded = !advancedFranciscaExpanded },
-                        modifier = Modifier.testTag("francisca_settings_toggle")
-                    ) {
-                        Text(
-                            if (advancedFranciscaExpanded) "Ocultar configuração da Francisca"
-                            else "Configurar Francisca (opcional)",
-                            color = accent,
-                            fontSize = 12.sp
-                        )
-                    }
-                    if (advancedFranciscaExpanded) {
-                        Text(
-                            "Essa voz não vem instalada no Android. A configuração exige Microsoft Azure Speech e um servidor intermediário seguro.",
-                            color = Color(0xFFFFCE9B),
-                            fontSize = 12.sp,
-                            lineHeight = 17.sp
-                        )
-                        Spacer(Modifier.height(10.dp))
-                        Text("Voz Microsoft Francisca", color = white, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                        Text(
-                            "Opcional. Informe a URL HTTPS de seu serviço de voz; sem ela, o Android continua falando normalmente.",
-                            color = muted,
-                            fontSize = 12.sp,
-                            lineHeight = 17.sp,
-                            modifier = Modifier.padding(top = 4.dp, bottom = 6.dp)
-                        )
-                        OutlinedTextField(
-                            value = voiceUrl,
-                            onValueChange = { voiceUrl = it },
-                            label = { Text("Endereço da API de voz (HTTPS)") },
-                            placeholder = { Text("https://seu-dominio/tts") },
-                            isError = invalidUrl,
-                            supportingText = {
-                                if (invalidUrl) Text("O endereço precisa começar com https://")
-                            },
-                            singleLine = true,
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = white,
-                                unfocusedTextColor = white,
-                                focusedBorderColor = accent,
-                                unfocusedBorderColor = Color(0xFF38516B),
-                                focusedLabelColor = accent,
-                                unfocusedLabelColor = muted,
-                                cursorColor = accent
-                            ),
-                            modifier = Modifier.fillMaxWidth().testTag("francisca_broker_input")
-                        )
-                        OutlinedTextField(
-                            value = accessToken,
-                            onValueChange = { accessToken = it },
-                            label = { Text("Token de acesso do seu servidor") },
-                            placeholder = { Text("Token configurado no Cloudflare Worker") },
-                            visualTransformation = PasswordVisualTransformation(),
-                            singleLine = true,
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = white,
-                                unfocusedTextColor = white,
-                                focusedBorderColor = accent,
-                                unfocusedBorderColor = Color(0xFF38516B),
-                                focusedLabelColor = accent,
-                                unfocusedLabelColor = muted,
-                                cursorColor = accent
-                            ),
-                            modifier = Modifier.fillMaxWidth().testTag("francisca_token_input")
-                        )
-                        Spacer(Modifier.height(6.dp))
-                        Text(
-                            "Como configurar a API Microsoft Speech ↗",
-                            color = accent,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.padding(top = 7.dp, bottom = 14.dp)
-                                .clickable {
-                                    uriHandler.openUri("https://learn.microsoft.com/pt-br/azure/ai-services/speech-service/rest-text-to-speech")
-                                }
-                        )
-
-                    }
                     HorizontalDivider(color = Color.White.copy(alpha = 0.09f))
                     Spacer(Modifier.height(14.dp))
 
@@ -469,15 +344,15 @@ fun SettingsDialog(
                     HorizontalDivider(color = Color.White.copy(alpha = 0.09f))
                     Spacer(Modifier.height(15.dp))
 
-                    SectionTitle("Circunscrição & Segurança Pública")
+                    SectionTitle("CICOM & Segurança Pública")
                     Text(
-                        "Consciência situacional avançada para condutores, motoristas de app e cidadãos.",
+                        "Referência territorial opcional; confirme dados oficiais quando necessário.",
                         color = muted,
                         fontSize = 12.sp,
                         lineHeight = 17.sp,
                         modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
                     )
-                    CategoryToggle("Circunscrição policial (DIPs e CICOMs)", config.enablePoliceCircumscription) {
+                    CategoryToggle("Narrar área de referência da CICOM", config.enablePoliceCircumscription) {
                         onPoliceCircumscriptionToggled(it)
                     }
                     CategoryToggle("Alertas de radares e pedágios", config.enableSafetyAlerts) {
@@ -488,56 +363,6 @@ fun SettingsDialog(
                     HorizontalDivider(color = Color.White.copy(alpha = 0.09f))
                     Spacer(Modifier.height(15.dp))
 
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { advancedGoogleExpanded = !advancedGoogleExpanded },
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            SectionTitle("Enriquecimento de locais (Google Places)")
-                            Text(
-                                if (advancedGoogleExpanded) "Toque para recolher" else "Opcional · toque para expandir",
-                                color = muted,
-                                fontSize = 12.sp
-                            )
-                        }
-                        Text(
-                            if (advancedGoogleExpanded) "▲" else "▼",
-                            color = accent,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(start = 8.dp)
-                        )
-                    }
-
-                    if (advancedGoogleExpanded) {
-                        Text(
-                            text = "Por padrão, o ViaVox funciona 100% gratuito com OpenStreetMap em Manaus, no Brasil e no mundo. Se desejar, insira uma chave Google Cloud Places para enriquecer nomes de estabelecimentos internos e condomínios.",
-                            color = muted,
-                            fontSize = 12.sp,
-                            lineHeight = 17.sp,
-                            modifier = Modifier.padding(top = 6.dp, bottom = 8.dp)
-                        )
-                        OutlinedTextField(
-                            value = googleKey,
-                            onValueChange = { googleKey = it },
-                            label = { Text("Chave da API Google Maps / Places") },
-                            placeholder = { Text("AIzaSy...") },
-                            visualTransformation = PasswordVisualTransformation(),
-                            singleLine = true,
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = white,
-                                unfocusedTextColor = white,
-                                focusedBorderColor = accent,
-                                unfocusedBorderColor = Color(0xFF38516B),
-                                focusedLabelColor = accent,
-                                unfocusedLabelColor = muted,
-                                cursorColor = accent
-                            ),
-                            modifier = Modifier.fillMaxWidth().testTag("google_api_key_input")
-                        )
-                    }
                 }
 
                 HorizontalDivider(color = Color.White.copy(alpha = 0.10f))
@@ -550,16 +375,7 @@ fun SettingsDialog(
                         Text("Cancelar", color = muted)
                     }
                     Button(
-                        enabled = !invalidUrl,
                         onClick = {
-                            onFranciscaBrokerUrlChanged(voiceUrl.trim())
-                            onFranciscaAccessTokenChanged(accessToken.trim())
-                            onGoogleMapsApiKeyChanged(googleKey.trim())
-                            if (config.voiceProvider == "francisca" &&
-                                (voiceUrl.isBlank() || accessToken.isBlank())
-                            ) {
-                                onVoiceSelectionChanged("android", config.nativeVoiceId)
-                            }
                             onDismiss()
                         },
                         shape = RoundedCornerShape(14.dp),

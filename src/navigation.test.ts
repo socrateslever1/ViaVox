@@ -8,6 +8,8 @@ import {
   parseOsrmRoutes,
   parseOsrmResponse,
   parsePhotonResponse,
+  navigationCameraTarget,
+  routeBearingAtPosition,
   selectNavigationRoute,
   startNavigation,
   stopNavigation,
@@ -15,6 +17,38 @@ import {
   type NavigationRoute,
   type SearchPlace
 } from './navigation';
+
+describe('navigation camera', () => {
+  it('uses the road ahead instead of the phone orientation', () => {
+    const route: NavigationRoute = {
+      destination,
+      distanceMeters: 200,
+      durationSeconds: 30,
+      coordinates: [
+        { latitude: -3.1000, longitude: -60.0000 },
+        { latitude: -3.1000, longitude: -59.9990 },
+        { latitude: -3.1000, longitude: -59.9980 }
+      ],
+      steps: []
+    };
+    const bearing = routeBearingAtPosition(route, { latitude: -3.1000, longitude: -59.9997 });
+    expect(bearing).toBeCloseTo(90, 1);
+    const target = navigationCameraTarget(
+      { latitude: -3.1000, longitude: -59.9997 },
+      bearing!,
+      55
+    );
+    expect(target.longitude).toBeGreaterThan(-59.9997);
+    expect(target.latitude).toBeCloseTo(-3.1000, 5);
+  });
+
+  it('accepts the compact longitude-latitude route used by the map', () => {
+    expect(routeBearingAtPosition(
+      { coordinates: [[-60.0000, -3.1000], [-59.9990, -3.1000]] },
+      { latitude: -3.1000, longitude: -59.9998 }
+    )).toBeCloseTo(90, 1);
+  });
+});
 
 const destination: SearchPlace = {
   id: 'destination',
@@ -225,7 +259,7 @@ describe('navigation session', () => {
     const navigating = startNavigation(selectNavigationRoute(createNavigationSession(), route));
     const arrived = updateNavigationSession(navigating, destination, 8, 200_000);
     expect(arrived.session.status).toBe('arrived');
-    expect(arrived.announcement).toBe('Você chegou ao destino.');
+    expect(arrived.announcement).toBe('Você está em Teatro Amazonas.');
 
     const repeated = updateNavigationSession(arrived.session, destination, 8, 201_000);
     expect(repeated.announcement).toBeNull();

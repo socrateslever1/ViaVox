@@ -56,12 +56,9 @@ fun ViaVoxMainScreen(
     onPoiCategoryToggled: (PoiCategory, Boolean) -> Unit,
     onPoiNarrationToggled: (Boolean) -> Unit = {},
     onBackgroundVoiceToggled: (Boolean) -> Unit = {},
-    onFranciscaBrokerUrlChanged: (String) -> Unit = {},
-    onFranciscaAccessTokenChanged: (String) -> Unit = {},
     onVehicleTypeChanged: (String) -> Unit = {},
     onSafetyAlertsToggled: (Boolean) -> Unit = {},
     onPoliceCircumscriptionToggled: (Boolean) -> Unit = {},
-    onGoogleMapsApiKeyChanged: (String) -> Unit = {},
     onStartTracking: () -> Unit,
     onStopTracking: () -> Unit,
     onToggleVoice: (Boolean) -> Unit,
@@ -298,12 +295,9 @@ fun ViaVoxMainScreen(
                 onPoiCategoryToggled = onPoiCategoryToggled,
                 onPoiNarrationToggled = onPoiNarrationToggled,
                 onBackgroundVoiceToggled = onBackgroundVoiceToggled,
-                onFranciscaBrokerUrlChanged = onFranciscaBrokerUrlChanged,
-                onFranciscaAccessTokenChanged = onFranciscaAccessTokenChanged,
                 onVehicleTypeChanged = onVehicleTypeChanged,
                 onSafetyAlertsToggled = onSafetyAlertsToggled,
                 onPoliceCircumscriptionToggled = onPoliceCircumscriptionToggled,
-                onGoogleMapsApiKeyChanged = onGoogleMapsApiKeyChanged,
                 onDismiss = onCloseSettings
             )
         }

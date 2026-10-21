@@ -1,9 +1,11 @@
 # ViaVox — Plano de entrega e pendências
-**Atualizado:** 2026-10-18 · **Android:** Kotlin / Compose / MapLibre · **Base auditada:** ViaVox 0.4.3.
+**Atualizado:** 2026-10-21 · **Android:** Kotlin / Compose · **Web:** React / MapLibre · **Base auditada:** ViaVox 0.9.8.
+
+O estado detalhado e atual desta entrega está em `STATUS_0.9.8_FREE_OPEN.md`.
 
 ## Auditoria de continuidade — 20/10/2026
 
-O cabeçalho e a tabela abaixo registram o planejamento original e não representam sozinhos o estado atual. O código Android chegou à versão **0.9.6** e a issue [#17](https://github.com/socrateslever1/ViaVox/issues/17) continua sendo a fonte de aceite: fila única de voz, partes da sessão em segundo plano, progresso de rota, câmera, perfis visuais, favoritos e exportação GPX já possuem implementação e CI, mas voz, tela bloqueada, câmera, GPS e consumo ainda dependem de validação em aparelho Samsung e em percurso real.
+O cabeçalho e a tabela abaixo registram o planejamento original e não representam sozinhos o estado atual. O código sincronizado está na versão **0.9.8**. Fila única de voz, sessão em segundo plano, progresso de rota, câmera, perfis visuais, favoritos e exportação GPX possuem implementação, mas voz, tela bloqueada, câmera, GPS, CICOM e consumo ainda dependem de CI Android e validação em aparelho Samsung/percurso real.
 
 O plano `2026-10-19-click-to-navigate.md` ficou com o ledger incompleto e foi parcialmente superado pelas decisões posteriores de UX do Android, que preservam pressão longa para escolher um ponto vazio. O plano `2026-10-20-official-road-alerts-safe-navigation.md` está em andamento: o parser/merge web e o carregamento da base local foram integrados, mas os GeoJSON oficiais permanecem vazios porque as páginas atuais do IMMU/Prefeitura informam locais e sentidos sem publicar coordenadas WGS84 autoritativas. Não preencher esses pontos por geocodificação aproximada nem anunciar cobertura oficial antes de revisão. A integração Android dessa base também permanece pendente.
 
@@ -29,7 +31,7 @@ O plano `2026-10-19-click-to-navigate.md` ficou com o ledger incompleto e foi pa
 | 11 | 3 | P2 | Exportar GPX/KML | [#11](https://github.com/socrateslever1/ViaVox/issues/11) |
 | 12 | 4 | P2 | Mapas offline licenciados | [#12](https://github.com/socrateslever1/ViaVox/issues/12) |
 | 13 | 4 | P1 | Rumo, bússola, map matching e bateria com teste real | [#13](https://github.com/socrateslever1/ViaVox/issues/13) |
-| 14 | 4 | P2 | Francisca Neural por servidor Azure seguro | [#14](https://github.com/socrateslever1/ViaVox/issues/14) |
+| 14 | 4 | Removido | Francisca/Azure removida para manter o produto sem serviço pago ou chave | [#14](https://github.com/socrateslever1/ViaVox/issues/14) |
 | 15 | Todos | P0 | Testes de regressão, CI e APK instalável | [#15](https://github.com/socrateslever1/ViaVox/issues/15) |
 
 ### Critérios para considerar uma função concluída
@@ -41,7 +43,7 @@ O plano `2026-10-19-click-to-navigate.md` ficou com o ledger incompleto e foi pa
 6. Cada item só é concluído após atender aos critérios escritos na respectiva issue.
 
 ### Detalhes técnicos dos pontos de referência
-O código atual `PoiDiscoveryService.kt` usa consultas Overpass principalmente para `node`, filtra referências num limite fixo de 75m e usa uma janela de atualização que pode não acompanhar percursos rápidos. `ViaVoxTrackingService.kt` compartilha a narração com mudanças de via e poderá perder anúncios de POIs. Corrigir consultas, geometrias, fila de áudio, prioridade, deduplicação e tratamento da confiança GPS. **Não marcar como concluído sem anunciar referências verificadas em teste real.**
+O código atual filtra referências cívicas confiáveis com limite estrito de 30 m, precisão GPS, mesma via e direção do deslocamento, usando fila de voz e revalidação antes de falar. A seleção ainda depende da qualidade dos dados comunitários. **Não marcar como concluído sem anunciar referências verificadas em teste real.**
 
 ### ClickUp
 A sincronização com o ClickUp está pendente da escolha do espaço de trabalho. Foram identificados dois workspaces, sem lista ViaVox atualmente. Não criar em workspace arbitrário ou duplicar tarefas.
