@@ -12,6 +12,7 @@ import com.example.viavox.data.VerifiedManausLandmarks
 import com.example.viavox.data.DestinationSearchPolicy
 import com.example.viavox.data.TrackingRepository
 import com.example.viavox.data.TripRecordingRepository
+import com.example.viavox.data.RecentDestinationsStore
 import com.example.viavox.data.ViaVoxHistoryDatabase
 import com.example.viavox.model.MapPlace
 import com.example.viavox.model.NavigationMath
@@ -60,14 +61,22 @@ data class NavigationUiState(
     val recording: Boolean = false,
     val recordedMeters: Double = 0.0,
     val recordedCount: Int = 0,
-    val livePoints: List<TripPoint> = emptyList()
+    val livePoints: List<TripPoint> = emptyList(),
+    val recentDestinations: List<MapPlace> = emptyList(),
+    val favoriteDestinations: List<MapPlace> = emptyList()
 )
 
 /** Navigation and local history are separate from working road/neighborhood narration. */
 class NavigationViewModel(application: Application) : AndroidViewModel(application) {
     private val network = NavigationNetworkService()
     private val db = ViaVoxHistoryDatabase(application)
-    private val _ui = MutableStateFlow(NavigationUiState())
+    private val recentDestinationsStore = RecentDestinationsStore(application)
+    private val _ui = MutableStateFlow(
+        NavigationUiState(
+            recentDestinations = recentDestinationsStore.load(),
+            favoriteDestinations = recentDestinationsStore.loadFavorites()
+        )
+    )
     val ui: StateFlow<NavigationUiState> = _ui.asStateFlow()
     private var searchJob: Job? = null
     private var suggestionJob: Job? = null
@@ -135,7 +144,7 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
         ) else emptyList()
         _ui.update { it.copy(
             query = query, results = instant,
-            suggestionsVisible = ready, suggesting = ready,
+            suggestionsVisible = true, suggesting = ready,
             searching = false, searchNotice = null,error = null,
             panel = ""
         ) }
@@ -169,9 +178,7 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun showSuggestions() {
-        if (_ui.value.query.trim().length >= 3) {
-            _ui.update { it.copy(suggestionsVisible = true,panel = "") }
-        }
+        _ui.update { it.copy(suggestionsVisible = true, panel = "") }
     }
 
     fun openPanel(panel: String) = _ui.update {
@@ -204,8 +211,12 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
             )
             result.fold(
                 onSuccess = { items ->
+                    val updatedRecent = items.firstOrNull()?.let { top ->
+                        recentDestinationsStore.record(top)
+                    } ?: _ui.value.recentDestinations
                     _ui.update { it.copy(
                         results = items, searching = false,
+                        recentDestinations = updatedRecent,
                         error = if (items.isEmpty())
                             "Destino não encontrado. Experimente o nome completo ou selecione um ponto no mapa."
                             else null,
@@ -228,18 +239,32 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
         }
         suggestionJob?.cancel()
         searchJob?.cancel()
+        val updatedRecent = recentDestinationsStore.record(place)
         _ui.update { it.copy(selected = place, route = null, navigating = false,
             query = place.name, results = emptyList(),suggestionsVisible = false,
-            suggesting = false, showingTrip = null, panel = "", error = null) }
+            suggesting = false, showingTrip = null, panel = "", error = null,
+            recentDestinations = updatedRecent) }
         calculateRoute(place)
+    }
+
+    fun removeRecentDestination(place: MapPlace) {
+        val updated = recentDestinationsStore.remove(place)
+        _ui.update { it.copy(recentDestinations = updated) }
+    }
+
+    fun clearRecentDestinations() {
+        val updated = recentDestinationsStore.clear()
+        _ui.update { it.copy(recentDestinations = updated) }
     }
 
     fun selectMapPoint(latitude: Double, longitude: Double) {
         val place = MapPlace("Ponto escolhido no mapa",latitude,longitude,
             "${"%.5f".format(java.util.Locale.US,latitude)}, ${"%.5f".format(java.util.Locale.US,longitude)}")
+        val updatedRecent = recentDestinationsStore.record(place)
         _ui.update { it.copy(selected = place, route = null, navigating = false,
             query = place.name, results = emptyList(), suggestionsVisible = false,
-            suggesting = false, showingTrip = null, panel = "", error = null) }
+            suggesting = false, showingTrip = null, panel = "", error = null,
+            recentDestinations = updatedRecent) }
     }
 
     fun confirmSelectedDestination() {
@@ -374,14 +399,41 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
 
     fun removeCurrentSavedPlace() {
         val id = _ui.value.pendingSaveId ?: return
+        val pendingPlace = _ui.value.pendingSavePlace
         viewModelScope.launch(Dispatchers.IO) {
+            pendingPlace?.let { recentDestinationsStore.removeFavorite(it) }
             db.deleteFavorite(id)
             refreshLists()
             _ui.update { it.copy(pendingSavePlace = null,pendingSaveId = null) }
         }
     }
 
+    fun toggleFavorite(place: MapPlace) {
+        val updatedFavorites = recentDestinationsStore.toggleFavorite(place)
+        val isNowFavorite = RecentDestinationsStore.isFavoriteInList(updatedFavorites, place)
+        _ui.update { it.copy(favoriteDestinations = updatedFavorites) }
+        viewModelScope.launch(Dispatchers.IO) {
+            if (isNowFavorite) {
+                val existing = db.getFavorites().firstOrNull {
+                    RecentDestinationsStore.isSameDestination(it.second, place)
+                }
+                if (existing == null) {
+                    db.addFavorite(place)
+                }
+            } else {
+                db.getFavorites()
+                    .filter { RecentDestinationsStore.isSameDestination(it.second, place) }
+                    .forEach { db.deleteFavorite(it.first) }
+            }
+            refreshLists()
+        }
+    }
+
     fun saveFavorite(place: MapPlace) {
+        val currentFavs = recentDestinationsStore.loadFavorites()
+        if (!RecentDestinationsStore.isFavoriteInList(currentFavs, place)) {
+            recentDestinationsStore.toggleFavorite(place)
+        }
         viewModelScope.launch(Dispatchers.IO) {
             db.closestFavorite(place.latitude,place.longitude)?.let {
                 db.renameFavorite(it.first,place.name)
@@ -392,13 +444,24 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
 
     fun renameFavorite(id: Long,name: String) {
         viewModelScope.launch(Dispatchers.IO) {
+            val oldPlace = db.getFavorites().firstOrNull { it.first == id }?.second
             val ok = db.renameFavorite(id,name)
+            if (ok && oldPlace != null) {
+                val updated = recentDestinationsStore.loadFavorites().map { fav ->
+                    if (RecentDestinationsStore.isSameDestination(fav, oldPlace)) {
+                        fav.copy(name = name.trim())
+                    } else fav
+                }
+                recentDestinationsStore.saveFavorites(updated)
+            }
             refreshLists()
             if (!ok) _ui.update { it.copy(error = "Não foi possível renomear o local.") }
         }
     }
 
     fun removeFavorite(id: Long) = viewModelScope.launch(Dispatchers.IO) {
+        val oldPlace = db.getFavorites().firstOrNull { it.first == id }?.second
+        oldPlace?.let { recentDestinationsStore.removeFavorite(it) }
         db.deleteFavorite(id)
         refreshLists()
     }
@@ -412,9 +475,11 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
         if (_ui.value.navigating || ActiveNavigationRepository.state.value.navigating) {
             ViaVoxTrackingService.stopNavigation(getApplication())
         }
+        val updatedRecent = recentDestinationsStore.record(route.route.destination)
         _ui.update { it.copy(
             selected = route.route.destination, route = route.route,
-            showingTrip = null, navigating = false, panel = "", error = null
+            showingTrip = null, navigating = false, panel = "", error = null,
+            recentDestinations = updatedRecent
         ) }
     }
 
@@ -491,10 +556,41 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
 
     private fun refreshListsAsync() { viewModelScope.launch(Dispatchers.IO) { refreshLists() } }
     private fun refreshLists() {
-        val places = db.getFavorites()
+        var places = db.getFavorites()
+        val storeFavs = recentDestinationsStore.loadFavorites()
+        // Ensure any favorites pinned via localStorage are also stored in SQLite
+        var dbChanged = false
+        storeFavs.forEach { fav ->
+            if (places.none { RecentDestinationsStore.isSameDestination(it.second, fav) }) {
+                db.addFavorite(fav)
+                dbChanged = true
+            }
+        }
+        if (dbChanged) {
+            places = db.getFavorites()
+        }
+        // Keep localStorage favorites synchronized with SQLite favorites
+        val mergedFavorites = buildList {
+            addAll(storeFavs)
+            places.map { it.second }.forEach { dbPlace ->
+                if (none { RecentDestinationsStore.isSameDestination(it, dbPlace) }) {
+                    add(dbPlace)
+                }
+            }
+        }
+        val persistedFavorites = recentDestinationsStore.saveFavorites(mergedFavorites)
         val routes = db.getRoutes()
         val trips = db.getTrips()
-        _ui.update { it.copy(savedPlaces = places, savedRoutes = routes, trips = trips) }
+        val recent = recentDestinationsStore.load()
+        _ui.update {
+            it.copy(
+                savedPlaces = places,
+                savedRoutes = routes,
+                trips = trips,
+                recentDestinations = recent,
+                favoriteDestinations = persistedFavorites
+            )
+        }
     }
 
     override fun onCleared() {

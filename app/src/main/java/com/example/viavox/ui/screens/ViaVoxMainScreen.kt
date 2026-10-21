@@ -90,7 +90,9 @@ fun ViaVoxMainScreen(
             route = navigationUi.route,
             navigating = navigationUi.navigating,
             destination = navigationUi.selected,
-            favorites = navigationUi.savedPlaces.map { it.second },
+            favorites = navigationUi.favoriteDestinations.ifEmpty {
+                navigationUi.savedPlaces.map { it.second }
+            },
             savedTrack = navigationUi.showingTrip?.points.orEmpty(),
             liveTrack = navigationUi.livePoints,
             vehicleType = state.config.vehicleType,
@@ -116,6 +118,9 @@ fun ViaVoxMainScreen(
                 onShowSuggestions = navigation::showSuggestions,
                 onDismissSuggestions = navigation::hideSuggestions,
                 onSelectSuggestion = navigation::select,
+                onToggleFavorite = navigation::toggleFavorite,
+                onRemoveRecentDestination = navigation::removeRecentDestination,
+                onClearRecentDestinations = navigation::clearRecentDestinations,
                 isCurrentLocationSaved = state.hasLocationFix && navigationUi.savedPlaces.any { pair ->
                     com.example.viavox.model.NavigationMath.meters(
                         state.latitude,state.longitude,pair.second.latitude,pair.second.longitude
@@ -135,7 +140,7 @@ fun ViaVoxMainScreen(
                     .widthIn(max = 680.dp)
             )
 
-            val searchOpen = navigationUi.suggestionsVisible && navigationUi.query.trim().length >= 3
+            val searchOpen = navigationUi.suggestionsVisible
             if (!searchOpen && !navigationUi.navigating &&
                 (navigationUi.selected != null || navigationUi.route != null)) {
                 NavigationRouteCard(

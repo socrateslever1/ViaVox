@@ -33,6 +33,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import com.example.viavox.data.RecentDestinationsStore
 import com.example.viavox.model.MapPlace
 import com.example.viavox.model.NavigationMath
 import com.example.viavox.model.SavedTrip
@@ -44,6 +45,7 @@ import java.util.Locale
 
 private val navy = Color(0xED0C1D32)
 private val aqua = Color(0xFF40E1C9)
+private val gold = Color(0xFFFFD166)
 private val pale = Color(0xFFF4F8FF)
 private val hint = Color(0xFFC2D3E3)
 
@@ -60,6 +62,9 @@ fun NavigationSearchAndActions(
     onShowSuggestions: () -> Unit,
     onDismissSuggestions: () -> Unit,
     onSelectSuggestion: (MapPlace) -> Unit,
+    onToggleFavorite: (MapPlace) -> Unit = {},
+    onRemoveRecentDestination: (MapPlace) -> Unit = {},
+    onClearRecentDestinations: () -> Unit = {},
     isCurrentLocationSaved: Boolean = false,
     onOpenSaved: () -> Unit,
     onOpenRoutes: () -> Unit,
@@ -120,6 +125,12 @@ fun NavigationSearchAndActions(
                     })
                 )
                 if (ui.query.isNotBlank()) {
+                    IconButton(
+                        onClick = { onQueryChanged(""); onShowSuggestions() },
+                        modifier = Modifier.size(34.dp).testTag("clear_search_button")
+                    ) {
+                        Icon(Icons.Default.Clear, "Limpar busca", tint = hint, modifier = Modifier.size(18.dp))
+                    }
                     IconButton(
                         onClick = { keyboard?.hide();onSearch() },
                         modifier = Modifier.size(37.dp).testTag("run_search_button")
@@ -183,7 +194,240 @@ fun NavigationSearchAndActions(
                 }
             }
         }
+
+        // Quick-access recent destinations bar directly below the search box when idle
+        if (ui.recentDestinations.isNotEmpty() && !ui.suggestionsVisible) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .testTag("recent_destinations_row"),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                ui.recentDestinations.take(5).forEach { recent ->
+                    Surface(
+                        color = Color(0xEB0E243B),
+                        shape = RoundedCornerShape(16.dp),
+                        border = BorderStroke(1.dp, aqua.copy(alpha = 0.28f)),
+                        shadowElevation = 4.dp,
+                        modifier = Modifier
+                            .clickable {
+                                keyboard?.hide()
+                                onSelectSuggestion(recent)
+                            }
+                            .testTag("recent_destination_chip")
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(start = 10.dp, end = 6.dp, top = 5.dp, bottom = 5.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.History,
+                                contentDescription = "Local visitado",
+                                tint = aqua,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(Modifier.width(5.dp))
+                            Text(
+                                text = recent.name,
+                                color = pale,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.widthIn(max = 150.dp)
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = "Remover local visitado",
+                                tint = hint.copy(alpha = 0.8f),
+                                modifier = Modifier
+                                    .size(15.dp)
+                                    .clickable { onRemoveRecentDestination(recent) }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Favorites ("Favoritos") + Visited places ("Locais visitados") shown below the search box when user interacts with it
+        if (ui.suggestionsVisible && ui.query.trim().length < 3) {
+            val filterQuery = ui.query.trim()
+            val visibleFavorites = remember(ui.favoriteDestinations, filterQuery) {
+                if (filterQuery.isBlank()) ui.favoriteDestinations.take(6)
+                else {
+                    val matched = ui.favoriteDestinations.filter {
+                        it.name.contains(filterQuery, ignoreCase = true) ||
+                            it.subtitle.contains(filterQuery, ignoreCase = true)
+                    }
+                    if (matched.isNotEmpty()) matched.take(6) else ui.favoriteDestinations.take(6)
+                }
+            }
+            val visibleVisited = remember(ui.recentDestinations, filterQuery) {
+                if (filterQuery.isBlank()) ui.recentDestinations.take(5)
+                else {
+                    val matched = ui.recentDestinations.filter {
+                        it.name.contains(filterQuery, ignoreCase = true) ||
+                            it.subtitle.contains(filterQuery, ignoreCase = true)
+                    }
+                    if (matched.isNotEmpty()) matched.take(5) else ui.recentDestinations.take(5)
+                }
+            }
+            Surface(
+                color = Color(0xFA10283F),
+                shape = RoundedCornerShape(17.dp),
+                shadowElevation = 12.dp,
+                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.14f)),
+                modifier = Modifier.fillMaxWidth().testTag("recent_destinations_dropdown")
+            ) {
+                Column(
+                    modifier = Modifier
+                        .heightIn(max = if (compactHeight) 235.dp else 335.dp)
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 12.dp, vertical = 7.dp)
+                ) {
+                    // Dedicated 'Favorites' section in the search dropdown
+                    FavoritesDropdownSection(
+                        favorites = visibleFavorites,
+                        showEmptyMessage = true,
+                        onSelectFavorite = { place ->
+                            keyboard?.hide()
+                            onSelectSuggestion(place)
+                        },
+                        onToggleFavorite = onToggleFavorite,
+                        trailingHeaderContent = {
+                            TextButton(
+                                onClick = { keyboard?.hide(); onDismissSuggestions() },
+                                modifier = Modifier.height(28.dp),
+                                contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp)
+                            ) { Text("Fechar", color = hint, fontSize = 11.sp) }
+                        }
+                    )
+
+                    HorizontalDivider(
+                        color = Color.White.copy(alpha = 0.10f),
+                        modifier = Modifier.padding(vertical = 6.dp)
+                    )
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Default.History,
+                            contentDescription = null,
+                            tint = aqua,
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            "LOCAIS VISITADOS",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 0.8.sp,
+                            color = aqua,
+                            modifier = Modifier.weight(1f)
+                        )
+                        if (ui.recentDestinations.isNotEmpty()) {
+                            TextButton(
+                                onClick = onClearRecentDestinations,
+                                modifier = Modifier.height(28.dp).testTag("clear_recent_destinations_button"),
+                                contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp)
+                            ) { Text("Limpar", color = hint, fontSize = 11.sp) }
+                        }
+                    }
+                    if (visibleVisited.isEmpty()) {
+                        Text(
+                            "Nenhum local visitado recentemente. Pesquise um endereço acima ou toque no mapa para registrar seu histórico local.",
+                            color = hint,
+                            fontSize = 12.sp,
+                            modifier = Modifier
+                                .padding(vertical = 8.dp)
+                                .testTag("empty_recent_destinations_message")
+                        )
+                    } else {
+                        visibleVisited.forEach { place ->
+                            val isFav = RecentDestinationsStore.isFavoriteInList(ui.favoriteDestinations, place)
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { keyboard?.hide(); onSelectSuggestion(place) }
+                                    .padding(vertical = 6.dp)
+                                    .testTag("recent_destination_item"),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Surface(
+                                    color = aqua.copy(alpha = 0.14f),
+                                    shape = CircleShape,
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            Icons.Default.History,
+                                            contentDescription = "Local visitado",
+                                            tint = aqua,
+                                            modifier = Modifier.size(17.dp)
+                                        )
+                                    }
+                                }
+                                Spacer(Modifier.width(10.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        place.name,
+                                        color = pale,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 13.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        place.subtitle.ifBlank {
+                                            "${"%.4f".format(Locale.US, place.latitude)}, ${"%.4f".format(Locale.US, place.longitude)}"
+                                        },
+                                        color = hint,
+                                        fontSize = 11.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                IconButton(
+                                    onClick = { onToggleFavorite(place) },
+                                    modifier = Modifier.size(32.dp).testTag("favorite_toggle_button")
+                                ) {
+                                    Icon(
+                                        imageVector = if (isFav) Icons.Default.Star else Icons.Default.StarBorder,
+                                        contentDescription = if (isFav) "Remover dos favoritos" else "Fixar nos favoritos",
+                                        tint = if (isFav) gold else hint,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                                IconButton(
+                                    onClick = { onRemoveRecentDestination(place) },
+                                    modifier = Modifier.size(28.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Close,
+                                        contentDescription = "Remover",
+                                        tint = hint,
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         if (ui.suggestionsVisible && ui.query.trim().length >= 3) {
+            val filterQuery = ui.query.trim()
+            val dropdownFavorites = remember(ui.favoriteDestinations, filterQuery) {
+                val matched = ui.favoriteDestinations.filter {
+                    it.name.contains(filterQuery, ignoreCase = true) ||
+                        it.subtitle.contains(filterQuery, ignoreCase = true)
+                }
+                if (matched.isNotEmpty()) matched.take(4) else ui.favoriteDestinations.take(3)
+            }
             Surface(
                 color = Color(0xFA10283F),
                 shape = RoundedCornerShape(17.dp),
@@ -193,10 +437,26 @@ fun NavigationSearchAndActions(
             ) {
                 Column(
                     modifier = Modifier
-                        .heightIn(max = if (compactHeight) 182.dp else 280.dp)
+                        .heightIn(max = if (compactHeight) 225.dp else 335.dp)
                         .verticalScroll(rememberScrollState())
                         .padding(horizontal = 12.dp,vertical = 7.dp)
                 ) {
+                    if (dropdownFavorites.isNotEmpty()) {
+                        FavoritesDropdownSection(
+                            favorites = dropdownFavorites,
+                            showEmptyMessage = false,
+                            onSelectFavorite = { place ->
+                                keyboard?.hide()
+                                onSelectSuggestion(place)
+                            },
+                            onToggleFavorite = onToggleFavorite
+                        )
+                        HorizontalDivider(
+                            color = Color.White.copy(alpha = 0.10f),
+                            modifier = Modifier.padding(vertical = 6.dp)
+                        )
+                    }
+
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             "DESTINOS",
@@ -217,6 +477,7 @@ fun NavigationSearchAndActions(
                         ) { Text("Fechar",color = hint,fontSize = 11.sp) }
                     }
                     ui.results.take(5).forEach { place ->
+                        val isFav = RecentDestinationsStore.isFavoriteInList(ui.favoriteDestinations, place)
                         Row(
                             modifier = Modifier.fillMaxWidth()
                                 .clickable { keyboard?.hide();onSelectSuggestion(place) }
@@ -224,8 +485,12 @@ fun NavigationSearchAndActions(
                                 .testTag("suggestion_result"),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(Icons.Default.Place,null,
-                                tint = aqua,modifier = Modifier.size(24.dp))
+                            Icon(
+                                if (isFav) Icons.Default.Star else Icons.Default.Place,
+                                contentDescription = null,
+                                tint = if (isFav) gold else aqua,
+                                modifier = Modifier.size(22.dp)
+                            )
                             Spacer(Modifier.width(10.dp))
                             Column(Modifier.weight(1f)) {
                                 Text(
@@ -236,6 +501,19 @@ fun NavigationSearchAndActions(
                                 if (place.subtitle.isNotBlank()) Text(
                                     place.subtitle,color = hint,fontSize = 11.sp,
                                     maxLines = 1,overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            IconButton(
+                                onClick = { onToggleFavorite(place) },
+                                modifier = Modifier
+                                    .size(34.dp)
+                                    .testTag("favorite_toggle_button")
+                            ) {
+                                Icon(
+                                    imageVector = if (isFav) Icons.Default.Star else Icons.Default.StarBorder,
+                                    contentDescription = if (isFav) "Remover dos favoritos" else "Fixar nos favoritos",
+                                    tint = if (isFav) gold else hint,
+                                    modifier = Modifier.size(20.dp)
                                 )
                             }
                             Icon(Icons.Default.ChevronRight,null,tint = hint,
@@ -693,6 +971,111 @@ private fun LibraryRow(
                 }
             }
             Icon(Icons.Default.ChevronRight,null,tint = hint,modifier = Modifier.size(18.dp))
+        }
+    }
+}
+
+@Composable
+private fun FavoritesDropdownSection(
+    favorites: List<MapPlace>,
+    showEmptyMessage: Boolean,
+    onSelectFavorite: (MapPlace) -> Unit,
+    onToggleFavorite: (MapPlace) -> Unit,
+    trailingHeaderContent: @Composable (() -> Unit)? = null
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("favorites_dropdown_section")
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                Icons.Default.Star,
+                contentDescription = null,
+                tint = gold,
+                modifier = Modifier.size(15.dp)
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                if (favorites.isNotEmpty()) "FAVORITOS (${favorites.size})" else "FAVORITOS",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 0.8.sp,
+                color = gold,
+                modifier = Modifier.weight(1f)
+            )
+            trailingHeaderContent?.invoke()
+        }
+        if (favorites.isEmpty()) {
+            if (showEmptyMessage) {
+                Text(
+                    "Toque na estrela ★ nos resultados de busca para fixar endereços nos Favoritos.",
+                    color = hint,
+                    fontSize = 12.sp,
+                    modifier = Modifier
+                        .padding(vertical = 6.dp)
+                        .testTag("empty_favorites_message")
+                )
+            }
+        } else {
+            favorites.forEach { place ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onSelectFavorite(place) }
+                        .padding(vertical = 5.dp)
+                        .testTag("favorite_destination_item"),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Surface(
+                        color = gold.copy(alpha = 0.16f),
+                        shape = CircleShape,
+                        modifier = Modifier.size(30.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                Icons.Default.Star,
+                                contentDescription = "Endereço favorito fixado",
+                                tint = gold,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            place.name,
+                            color = pale,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 13.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            place.subtitle.ifBlank {
+                                "${"%.4f".format(Locale.US, place.latitude)}, ${"%.4f".format(Locale.US, place.longitude)}"
+                            },
+                            color = hint,
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    IconButton(
+                        onClick = { onToggleFavorite(place) },
+                        modifier = Modifier
+                            .size(32.dp)
+                            .testTag("favorite_toggle_button")
+                    ) {
+                        Icon(
+                            Icons.Default.Star,
+                            contentDescription = "Remover dos favoritos",
+                            tint = gold,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+            }
         }
     }
 }
