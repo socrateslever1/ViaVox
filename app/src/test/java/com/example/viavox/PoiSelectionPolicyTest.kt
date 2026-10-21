@@ -89,6 +89,32 @@ class PoiSelectionPolicyTest {
         ))
     }
 
+    @Test fun proximityIncludesGpsUncertaintyInsideThirtyMeterBoundary() {
+        val justOutsideReliableDistance = poi("uncertain", 0.00024) // ~26.7m
+        // A point 26.7m away is not confirmed inside 30m when GPS is ±8m.
+        assertNull(PoiSelectionPolicy.choose(
+            listOf(justOutsideReliableDistance),0.0,0.0,8f,0f,null,road
+        ))
+        val reliable = poi("valid",0.00015) // ~16.7m
+        assertEquals("valid", PoiSelectionPolicy.choose(
+            listOf(reliable),0.0,0.0,8f,0f,null,road
+        )?.id)
+    }
+
+    @Test fun requireExplicitSourceStreetAndIgnoreOrdinaryBusinesses() {
+        assertFalse(PoiSelectionPolicy.streetMatches(road,"Benjamin Constant, Manaus"))
+        assertFalse(PoiSelectionPolicy.streetMatches(road,"Petrópolis, Manaus"))
+        val pois = listOf(
+            PointOfInterest("a","Farmácia do Bairro",PoiCategory.HEALTH,0.0001,0.0,road),
+            PointOfInterest("b","Hospital Clínica Comercial",PoiCategory.HEALTH,0.0001,0.0,road),
+            PointOfInterest("c","Empresa Delegacia Segurança",PoiCategory.PUBLIC,0.0001,0.0,road),
+            PointOfInterest("d","Delegacia de Polícia",PoiCategory.PUBLIC,0.0001,0.0,road)
+        )
+        assertEquals("d",PoiSelectionPolicy.choose(
+            pois,0.0,0.0,8f,0f,null,road
+        )?.id)
+    }
+
     @Test fun excludedAndRepeatedLandmarksAreNotReannounced() {
         assertNull(PoiSelectionPolicy.choose(
             listOf(poi("repeat",0.0002)),0.0,0.0,6f,8f,0f,road,
