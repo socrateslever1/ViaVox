@@ -96,6 +96,7 @@ fun ViaVoxMainScreen(
             savedTrack = navigationUi.showingTrip?.points.orEmpty(),
             liveTrack = navigationUi.livePoints,
             vehicleType = state.config.vehicleType,
+            showMapControls = !navigationUi.suggestionsVisible,
             safetyFeatures = state.safetyFeatures,
             onMapLongPress = { lat, lon -> navigation.selectMapPoint(lat, lon) },
             onReferenceSelected = navigation::select,
