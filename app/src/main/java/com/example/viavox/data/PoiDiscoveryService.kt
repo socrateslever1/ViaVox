@@ -4,6 +4,7 @@ import android.util.Log
 import com.example.viavox.model.PoiCategory
 import com.example.viavox.model.PointOfInterest
 import com.example.viavox.model.ViaVoxConfig
+import com.example.viavox.service.SpeechTextNormalizer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -70,7 +71,11 @@ class PoiDiscoveryService(
         ) refreshCache(userLat, userLon, now)
 
         val candidates = synchronized(cachedPois) {
-            cachedPois.filter { isCategoryEnabled(it.category, config) }
+            cachedPois.filter {
+                isCategoryEnabled(it.category, config) &&
+                    PoiSelectionPolicy.isImportantForSpeech(it) &&
+                    SpeechTextNormalizer.normalizeReferenceName(it.name) != null
+            }
         }
         val seen = synchronized(announced) {
             candidates.filter { poi -> (announced[dedupeKey(poi)] ?: 0L) > now - ANNOUNCE_COOLDOWN_MS }
@@ -94,6 +99,7 @@ class PoiDiscoveryService(
     ): Boolean {
         val poi = synchronized(cachedPois) { cachedPois.firstOrNull { it.id == id } }
             ?: return false
+        if (SpeechTextNormalizer.normalizeReferenceName(poi.name) == null) return false
         return PoiSelectionPolicy.choose(
             listOf(poi), latitude, longitude, accuracyMeters,
             speedMps, bearingDegrees, currentRoad
@@ -133,10 +139,10 @@ class PoiDiscoveryService(
                 val ql = """
                     [out:json][timeout:9];
                     (
-                      node["amenity"~"^(hospital|school|university|college|townhall|police|fire_station|courthouse|library)$"]["name"](around:220,$latText,$lonText);
-                      node["leisure"~"^(park)$"]["name"](around:220,$latText,$lonText);
-                      node["historic"~"^(monument|memorial)$"]["name"](around:220,$latText,$lonText);
-                      node["tourism"~"^(museum)$"]["name"](around:220,$latText,$lonText);
+                      node["amenity"~"^(hospital|school|university|college|townhall|police|fire_station|courthouse|library)$"]["name"](around:140,$latText,$lonText);
+                      node["leisure"~"^(park)$"]["name"](around:140,$latText,$lonText);
+                      node["historic"~"^(monument|memorial)$"]["name"](around:140,$latText,$lonText);
+                      node["tourism"~"^(museum)$"]["name"](around:140,$latText,$lonText);
                     );
                     out 80;
                 """.trimIndent()
@@ -144,11 +150,11 @@ class PoiDiscoveryService(
                 // for important landmarks; this also works when Overpass returns 502.
                 val municipalPois = if (ManausArcGisLayer.inCoverage(lat,lon)) {
                     municipalReferences.loadVisible(
-                        GisBounds(lon-0.0034,lat-0.0034,lon+0.0034,lat+0.0034),
+                        GisBounds(lon-0.0014,lat-0.0014,lon+0.0014,lat+0.0014),
                         16.0
                     ).mapNotNull { it.asSpokenReference() }
                         .filter(PoiSelectionPolicy::isImportantForSpeech)
-                        .filter { it.distanceTo(lat,lon) <= 220.0 }
+                        .filter { it.distanceTo(lat,lon) <= 140.0 }
                 } else emptyList()
                 // Do not query both public GIS services if enough landmarks
                 // are already available in the local dataset.
