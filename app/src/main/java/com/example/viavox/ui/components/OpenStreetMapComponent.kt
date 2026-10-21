@@ -680,12 +680,17 @@ fun OpenStreetMapComponent(
             }
         }
 
-        // Right-side map control rail
+        // Keep the two controls ABOVE the lower street/navigation cards,
+        // including on shorter screens. Center-right is deliberately independent
+        // of the variable-height search bar and Android bottom system bar.
         Column(
             modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(end = 14.dp, top = if (navigating) 112.dp else 146.dp),
-            verticalArrangement = Arrangement.spacedBy(9.dp),
+                .align(Alignment.CenterEnd)
+                .padding(
+                    end = 12.dp,
+                    bottom = if (navigating) 168.dp else 138.dp
+                ),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             if (!navigating) Box {
@@ -1227,9 +1232,12 @@ private fun createVehicleLocationMarkerBitmap(
                 strokeCap = Paint.Cap.ROUND
             }
         }
-    canvas.drawCircle(center, center, 37f, paint(android.graphics.Color.argb(32, 32, 221, 195)))
-    canvas.drawCircle(center, center, 31f, paint(android.graphics.Color.argb(222, 9, 27, 42)))
-    canvas.drawCircle(center, center, 30f, paint(android.graphics.Color.argb(198, 32, 221, 195), 1.5f))
+    val haloRadius = if (mode == VehicleMode.MOTORCYCLE) 34f else 37f
+    val discRadius = if (mode == VehicleMode.MOTORCYCLE) 28f else 31f
+    canvas.drawCircle(center, center, haloRadius, paint(android.graphics.Color.argb(36, 32, 221, 195)))
+    canvas.drawCircle(center, center, discRadius, paint(android.graphics.Color.argb(230, 9, 27, 42)))
+    canvas.drawCircle(center, center, discRadius - 1f,
+        paint(android.graphics.Color.argb(160, 32, 221, 195), 1.3f))
     canvas.save()
     if (showHeading) canvas.rotate(bearing, center, center)
     canvas.translate(center, center)
@@ -1242,38 +1250,30 @@ private fun createVehicleLocationMarkerBitmap(
     }
     when (mode) {
         VehicleMode.MOTORCYCLE -> {
-            canvas.drawRoundRect(
-                RectF(-5.5f, -28f, 5.5f, -17f),
-                5f, 5f, paint(android.graphics.Color.rgb(22, 31, 39))
-            )
-            canvas.drawLine(0f, -27f, 0f, -19f, paint(white, 1.8f))
-            canvas.drawRoundRect(
-                RectF(-5.5f, 18f, 5.5f, 28f),
-                5f, 5f, paint(android.graphics.Color.rgb(22, 31, 39))
-            )
-            canvas.drawLine(0f, 21f, 0f, 26f, paint(white, 1.7f))
-            canvas.drawLine(-19f, -14f, 19f, -14f, paint(white, 3.2f))
-            canvas.drawCircle(-19f, -14f, 2.2f, paint(navy))
-            canvas.drawCircle(19f, -14f, 2.2f, paint(navy))
-            val fairing = Path().apply {
-                moveTo(0f, -20f)
-                cubicTo(-11f, -19f, -12f, -4f, -10f, 8f)
-                lineTo(-6f, 18f); lineTo(6f, 18f); lineTo(10f, 8f)
-                cubicTo(12f, -4f, 11f, -19f, 0f, -20f)
+            // Minimal top-down motorcycle silhouette, NOT stacked circular
+            // symbols: dark tyres at both ends, a tapered teal frame, a small
+            // windshield and one crisp handlebar. Facing screen-up.
+            val tyre = paint(android.graphics.Color.rgb(6, 17, 28))
+            canvas.drawRoundRect(RectF(-5f, -28f, 5f, -16f), 4f, 4f, tyre)
+            canvas.drawRoundRect(RectF(-5f, 16f, 5f, 28f), 4f, 4f, tyre)
+            canvas.drawLine(-15f, -12f, 15f, -12f, paint(white, 3f))
+            canvas.drawCircle(-15f, -12f, 2f, paint(accent))
+            canvas.drawCircle(15f, -12f, 2f, paint(accent))
+            val body = Path().apply {
+                moveTo(0f, -21f)
+                cubicTo(-8f, -18f, -10f, -7f, -9f, 2f)
+                lineTo(-6f, 16f)
+                quadraticTo(0f, 23f, 6f, 16f)
+                lineTo(9f, 2f)
+                cubicTo(10f, -7f, 8f, -18f, 0f, -21f)
                 close()
             }
-            canvas.drawPath(fairing, paint(accent))
-            canvas.drawPath(fairing, paint(white, 1.5f))
-            canvas.drawRoundRect(RectF(-7f, 9f, 7f, 23f), 5f, 5f, paint(navy))
-            canvas.drawRoundRect(
-                RectF(-5f, 10f, 5f, 20f),
-                3f, 3f, paint(android.graphics.Color.rgb(39, 79, 91))
-            )
-            canvas.drawCircle(0f, -6f, 7.5f, paint(navy))
-            canvas.drawArc(
-                RectF(-7.5f, -13.5f, 7.5f, 1.5f),
-                204f, 132f, false, paint(white, 2.5f)
-            )
+            canvas.drawPath(body, paint(accent))
+            canvas.drawPath(body, paint(white, 1.4f))
+            // Single windshield and seat; no overlapping rider circles.
+            canvas.drawRoundRect(RectF(-6f, -16f, 6f, -10f), 3f, 3f, paint(white))
+            canvas.drawRoundRect(RectF(-5f, -3f, 5f, 12f), 4f, 4f, paint(navy))
+            canvas.drawLine(-4f, 17f, 4f, 17f, paint(white, 1.6f))
         }
         VehicleMode.CAR -> {
             canvas.drawRoundRect(RectF(-22f, -19f, -15f, -4f), 3f, 3f, paint(navy))
