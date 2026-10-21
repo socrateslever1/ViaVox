@@ -18,6 +18,10 @@ import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.calculateTopPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -127,6 +131,7 @@ fun OpenStreetMapComponent(
     savedTrack: List<TripPoint> = emptyList(),
     liveTrack: List<TripPoint> = emptyList(),
     vehicleType: String = "car",
+    showMapControls: Boolean = true,
     safetyFeatures: List<SafetyAlertEngine.SafetyFeature> = emptyList(),
     onMapLongPress: (Double, Double) -> Unit = { _, _ -> },
     onReferenceSelected: (MapPlace) -> Unit = {},
@@ -683,12 +688,15 @@ fun OpenStreetMapComponent(
         // Keep the two controls ABOVE the lower street/navigation cards,
         // including on shorter screens. Center-right is deliberately independent
         // of the variable-height search bar and Android bottom system bar.
-        Column(
+        if (showMapControls) Column(
             modifier = Modifier
-                .align(Alignment.CenterEnd)
+                .align(Alignment.TopEnd)
+                // Anchor to the safe TOP; centering with bottom padding caused
+                // controls to be covered and clipped by the variable-height HUD.
                 .padding(
-                    end = 12.dp,
-                    bottom = if (navigating) 168.dp else 138.dp
+                    end = 14.dp,
+                    top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() +
+                        if (navigating) 115.dp else 125.dp
                 ),
             verticalArrangement = Arrangement.spacedBy(12.dp),
             horizontalAlignment = Alignment.CenterHorizontally
@@ -1210,7 +1218,7 @@ private fun createVehicleLocationMarkerBitmap(
     showHeading: Boolean,
     mode: VehicleMode
 ): Bitmap {
-    val side = 104
+    val side = 96
     val center = side / 2f
     val bitmap = Bitmap.createBitmap(side, side, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bitmap)
@@ -1232,8 +1240,8 @@ private fun createVehicleLocationMarkerBitmap(
                 strokeCap = Paint.Cap.ROUND
             }
         }
-    val haloRadius = if (mode == VehicleMode.MOTORCYCLE) 34f else 37f
-    val discRadius = if (mode == VehicleMode.MOTORCYCLE) 28f else 31f
+    val haloRadius = if (mode == VehicleMode.MOTORCYCLE) 31f else 36f
+    val discRadius = if (mode == VehicleMode.MOTORCYCLE) 25f else 30f
     canvas.drawCircle(center, center, haloRadius, paint(android.graphics.Color.argb(36, 32, 221, 195)))
     canvas.drawCircle(center, center, discRadius, paint(android.graphics.Color.argb(230, 9, 27, 42)))
     canvas.drawCircle(center, center, discRadius - 1f,
@@ -1244,36 +1252,36 @@ private fun createVehicleLocationMarkerBitmap(
 
     if (showHeading) {
         val triangle = Path().apply {
-            moveTo(0f, -45f); lineTo(-6f, -34f); lineTo(6f, -34f); close()
+            moveTo(0f, -39f); lineTo(-5f, -30f); lineTo(5f, -30f); close()
         }
         canvas.drawPath(triangle, paint(accent))
     }
     when (mode) {
         VehicleMode.MOTORCYCLE -> {
-            // Minimal top-down motorcycle silhouette, NOT stacked circular
-            // symbols: dark tyres at both ends, a tapered teal frame, a small
-            // windshield and one crisp handlebar. Facing screen-up.
-            val tyre = paint(android.graphics.Color.rgb(6, 17, 28))
-            canvas.drawRoundRect(RectF(-5f, -28f, 5f, -16f), 4f, 4f, tyre)
-            canvas.drawRoundRect(RectF(-5f, 16f, 5f, 28f), 4f, 4f, tyre)
-            canvas.drawLine(-15f, -12f, 15f, -12f, paint(white, 3f))
-            canvas.drawCircle(-15f, -12f, 2f, paint(accent))
-            canvas.drawCircle(15f, -12f, 2f, paint(accent))
-            val body = Path().apply {
-                moveTo(0f, -21f)
-                cubicTo(-8f, -18f, -10f, -7f, -9f, 2f)
-                lineTo(-6f, 16f)
-                quadTo(0f, 23f, 6f, 16f)
-                lineTo(9f, 2f)
-                cubicTo(10f, -7f, 8f, -18f, 0f, -21f)
+            // ONE solid top-down motorcycle silhouette, facing north.
+            // No hollow wheels, white rings or rider circles: they looked like
+            // several overlapping location markers on the actual Samsung.
+            val rubber = paint(android.graphics.Color.rgb(2, 18, 30))
+            val darkTeal = paint(android.graphics.Color.rgb(0, 110, 108))
+            // Two subtle elongated tires are part of one compact silhouette.
+            canvas.drawRoundRect(RectF(-4.8f, -22f, 4.8f, -13f), 3f, 3f, rubber)
+            canvas.drawRoundRect(RectF(-4.8f, 14f, 4.8f, 23f), 3f, 3f, rubber)
+            // Integrated chassis and fairing, clearly distinct from car puck.
+            val fairing = Path().apply {
+                moveTo(0f, -20f)
+                cubicTo(-7f, -17f, -8f, -10f, -8f, -1f)
+                lineTo(-7f, 13f)
+                quadTo(0f, 20f, 7f, 13f)
+                lineTo(8f, -1f)
+                cubicTo(8f, -10f, 7f, -17f, 0f, -20f)
                 close()
             }
-            canvas.drawPath(body, paint(accent))
-            canvas.drawPath(body, paint(white, 1.4f))
-            // Single windshield and seat; no overlapping rider circles.
-            canvas.drawRoundRect(RectF(-6f, -16f, 6f, -10f), 3f, 3f, paint(white))
-            canvas.drawRoundRect(RectF(-5f, -3f, 5f, 12f), 4f, 4f, paint(navy))
-            canvas.drawLine(-4f, 17f, 4f, 17f, paint(white, 1.6f))
+            canvas.drawPath(fairing, paint(white))
+            canvas.drawPath(fairing, paint(accent, 2f))
+            canvas.drawLine(-14f, -9f, 14f, -9f, paint(accent, 3f))
+            canvas.drawRoundRect(RectF(-4f, -15f, 4f, -10f), 2f, 2f, darkTeal)
+            canvas.drawRoundRect(RectF(-4.6f, -2f, 4.6f, 12f), 3f, 3f, rubber)
+            canvas.drawLine(-5f, 14f, 5f, 14f, paint(accent, 1.8f))
         }
         VehicleMode.CAR -> {
             canvas.drawRoundRect(RectF(-22f, -19f, -15f, -4f), 3f, 3f, paint(navy))
