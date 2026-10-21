@@ -30,10 +30,19 @@ object SpeechTextNormalizer {
     fun normalizeReferenceName(raw: String): String? {
         val trimmed = raw.trim().replace(Regex("""\s+"""), " ")
         if (trimmed.isBlank() || trimmed.length > 100) return null
+        val lowered = trimmed.lowercase(java.util.Locale.forLanguageTag("pt-BR"))
+        if (Regex("""(?i)\b(?:ltda|eireli|s\/a|mei|comercio|supermercado|farmacia|drogaria|consultorio|petshop)\b""")
+                .containsMatchIn(lowered)) return null
+        // GIS identifiers are not speech. Do not read codes, URLs or labels
+        // containing repeated separators as names of meaningful landmarks.
+        if (trimmed.contains("http",ignoreCase = true) ||
+            trimmed.contains('@') || trimmed.count { it == '_' } >= 2) return null
         val spokenAliases = setOf(
             "UPA","UBS","PMAM","UFAM","UEA","IFAM","CETI","DIP","SENAI",
             "SESC","CICOM","SSP","PCAM","PM","PC","SAMU","DETRAN",
-            "BR","AM","CMDOGERAL","INSS"
+            "BR","AM","CMDOGERAL","INSS","CMEI","CEI","CAPS",
+            "CRAS","CREAS","IML","CIGS","IBGE","SEDUC","INPA",
+            "CBMAM","FVS","SES","CMA","PAC"
         )
         val grammatical = setOf("DE","DA","DO","DAS","DOS","EM","AO","AOS",
             "E","NA","NO","PA","AV","R")
@@ -59,7 +68,7 @@ object SpeechTextNormalizer {
         // Acronyms are expanded only for audio. Otherwise Android TTS may
         // spell the letters even though the POI name is a pronounceable word.
         val audioNames = listOf(
-            "UPA" to "úpa",
+            "UPA" to "unidade de pronto atendimento",
             "UBS" to "unidade básica de saúde",
             "PMAM" to "Polícia Militar do Amazonas",
             "UFAM" to "Universidade Federal do Amazonas",
@@ -77,7 +86,21 @@ object SpeechTextNormalizer {
             "SAMU" to "samu",
             "DETRAN" to "Detran",
             "INSS" to "Instituto Nacional do Seguro Social",
-            "CICOM" to "cícom"
+            "CMEI" to "Centro Municipal de Educação Infantil",
+            "CEI" to "Centro de Educação Infantil",
+            "CAPS" to "Centro de Atenção Psicossocial",
+            "CRAS" to "Centro de Referência de Assistência Social",
+            "CREAS" to "Centro de Referência Especializado de Assistência Social",
+            "IML" to "Instituto Médico Legal",
+            "CIGS" to "Centro de Instrução de Guerra na Selva",
+            "IBGE" to "Instituto Brasileiro de Geografia e Estatística",
+            "SEDUC" to "Secretaria de Estado de Educação",
+            "INPA" to "Instituto Nacional de Pesquisas da Amazônia",
+            "CBMAM" to "Corpo de Bombeiros Militar do Amazonas",
+            "FVS" to "Fundação de Vigilância em Saúde",
+            "CMA" to "Comando Militar da Amazônia",
+            "PAC" to "Pronto Atendimento ao Cidadão",
+            "CICOM" to "companhia interativa comunitária"
         )
         audioNames.forEach { (acronym, spoken) ->
             text = text.replace(Regex("(?i)\\b" + acronym + "\\b"), spoken)
