@@ -74,6 +74,25 @@ class ArcGisManausPlacesServiceTest {
         assertTrue(service.loadVisible(GisBounds(21.0,43.0,23.0,45.0),16.0).isEmpty())
     }
 
+    @Test fun movingMoreThanSixtyMetersRefreshesVoiceLayerInsteadOfUsingStaleBlock() = runBlocking {
+        var fetches = 0
+        val fakeClient = OkHttpClient.Builder().addInterceptor { chain ->
+            fetches++
+            Response.Builder().request(chain.request())
+                .protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                .body(example.toResponseBody()).build()
+        }.build()
+        val source = ArcGisManausPlacesService(fakeClient)
+        val first = GisBounds(-60.0220,-3.1430,-60.0190,-3.1400)
+        val near = GisBounds(-60.0223,-3.1430,-60.0193,-3.1400)
+        val newBlock = GisBounds(-60.0229,-3.1430,-60.0199,-3.1400)
+        source.loadVisible(first,16.0)
+        source.loadVisible(near,16.0)
+        assertEquals(1,fetches)
+        source.loadVisible(newBlock,16.0)
+        assertEquals(2,fetches)
+    }
+
     @Test fun refusesInvalidGeometriesAndHttpErrors() {
         assertFalse(ManausArcGisLayer.inCoverage(44.1,22.9))
         assertTrue(ArcGisReferenceParser.parse("""{"features":[]}""").isEmpty())
