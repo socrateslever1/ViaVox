@@ -162,7 +162,8 @@ class ArcGisManausPlacesService(
         .readTimeout(10,TimeUnit.SECONDS)
         .build()
 ) {
-    private var lastViewportKey: String? = null
+    private var lastViewportBounds: GisBounds? = null
+    private var lastViewportZoom = 0.0
     private var viewportLastFetchedAt = 0L
     private var lastViewport: List<GisReference> = emptyList()
 
@@ -171,11 +172,20 @@ class ArcGisManausPlacesService(
             if (zoom < ManausArcGisLayer.MIN_ZOOM || !bounds.isValid() ||
                 !ManausArcGisLayer.inCoverage(bounds.midLatitude(),bounds.midLongitude())
             ) return@withContext emptyList()
-            val key = "${(bounds.midLatitude()*200).toInt()}:" +
-                "${(bounds.midLongitude()*200).toInt()}:${zoom.toInt()}"
             val now = System.currentTimeMillis()
-            if (lastViewportKey == key && now - viewportLastFetchedAt < 90_000L)
-                return@withContext lastViewport
+            val previous = lastViewportBounds
+            val moved = if (previous == null) Double.POSITIVE_INFINITY else
+                com.example.viavox.model.NavigationMath.meters(
+                    previous.midLatitude(),previous.midLongitude(),
+                    bounds.midLatitude(),bounds.midLongitude()
+                )
+            // Previously keyed to ~550m grid cells: this kept stale landmarks
+            // while a motorcycle crossed several blocks. Reload after ~60m,
+            // while retaining the 90-second idle cache to protect the endpoint.
+            if (previous != null && moved < 60.0 &&
+                kotlin.math.abs(zoom - lastViewportZoom) < 0.7 &&
+                now - viewportLastFetchedAt < 90_000L
+            ) return@withContext lastViewport
 
             val geometry = String.format(Locale.US,"%.6f,%.6f,%.6f,%.6f",
                 bounds.west,bounds.south,bounds.east,bounds.north)
@@ -196,12 +206,13 @@ class ArcGisManausPlacesService(
                 )
                 val places = ArcGisReferenceParser.parse(data)
                 lastViewport = places
-                lastViewportKey = key
+                lastViewportBounds = bounds
+                lastViewportZoom = zoom
                 viewportLastFetchedAt = now
                 places
             } catch (error: Exception) {
                 android.util.Log.w("ViaVoxArcGIS","Reference layer unreachable",error)
-                if (lastViewportKey == key) lastViewport else emptyList()
+                if (previous != null && moved < 60.0) lastViewport else emptyList()
             }
         }
 
