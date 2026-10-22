@@ -397,6 +397,11 @@ class ViaVoxTrackingService : Service() {
         }
     }
 
+    private fun strictPoiEnabled(): Boolean =
+        currentConfig.narratePoiEnabled &&
+            AssistanceMode.from(currentConfig.assistanceMode) == AssistanceMode.ACCESSIBILITY &&
+            !currentConfig.tourEnabled
+
     private fun onLocationUpdateReceived(location: Location) {
         val lat = location.latitude
         val lon = location.longitude
@@ -423,18 +428,18 @@ class ViaVoxTrackingService : Service() {
 
         // POI discovery is independent of the road-announcement cooldown:
         // 25-second scan delays previously skipped whole landmarks at driving speeds.
-        if (currentConfig.narratePoiEnabled) tryAnnouncePendingPoi(location)
+        if (strictPoiEnabled()) tryAnnouncePendingPoi(location)
         val now = System.currentTimeMillis()
         val intervalMs = if (speedKmh >= 5f) 5_000L else 12_000L
         val accuracyMeters = if (location.hasAccuracy()) location.accuracy else 100f
         if (accuracyMeters > 40f) {
-            if (currentConfig.narratePoiEnabled) {
+            if (strictPoiEnabled()) {
                 TrackingRepository.updatePoiStatus("Aguardando GPS mais preciso para reconhecer referências")
             }
             return
         }
         // POI throttling must NEVER prevent an independent safety evaluation.
-        if (currentConfig.narratePoiEnabled &&
+        if (strictPoiEnabled() &&
             now - lastPoiCheckTimestamp >= intervalMs && poiJob?.isActive != true
         ) {
             lastPoiCheckTimestamp = now
@@ -448,7 +453,7 @@ class ViaVoxTrackingService : Service() {
                 bearingDegrees = if (location.hasBearing()) location.bearing else null,
                 currentRoad = TrackingRepository.state.value.place?.road.orEmpty()
             )
-            if (!isTrackingRunning || !currentConfig.narratePoiEnabled) return@launch
+            if (!isTrackingRunning || !strictPoiEnabled()) return@launch
             if (poi != null) {
                 poiAnnouncements.offer(poi, System.currentTimeMillis())
                 TrackingRepository.updatePoiStatus("Referência detectada: ${poi.name}")
@@ -722,11 +727,19 @@ class ViaVoxTrackingService : Service() {
                 ScanDirection.AROUND, heading,
                 fix.accuracyMeters?.toFloat() ?: 100f, limit = 8
             )
-            val candidate = candidates.firstOrNull {
+            val candidate = candidates.filter {
                 it.landmark.id !in tourSpoken &&
                     it.distanceMeters + (fix.accuracyMeters ?: 100) <= 85.0 &&
                     (heading == null || it.angle == null ||
                         kotlin.math.abs(it.angle) <= 105.0)
+            }.minByOrNull {
+                val penalty = when (it.landmark.kind) {
+                    "historic", "tourism" -> 0.0
+                    "leisure" -> 12.0
+                    "amenity" -> 20.0
+                    else -> 32.0
+                }
+                it.distanceMeters + penalty
             } ?: return@launch
             if (recent - lastTourSpokenAt < 90_000L) return@launch
             val side = SurroundingsPolicy.directionText(candidate, heading != null)
