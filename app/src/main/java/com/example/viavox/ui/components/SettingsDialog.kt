@@ -91,6 +91,7 @@ fun SettingsDialog(
     var voiceMenuExpanded by remember { mutableStateOf(false) }
     var advancedFranciscaExpanded by remember { mutableStateOf(false) }
     var voicePreviewError by remember { mutableStateOf(false) }
+    var advancedExpanded by remember { mutableStateOf(false) }
 
     DisposableEffect(context) {
         val catalog = AndroidVoiceCatalog(context) { voices ->
@@ -130,49 +131,6 @@ fun SettingsDialog(
                         color = muted,
                         fontSize = 12.sp,
                         modifier = Modifier.padding(top = 3.dp, bottom = 19.dp)
-                    )
-
-                    SectionTitle("Como você está se deslocando?")
-                    Text(
-                        text = "O indicador muda imediatamente para carro, moto ou caminhada.",
-                        color = muted, fontSize = 12.sp,
-                        modifier = Modifier.padding(top = 4.dp,bottom = 9.dp)
-                    )
-                    val chosenMode = com.example.viavox.model.VehicleMode.from(config.vehicleType)
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(bottom = 9.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        listOf(
-                            Triple(com.example.viavox.model.VehicleMode.CAR,"🚗 Carro","vehicle_car_btn"),
-                            Triple(com.example.viavox.model.VehicleMode.MOTORCYCLE,"🏍 Moto","vehicle_moto_btn"),
-                            Triple(com.example.viavox.model.VehicleMode.WALKING,"🚶 A pé","vehicle_walking_btn")
-                        ).forEach { (mode,label,tag) ->
-                            val selected = chosenMode == mode
-                            Button(
-                                onClick = { onVehicleTypeChanged(mode.storedValue) },
-                                modifier = Modifier.weight(1f).testTag(tag),
-                                contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                                    horizontal = 3.dp, vertical = 8.dp
-                                ),
-                                shape = RoundedCornerShape(11.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = if (selected) accent else Color.White.copy(alpha = 0.08f)
-                                )
-                            ) {
-                                Text(
-                                    label,
-                                    color = if (selected) Color(0xFF07192D) else white,
-                                    fontWeight = FontWeight.SemiBold,
-                                    fontSize = 11.sp,maxLines = 1
-                                )
-                            }
-                        }
-                    }
-                    Text(
-                        text = com.example.viavox.model.SupportedRoutingProfile.disclosure(chosenMode),
-                        color = muted, fontSize = 11.sp,lineHeight = 15.sp,
-                        modifier = Modifier.padding(bottom = 15.dp)
                     )
 
                     SectionTitle("Voz da navegação")
@@ -406,27 +364,7 @@ fun SettingsDialog(
                     HorizontalDivider(color = Color.White.copy(alpha = 0.09f))
                     Spacer(Modifier.height(14.dp))
 
-                    SectionTitle("Intervalo entre referências")
-                    Text(
-                        "As mudanças de rua são anunciadas independentemente deste intervalo.",
-                        color = muted,
-                        fontSize = 12.sp,
-                        lineHeight = 17.sp,
-                        modifier = Modifier.padding(vertical = 7.dp)
-                    )
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(7.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        IntervalChip("12 s", config.minIntervalSeconds == 12, { onIntervalChanged(12) }, Modifier.weight(1f))
-                        IntervalChip("20 s", config.minIntervalSeconds == 20, { onIntervalChanged(20) }, Modifier.weight(1f))
-                        IntervalChip("35 s", config.minIntervalSeconds == 35, { onIntervalChanged(35) }, Modifier.weight(1f))
-                    }
-                    Spacer(Modifier.height(18.dp))
-                    HorizontalDivider(color = Color.White.copy(alpha = 0.09f))
-                    Spacer(Modifier.height(15.dp))
-
-                    SectionTitle("Tela bloqueada e segundo plano")
+                    SectionTitle("Narração em segundo plano")
                     CategoryToggle(
                         "Continuar narrando em segundo plano",
                         config.backgroundVoiceEnabled
@@ -440,6 +378,10 @@ fun SettingsDialog(
                     )
                     HorizontalDivider(color = Color.White.copy(alpha = 0.09f))
                     Spacer(Modifier.height(12.dp))
+                    TextButton(onClick = { advancedExpanded = !advancedExpanded }) {
+                        Text(if (advancedExpanded) "Ocultar opções avançadas" else "Mostrar opções avançadas", color = accent)
+                    }
+                    if (advancedExpanded) {
                     SectionTitle("Pontos de referência")
                     CategoryToggle("Narrar pontos de referência", config.narratePoiEnabled) {
                         onPoiNarrationToggled(it)
@@ -469,7 +411,7 @@ fun SettingsDialog(
                     HorizontalDivider(color = Color.White.copy(alpha = 0.09f))
                     Spacer(Modifier.height(15.dp))
 
-                    SectionTitle("Circunscrição & Segurança Pública")
+                    SectionTitle("Recursos territoriais e alertas")
                     Text(
                         "Consciência situacional avançada para condutores, motoristas de app e cidadãos.",
                         color = muted,
@@ -537,6 +479,7 @@ fun SettingsDialog(
                             ),
                             modifier = Modifier.fillMaxWidth().testTag("google_api_key_input")
                         )
+                    }
                     }
                 }
 
