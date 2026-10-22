@@ -659,6 +659,14 @@ class ViaVoxTrackingService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        val repeatIntent = Intent(this, ViaVoxTrackingService::class.java).apply {
+            action = ACTION_REPEAT_SPEECH
+        }
+        val repeatPendingIntent = PendingIntent.getService(
+            this, 5, repeatIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
         val nav = ActiveNavigationRepository.state.value
         val content = if (nav.navigating && nav.route != null) {
             "Navegando para ${nav.route.destination.name}"
@@ -675,6 +683,7 @@ class ViaVoxTrackingService : Service() {
             .setContentIntent(openAppPendingIntent)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
+            .addAction(android.R.drawable.ic_lock_silent_mode_off, "Onde estou?", repeatPendingIntent)
             .addAction(
                 android.R.drawable.ic_media_pause,
                 getString(R.string.notification_stop_action),
