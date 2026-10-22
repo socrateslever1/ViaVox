@@ -66,12 +66,10 @@ class MainActivity : ComponentActivity() {
                     val granted = fineGranted || coarseGranted
                     viewModel.onPermissionResult(granted)
 
-                    if (granted && !viewModel.isManuallyPaused()) {
-                        viewModel.startTracking()
-                    }
+                    // Permission only: tracking begins after an explicit user action.
                 }
 
-                // Automatically request permissions on startup and start tracking when authorized
+                // Request permission on startup, but never start tracking without user action
                 LaunchedEffect(Unit) {
                     val fine = ContextCompat.checkSelfPermission(
                         this@MainActivity,
@@ -85,9 +83,7 @@ class MainActivity : ComponentActivity() {
 
                     if (fine || coarse) {
                         viewModel.onPermissionResult(true)
-                        if (!state.isActive && !viewModel.isManuallyPaused()) {
-                            viewModel.startTracking()
-                        }
+                        // Do not auto-start GPS simply because permission is granted.
                     } else {
                         val permissionsToRequest = buildRequiredPermissionsList()
                         permissionLauncher.launch(permissionsToRequest)
