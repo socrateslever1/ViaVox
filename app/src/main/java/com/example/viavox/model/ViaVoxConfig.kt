@@ -19,7 +19,10 @@ data class ViaVoxConfig(
     val vehicleType: String = "car", // "car", "motorcycle" or "walking"
     val enableSafetyAlerts: Boolean = true, // Speed cameras and tolls
     val enablePoliceCircumscription: Boolean = true, // Police districts / DIPs / CICOMs
-    val googleMapsApiKey: String = "" // Optional hybrid data enrichment
+    val googleMapsApiKey: String = "", // Optional hybrid data enrichment
+    val assistanceMode: String = "explorador",
+    val surroundingsRadiusMeters: Int = 200,
+    val tourEnabled: Boolean = false
 ) {
     /** Configuration presence does not guarantee Azure availability; an audio test does. */
     fun hasFranciscaSettings(): Boolean =
@@ -50,6 +53,9 @@ data class ViaVoxConfig(
             .putBoolean("safety_alerts", enableSafetyAlerts)
             .putBoolean("police_circ", enablePoliceCircumscription)
             .putString("google_maps_key", googleMapsApiKey.trim())
+            .putString("assistance_mode", AssistanceMode.from(assistanceMode).storedValue)
+            .putInt("surroundings_radius_meters", surroundingsRadiusMeters.coerceIn(50,500))
+            .putBoolean("tour_enabled", tourEnabled)
             .apply()
     }
 
@@ -72,7 +78,10 @@ data class ViaVoxConfig(
                 vehicleType = VehicleMode.from(prefs.getString("vehicle_type", "car")).storedValue,
                 enableSafetyAlerts = prefs.getBoolean("safety_alerts", true),
                 enablePoliceCircumscription = prefs.getBoolean("police_circ", true),
-                googleMapsApiKey = prefs.getString("google_maps_key", "")?.trim().orEmpty()
+                googleMapsApiKey = prefs.getString("google_maps_key", "")?.trim().orEmpty(),
+                assistanceMode = AssistanceMode.from(prefs.getString("assistance_mode", "explorador")).storedValue,
+                surroundingsRadiusMeters = prefs.getInt("surroundings_radius_meters", 200).coerceIn(50,500),
+                tourEnabled = prefs.getBoolean("tour_enabled", false)
             )
         }
     }
