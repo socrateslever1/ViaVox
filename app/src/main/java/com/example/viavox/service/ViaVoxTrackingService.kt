@@ -147,9 +147,12 @@ class ViaVoxTrackingService : Service() {
                 if (TrackingRepository.state.value.isVoiceEnabled) {
                     poiAnnouncements.roadWasAnnounced(System.currentTimeMillis())
                 }
-                speakIfAllowed(
-                    transition.sentence(), false,
-                    SpeechKind.GEOGRAPHY, "geo:" + transition.dedupeKey()
+                val mode = AssistanceMode.from(currentConfig.assistanceMode)
+                val adjusted = if (mode == AssistanceMode.EXPLORER)
+                    transition.copy(zone = null) else transition
+                if (!adjusted.isEmpty()) speakIfAllowed(
+                    adjusted.sentence(), false,
+                    SpeechKind.GEOGRAPHY, "geo:" + adjusted.dedupeKey()
                 )
             },
             onStatusMessage = { status ->
