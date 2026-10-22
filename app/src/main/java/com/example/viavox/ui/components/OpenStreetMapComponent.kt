@@ -352,7 +352,7 @@ fun OpenStreetMapComponent(
     val labelTextPaint = remember {
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = android.graphics.Color.rgb(22, 45, 68)
-            textSize = 26f
+            textSize = 18f
             textAlign = Paint.Align.CENTER
             isFakeBoldText = true
         }
@@ -360,11 +360,11 @@ fun OpenStreetMapComponent(
     val labelHaloPaint = remember {
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = android.graphics.Color.WHITE
-            textSize = 26f
+            textSize = 18f
             textAlign = Paint.Align.CENTER
             isFakeBoldText = true
             style = Paint.Style.STROKE
-            strokeWidth = 6f
+            strokeWidth = 4f
         }
     }
     val tilePaint = remember {
@@ -576,30 +576,59 @@ fun OpenStreetMapComponent(
                 )
             }
 
-            // 5. Draw ArcGIS Manaus Reference Points
+            // 5. Render decluttered ArcGIS landmarks. Base map tiles already contain labels.
+            // The overlay must never print every fetched business name on top of the streets.
             if (showArcGisReferences && cameraZoom >= ManausArcGisLayer.MIN_ZOOM) {
-                arcGisReferences.forEach { place ->
+                val occupiedLabels = mutableListOf<RectF>()
+                val occupiedPins = mutableListOf<Offset>()
+                val labelLimit = when {
+                    navigating -> 0
+                    cameraZoom >= 18.5 -> 12
+                    cameraZoom >= 17.5 -> 8
+                    cameraZoom >= 16.5 -> 4
+                    else -> 0
+                }
+                val pinLimit = when {
+                    navigating -> 14
+                    cameraZoom >= 17.5 -> 38
+                    else -> 22
+                }
+                var labelsPlaced = 0
+                var pinsPlaced = 0
+                for (place in arcGisReferences) {
+                    if (pinsPlaced >= pinLimit) break
                     val pt = WebMercatorMath.latLonToScreen(
                         place.latitude, place.longitude,
                         cx, cy, cameraLat, cameraLon, cameraZoom, cameraBearing.toDouble()
                     )
-                    if (pt.x in -60f..(size.width + 60f) && pt.y in -60f..(size.height + 60f)) {
-                        drawCircle(color = Color.White, radius = 14f, center = pt)
-                        drawCircle(color = Color(0xFF02A69C), radius = 10f, center = pt)
-                        if (place.shortLabel.isNotBlank()) {
+                    if (pt.x !in 24f..(size.width - 24f) ||
+                        pt.y !in 115f..(size.height - 180f)) continue
+                    // Spatial thinning prevents huge clusters of identical markers.
+                    if (occupiedPins.any { other ->
+                            hypot(other.x - pt.x, other.y - pt.y) < 58f
+                        }) continue
+                    occupiedPins.add(pt)
+                    pinsPlaced++
+                    drawCircle(color = Color.White, radius = 10f, center = pt)
+                    drawCircle(color = Color(0xFF02A69C), radius = 7f, center = pt)
+
+                    if (labelsPlaced < labelLimit && place.shortLabel.isNotBlank()) {
+                        val title = place.shortLabel.trim().let {
+                            if (it.length > 22) it.take(21).trimEnd() + "…" else it
+                        }
+                        val labelWidth = labelTextPaint.measureText(title)
+                        val box = RectF(
+                            pt.x - labelWidth / 2f - 8f, pt.y + 11f,
+                            pt.x + labelWidth / 2f + 8f, pt.y + 39f
+                        )
+                        if (box.left >= 10f && box.right <= size.width - 10f &&
+                            box.bottom <= size.height - 180f &&
+                            occupiedLabels.none { RectF.intersects(it, box) }) {
+                            occupiedLabels.add(RectF(box).apply { inset(-16f, -16f) })
+                            labelsPlaced++
                             drawIntoCanvas { canvas ->
-                                canvas.nativeCanvas.drawText(
-                                    place.shortLabel,
-                                    pt.x,
-                                    pt.y + 34f,
-                                    labelHaloPaint
-                                )
-                                canvas.nativeCanvas.drawText(
-                                    place.shortLabel,
-                                    pt.x,
-                                    pt.y + 34f,
-                                    labelTextPaint
-                                )
+                                canvas.nativeCanvas.drawText(title, pt.x, pt.y + 30f, labelHaloPaint)
+                                canvas.nativeCanvas.drawText(title, pt.x, pt.y + 30f, labelTextPaint)
                             }
                         }
                     }
