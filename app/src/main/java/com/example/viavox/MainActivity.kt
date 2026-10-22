@@ -114,6 +114,10 @@ class MainActivity : ComponentActivity() {
                     onSafetyAlertsToggled = { viewModel.updateSafetyAlerts(it) },
                     onPoliceCircumscriptionToggled = { viewModel.updatePoliceCircumscription(it) },
                     onGoogleMapsApiKeyChanged = { viewModel.updateGoogleMapsApiKey(it) },
+                    onAssistanceModeChanged = { viewModel.updateAssistanceMode(it) },
+                    onRadiusChanged = { viewModel.updateSurroundingsRadius(it) },
+                    onTourToggled = { viewModel.toggleTour(it) },
+                    onScan = { viewModel.scanSurroundings(it) },
                     onStartTracking = {
                         val fine = ContextCompat.checkSelfPermission(
                             this@MainActivity,
