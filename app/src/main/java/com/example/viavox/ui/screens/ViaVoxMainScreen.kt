@@ -29,6 +29,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.example.viavox.model.PoiCategory
 import com.example.viavox.model.TrackingState
+import com.example.viavox.model.ScanDirection
 import com.example.viavox.ui.components.NavigationSearchAndActions
 import com.example.viavox.ui.components.NavigationRouteCard
 import com.example.viavox.ui.components.ActiveNavigationBanner
@@ -62,6 +63,10 @@ fun ViaVoxMainScreen(
     onSafetyAlertsToggled: (Boolean) -> Unit = {},
     onPoliceCircumscriptionToggled: (Boolean) -> Unit = {},
     onGoogleMapsApiKeyChanged: (String) -> Unit = {},
+    onAssistanceModeChanged: (String) -> Unit = {},
+    onRadiusChanged: (Int) -> Unit = {},
+    onTourToggled: (Boolean) -> Unit = {},
+    onScan: (ScanDirection) -> Unit = {},
     onStartTracking: () -> Unit,
     onStopTracking: () -> Unit,
     onToggleVoice: (Boolean) -> Unit,
@@ -90,6 +95,8 @@ fun ViaVoxMainScreen(
                 onOpenPlaces = navigation::showSavedPlaces,
                 onOpenSettings = onOpenSettings,
                 onOpenMap = { mapVisible = true },
+                onSelectMode = onAssistanceModeChanged,
+                onScan = onScan,
                 modifier = Modifier.fillMaxSize().safeDrawingPadding()
             )
         } else {
@@ -326,6 +333,9 @@ fun ViaVoxMainScreen(
                 onSafetyAlertsToggled = onSafetyAlertsToggled,
                 onPoliceCircumscriptionToggled = onPoliceCircumscriptionToggled,
                 onGoogleMapsApiKeyChanged = onGoogleMapsApiKeyChanged,
+                onAssistanceModeChanged = onAssistanceModeChanged,
+                onRadiusChanged = onRadiusChanged,
+                onTourToggled = onTourToggled,
                 onDismiss = onCloseSettings
             )
         }
