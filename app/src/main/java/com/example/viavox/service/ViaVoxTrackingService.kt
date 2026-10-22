@@ -647,6 +647,100 @@ class ViaVoxTrackingService : Service() {
         }
     }
 
+    private fun headingForScan(state: com.example.viavox.model.TrackingState): Float? {
+        if (state.hasBearing && state.speedKmh >= 8f &&
+            (state.accuracyMeters ?: 100) <= 25) return state.bearing
+        return deviceHeading.headingOrNull()
+    }
+
+    private fun scanSurroundings(direction: ScanDirection) {
+        if (!isTrackingRunning) return
+        val state = TrackingRepository.state.value
+        if (!state.hasLocationFix || (state.accuracyMeters ?: 100) > 55) {
+            speakIfAllowed("Aguardando GPS mais preciso para consultar os arredores.",
+                true, SpeechKind.USER_REQUEST, "scan-gps")
+            return
+        }
+        if (direction == ScanDirection.FRONT && headingForScan(state) == null) {
+            speakIfAllowed("Não consegui confirmar a direção à frente. Calibre a bússola ou comece a caminhar.",
+                true, SpeechKind.USER_REQUEST, "scan-heading")
+            return
+        }
+        scanJob?.cancel()
+        scanJob = serviceScope.launch {
+            val points = surroundings.nearby(
+                state.latitude, state.longitude, currentConfig.surroundingsRadiusMeters
+            )
+            val latest = TrackingRepository.state.value
+            if (!isTrackingRunning || !latest.hasLocationFix) return@launch
+            val heading = headingForScan(latest)
+            if (direction == ScanDirection.FRONT && heading == null) {
+                speakIfAllowed("A direção à frente ficou indisponível.",
+                    true, SpeechKind.USER_REQUEST, "scan-heading-lost")
+                return@launch
+            }
+            val chosen = SurroundingsPolicy.select(
+                points, latest.latitude, latest.longitude,
+                currentConfig.surroundingsRadiusMeters, direction, heading,
+                latest.accuracyMeters?.toFloat() ?: 100f
+            )
+            val message = SurroundingsPolicy.scanSpeech(chosen, direction, heading != null)
+            TrackingRepository.updatePoiStatus(message)
+            speakIfAllowed(message, true, SpeechKind.USER_REQUEST,
+                "scan:" + direction.name + ":" + System.currentTimeMillis())
+        }
+    }
+
+    private fun maybeNarrateTour(location: Location) {
+        if (!currentConfig.tourEnabled ||
+            AssistanceMode.from(currentConfig.assistanceMode) != AssistanceMode.ACCESSIBILITY ||
+            !TrackingRepository.state.value.isVoiceEnabled || !isTrackingRunning) return
+        val now = System.currentTimeMillis()
+        if (now - lastTourCheckedAt < 15_000L || tourJob?.isActive == true ||
+            now - lastTourSpokenAt < 90_000L) return
+        if (!location.hasSpeed() || location.speed < 0.7f ||
+            !location.hasAccuracy() || location.accuracy > 22f) return
+        lastTourCheckedAt = now
+        tourJob = serviceScope.launch {
+            val points = surroundings.nearby(
+                location.latitude, location.longitude,
+                currentConfig.surroundingsRadiusMeters.coerceAtMost(250), automatic = true
+            )
+            val fix = TrackingRepository.state.value
+            if (!isTrackingRunning || !currentConfig.tourEnabled ||
+                AssistanceMode.from(currentConfig.assistanceMode) != AssistanceMode.ACCESSIBILITY ||
+                !fix.hasLocationFix || (fix.accuracyMeters ?: 100) > 22 ||
+                fix.speedKmh < 2.5f || fix.isSpeaking) return@launch
+            val heading = headingForScan(fix)
+            val recent = System.currentTimeMillis()
+            tourSpoken.entries.removeAll { recent - it.value >= 45 * 60_000L }
+            val candidates = SurroundingsPolicy.select(
+                points, fix.latitude, fix.longitude, 100,
+                ScanDirection.AROUND, heading,
+                fix.accuracyMeters?.toFloat() ?: 100f, limit = 8
+            )
+            val candidate = candidates.firstOrNull {
+                it.landmark.id !in tourSpoken &&
+                    it.distanceMeters + (fix.accuracyMeters ?: 100) <= 85.0 &&
+                    (heading == null || it.angle == null ||
+                        kotlin.math.abs(it.angle) <= 105.0)
+            } ?: return@launch
+            if (recent - lastTourSpokenAt < 90_000L) return@launch
+            val side = SurroundingsPolicy.directionText(candidate, heading != null)
+            val message = if (!candidate.landmark.approximatePoint &&
+                candidate.distanceMeters <= 45.0 && heading != null)
+                "Você está passando próximo de " + candidate.landmark.name + ", " + side + "."
+            else candidate.landmark.name + " nas proximidades, " +
+                SurroundingsPolicy.metersText(candidate.distanceMeters) + "."
+            if (speakIfAllowed(message, false, SpeechKind.TOUR,
+                "tour:" + candidate.landmark.id)) {
+                tourSpoken[candidate.landmark.id] = recent
+                lastTourSpokenAt = recent
+                TrackingRepository.updatePoiStatus(message)
+            }
+        }
+    }
+
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
