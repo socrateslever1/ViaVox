@@ -10,7 +10,8 @@ enum class SpeechKind(val priority: Int, val maxAgeMs: Long) {
     GEOGRAPHY(3, 25_000L),
     SAFETY(3, 12_000L),
     USER_REQUEST(4, 60_000L),
-    POI(1, 9_000L)
+    POI(1, 9_000L),
+    TOUR(1, 10_000L)
 }
 
 data class SpeechEvent(
@@ -59,9 +60,10 @@ class SpeechOrchestrator(
         if (!force && (active?.key == key || waiting.any { it.key == key })) return false
         // Fresh street/area update makes a pending old geographical fix obsolete.
         if (kind == SpeechKind.GEOGRAPHY) waiting.removeAll {
-            it.kind == SpeechKind.GEOGRAPHY
+            it.kind == SpeechKind.GEOGRAPHY || it.kind == SpeechKind.TOUR
         }
         if (kind == SpeechKind.POI) waiting.removeAll { it.kind == SpeechKind.POI }
+        if (kind == SpeechKind.TOUR) waiting.removeAll { it.kind == SpeechKind.TOUR }
         waiting.add(event)
         if (waiting.size > maxQueue) {
             val last = waiting.minWithOrNull(
