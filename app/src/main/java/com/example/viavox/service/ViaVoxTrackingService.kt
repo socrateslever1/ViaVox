@@ -22,6 +22,10 @@ import com.example.viavox.data.NavigationNetworkService
 import com.example.viavox.model.NavigationRoute
 import com.example.viavox.data.NominatimService
 import com.example.viavox.data.PoiDiscoveryService
+import com.example.viavox.data.SurroundingsRepository
+import com.example.viavox.model.AssistanceMode
+import com.example.viavox.model.ScanDirection
+import com.example.viavox.model.SurroundingsPolicy
 import com.example.viavox.data.TrackingRepository
 import com.example.viavox.data.TripRecordingRepository
 import com.example.viavox.model.TripPoint
@@ -44,6 +48,13 @@ class ViaVoxTrackingService : Service() {
     private var poiJob: Job? = null
     private var lastPoiCheckTimestamp = 0L
     private val poiAnnouncements = PoiAnnouncementCoordinator()
+    private val surroundings = SurroundingsRepository()
+    private lateinit var deviceHeading: DeviceHeadingProvider
+    private var scanJob: Job? = null
+    private var tourJob: Job? = null
+    private var lastTourCheckedAt = 0L
+    private var lastTourSpokenAt = 0L
+    private val tourSpoken = mutableMapOf<String, Long>()
 
     private lateinit var tripRecorder: ServiceTripRecorder
     private lateinit var recorderReady: Deferred<com.example.viavox.data.TripRecordingState>
@@ -73,6 +84,7 @@ class ViaVoxTrackingService : Service() {
         currentConfig = ViaVoxConfig.loadFrom(prefs)
         val initialVoiceEnabled = prefs.getBoolean("voice_enabled", true)
         navigationStore = NavigationSessionStore(this)
+        deviceHeading = DeviceHeadingProvider(this)
         tripRecorder = ServiceTripRecorder(this)
         recorderReady = serviceScope.async(Dispatchers.IO) { tripRecorder.restore() }
 
@@ -234,6 +246,8 @@ class ViaVoxTrackingService : Service() {
             ACTION_NAV_STOP -> finishNavigationSession()
             ACTION_STOP -> stopForegroundTracking()
             ACTION_REPEAT_SPEECH -> repeatCurrentSpeech()
+            ACTION_SCAN_AROUND -> scanSurroundings(ScanDirection.AROUND)
+            ACTION_SCAN_FRONT -> scanSurroundings(ScanDirection.FRONT)
             ACTION_TEST_VOICE -> speakIfAllowed(
                 "ViaVox. Teste de voz em português.",true,SpeechKind.USER_REQUEST,"voice-test"
             )
@@ -323,6 +337,7 @@ class ViaVoxTrackingService : Service() {
             if (currentConfig.narratePoiEnabled) "Buscando pontos de referência próximos..."
             else "Referências silenciadas nas configurações"
         )
+        deviceHeading.start()
         locationTracker.startTracking()
     }
 
@@ -330,6 +345,14 @@ class ViaVoxTrackingService : Service() {
         Log.d(TAG, "Stopping foreground tracking")
         isTrackingRunning = false
         locationTracker.stopTracking()
+        deviceHeading.stop()
+        scanJob?.cancel()
+        tourJob?.cancel()
+        scanJob = null
+        tourJob = null
+        lastTourCheckedAt = 0L
+        lastTourSpokenAt = 0L
+        tourSpoken.clear()
         finishNavigationSession()
         speechQueue.cancelAll()
         ttsManager.stop()
@@ -393,6 +416,7 @@ class ViaVoxTrackingService : Service() {
         onNavigationFix(location)
         // Identify current street or street transition
         roadEngine.onLocationUpdate(location)
+        maybeNarrateTour(location)
 
         // POI discovery is independent of the road-announcement cooldown:
         // 25-second scan delays previously skipped whole landmarks at driving speeds.
@@ -726,6 +750,9 @@ class ViaVoxTrackingService : Service() {
         poiJob?.cancel()
         poiJob = null
         poiAnnouncements.reset()
+        scanJob?.cancel()
+        tourJob?.cancel()
+        if (::deviceHeading.isInitialized) deviceHeading.stop()
         serviceScope.cancel()
         tripRecorder.close()
     }
@@ -744,6 +771,8 @@ class ViaVoxTrackingService : Service() {
         const val ACTION_NAV_STOP = "com.example.viavox.ACTION_NAV_STOP"
         const val ACTION_STOP = "com.example.viavox.ACTION_STOP"
         const val ACTION_REPEAT_SPEECH = "com.example.viavox.ACTION_REPEAT_SPEECH"
+        const val ACTION_SCAN_AROUND = "com.example.viavox.ACTION_SCAN_AROUND"
+        const val ACTION_SCAN_FRONT = "com.example.viavox.ACTION_SCAN_FRONT"
         const val ACTION_TEST_VOICE = "com.example.viavox.ACTION_TEST_VOICE"
         const val ACTION_NAV_GUIDANCE = "com.example.viavox.ACTION_NAV_GUIDANCE"
         private const val EXTRA_NAV_TEXT = "navigation_text"
@@ -790,6 +819,11 @@ class ViaVoxTrackingService : Service() {
                 action = ACTION_STOP
             }
             context.startService(intent)
+        }
+
+        fun scan(context: Context, direction: ScanDirection) {
+            val action = if (direction == ScanDirection.AROUND) ACTION_SCAN_AROUND else ACTION_SCAN_FRONT
+            context.startService(Intent(context, ViaVoxTrackingService::class.java).apply { this.action = action })
         }
 
         fun repeatSpeech(context: Context) {
