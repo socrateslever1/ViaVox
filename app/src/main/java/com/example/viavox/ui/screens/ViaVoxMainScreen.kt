@@ -78,6 +78,27 @@ fun ViaVoxMainScreen(
         val isWide = maxWidth >= 700.dp
         val compactHeight = maxHeight < 730.dp || maxWidth < 355.dp
 
+        var mapVisible by remember { mutableStateOf(false) }
+        if (!mapVisible) {
+            VoiceHome(
+                state = state,
+                onStart = onStartTracking,
+                onStop = onStopTracking,
+                onToggleVoice = onToggleVoice,
+                onRepeat = onRepeatSpeech,
+                onSavePlace = navigation::saveCurrentPoint,
+                onOpenPlaces = navigation::showSavedPlaces,
+                onOpenSettings = onOpenSettings,
+                onOpenMap = { mapVisible = true },
+                modifier = Modifier.fillMaxSize().safeDrawingPadding()
+            )
+        } else {
+            androidx.compose.material3.TextButton(
+                onClick = { mapVisible = false },
+                modifier = Modifier.align(Alignment.TopEnd).padding(top = 44.dp, end = 8.dp)
+            ) {
+                androidx.compose.material3.Text("Voltar ao narrador")
+            }
         // Full-bleed GPU vector map occupying the entire screen
         OpenStreetMapComponent(
             hasLocationFix = state.hasLocationFix,
@@ -263,6 +284,7 @@ fun ViaVoxMainScreen(
                     .fillMaxWidth()
             )
             }
+        }
         }
 
         SavedPlaceEditorDialog(
