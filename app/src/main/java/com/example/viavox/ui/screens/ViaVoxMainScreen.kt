@@ -93,12 +93,6 @@ fun ViaVoxMainScreen(
                 modifier = Modifier.fillMaxSize().safeDrawingPadding()
             )
         } else {
-            androidx.compose.material3.TextButton(
-                onClick = { mapVisible = false },
-                modifier = Modifier.align(Alignment.TopEnd).padding(top = 44.dp, end = 8.dp)
-            ) {
-                androidx.compose.material3.Text("Voltar ao narrador")
-            }
         // Full-bleed GPU vector map occupying the entire screen
         OpenStreetMapComponent(
             hasLocationFix = state.hasLocationFix,
@@ -285,6 +279,12 @@ fun ViaVoxMainScreen(
             )
             }
         }
+            androidx.compose.material3.Button(
+                onClick = { mapVisible = false },
+                modifier = Modifier.align(Alignment.CenterEnd).padding(end = 12.dp)
+            ) {
+                androidx.compose.material3.Text("Voz")
+            }
         }
 
         SavedPlaceEditorDialog(
