@@ -8,6 +8,8 @@ import com.example.viavox.data.TrackingRepository
 import com.example.viavox.model.PoiCategory
 import com.example.viavox.model.TrackingState
 import com.example.viavox.model.ViaVoxConfig
+import com.example.viavox.model.ScanDirection
+import com.example.viavox.model.AssistanceMode
 import com.example.viavox.service.ViaVoxTrackingService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -130,6 +132,28 @@ class ViaVoxViewModel(application: Application) : AndroidViewModel(application) 
             PoiCategory.PUBLIC -> current.copy(enablePublicPoi = enabled)
         }
         saveAndApplyConfig(newConfig)
+    }
+
+    fun updateAssistanceMode(mode: String) {
+        saveAndApplyConfig(state.value.config.copy(
+            assistanceMode = AssistanceMode.from(mode).storedValue
+        ))
+    }
+
+    fun updateSurroundingsRadius(meters: Int) {
+        saveAndApplyConfig(state.value.config.copy(
+            surroundingsRadiusMeters = meters.coerceIn(50,500)
+        ))
+    }
+
+    fun toggleTour(enabled: Boolean) {
+        saveAndApplyConfig(state.value.config.copy(tourEnabled = enabled))
+    }
+
+    fun scanSurroundings(direction: ScanDirection) {
+        if (state.value.isActive && state.value.hasLocationFix) {
+            ViaVoxTrackingService.scan(getApplication(), direction)
+        }
     }
 
     fun updateVehicleType(type: String) {
