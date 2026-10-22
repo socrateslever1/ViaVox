@@ -131,7 +131,7 @@ fun VoiceHome(
             Shortcut("Ao meu redor", Icons.Default.Explore, Modifier.weight(1f)) {
                 onScan(ScanDirection.AROUND)
             }
-            Shortcut("À minha frente", Icons.Default.AssistantNavigation, Modifier.weight(1f)) {
+            Shortcut("À minha frente", Icons.Default.Navigation, Modifier.weight(1f)) {
                 onScan(ScanDirection.FRONT)
             }
         }
