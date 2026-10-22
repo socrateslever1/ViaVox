@@ -50,6 +50,7 @@ import androidx.compose.ui.window.Dialog
 import com.example.viavox.R
 import com.example.viavox.model.PoiCategory
 import com.example.viavox.model.ViaVoxConfig
+import com.example.viavox.model.AssistanceMode
 import com.example.viavox.service.AndroidVoiceOption
 import com.example.viavox.service.VoiceDataInstaller
 import com.example.viavox.service.AndroidVoiceCatalog
@@ -75,6 +76,9 @@ fun SettingsDialog(
     onSafetyAlertsToggled: (Boolean) -> Unit = {},
     onPoliceCircumscriptionToggled: (Boolean) -> Unit = {},
     onGoogleMapsApiKeyChanged: (String) -> Unit = {},
+    onAssistanceModeChanged: (String) -> Unit = {},
+    onRadiusChanged: (Int) -> Unit = {},
+    onTourToggled: (Boolean) -> Unit = {},
     onDismiss: () -> Unit
 ) {
     var voiceUrl by remember(config.franciscaBrokerUrl) { mutableStateOf(config.franciscaBrokerUrl) }
@@ -132,6 +136,45 @@ fun SettingsDialog(
                         fontSize = 12.sp,
                         modifier = Modifier.padding(top = 3.dp, bottom = 19.dp)
                     )
+
+                    SectionTitle("Modo de assistência")
+                    Text("Escolha o nível de orientação. O Tour detalhado é opcional e só funciona na Acessibilidade.",
+                        color = muted, fontSize = 12.sp,
+                        modifier = Modifier.padding(top = 5.dp, bottom = 9.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.fillMaxWidth()) {
+                        AssistanceMode.entries.forEach { mode ->
+                            IntervalChip(mode.title,
+                                config.assistanceMode == mode.storedValue,
+                                { onAssistanceModeChanged(mode.storedValue) },
+                                Modifier.weight(1f))
+                        }
+                    }
+                    Spacer(Modifier.height(14.dp))
+                    SectionTitle("Alcance da busca em 360°")
+                    Text("Define até onde procurar pontos mapeados. Não altera a precisão do GPS.",
+                        color = muted, fontSize = 12.sp,
+                        modifier = Modifier.padding(top = 5.dp, bottom = 9.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.fillMaxWidth()) {
+                        listOf(100, 200, 350, 500).forEach { radius ->
+                            IntervalChip(radius.toString() + " m",
+                                config.surroundingsRadiusMeters == radius,
+                                { onRadiusChanged(radius) },
+                                Modifier.weight(1f))
+                        }
+                    }
+                    if (AssistanceMode.from(config.assistanceMode) == AssistanceMode.ACCESSIBILITY) {
+                        Spacer(Modifier.height(13.dp))
+                        CategoryToggle("Tour: narrar pontos de referência",
+                            config.tourEnabled) { onTourToggled(it) }
+                        Text("Durante o deslocamento, narra locais mapeados relevantes com pausas " +
+                            "de pelo menos 90 segundos. Não repete o mesmo local em 45 minutos. " +
+                            "A direção depende de bússola calibrada ou GPS em movimento.",
+                            color = muted, fontSize = 11.sp, lineHeight = 16.sp)
+                    }
+                    HorizontalDivider(color = Color.White.copy(alpha = 0.10f))
+                    Spacer(Modifier.height(14.dp))
 
                     SectionTitle("Voz da navegação")
                     Text(
