@@ -50,11 +50,9 @@ class ViaVoxViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun onAppHidden(keepSessionActive: Boolean = false) {
-        // Only explicitly active navigation / recording / background narration
-        // may hold the GPS foreground service after the UI is hidden.
-        if (keepSessionActive) return
-        val app = getApplication<Application>()
-        ViaVoxTrackingService.stop(app)
+        // Preserve a user-started foreground tracking session when switching apps
+        // or locking the phone. Only an explicit Stop ends this session.
+        if (keepSessionActive || state.value.isActive) return
     }
 
     fun toggleBackgroundVoice(enabled: Boolean) {
