@@ -45,9 +45,8 @@ class ViaVoxViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun onAppVisible() {
-        if (!isManuallyPaused() && state.value.hasLocationPermission) {
-            ViaVoxTrackingService.start(getApplication())
-        }
+        // Opening the UI must not activate location. An explicit session already
+        // running in the foreground service remains active independently.
     }
 
     fun onAppHidden(keepSessionActive: Boolean = false) {
