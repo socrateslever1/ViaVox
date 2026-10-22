@@ -303,7 +303,7 @@ function MapCanvas({
           source: 'bairros-source',
           paint: {
             'fill-color': ['get', 'color'],
-            'fill-opacity': 0.28
+            'fill-opacity': 0.18
           }
         });
 
@@ -313,8 +313,8 @@ function MapCanvas({
           source: 'bairros-source',
           paint: {
             'line-color': ['get', 'color'],
-            'line-width': 2.2,
-            'line-opacity': 0.95
+            'line-width': 1.8,
+            'line-opacity': 0.85
           }
         });
 
@@ -322,12 +322,16 @@ function MapCanvas({
           id: 'bairros-label',
           type: 'symbol',
           source: 'bairros-source',
+          maxzoom: 14.5,
           layout: {
             'text-field': ['concat', ['get', 'name'], '\n(', ['get', 'zona'], ')'],
             'text-size': 11,
             'text-font': ['Open Sans Semibold', 'Arial Unicode MS Bold'],
             'text-anchor': 'center',
-            'text-max-width': 8
+            'text-max-width': 8,
+            'text-allow-overlap': false,
+            'symbol-avoid-edges': true,
+            'text-padding': 8
           },
           paint: {
             'text-color': '#ffffff',
@@ -360,7 +364,7 @@ function MapCanvas({
           source: 'cicoms-source',
           paint: {
             'fill-color': ['get', 'color'],
-            'fill-opacity': 0.22
+            'fill-opacity': 0.14
           }
         });
 
@@ -370,8 +374,9 @@ function MapCanvas({
           source: 'cicoms-source',
           paint: {
             'line-color': ['get', 'color'],
-            'line-width': 2.2,
-            'line-opacity': 0.95
+            'line-width': 1.6,
+            'line-dasharray': [3, 2],
+            'line-opacity': 0.85
           }
         });
 
@@ -379,11 +384,15 @@ function MapCanvas({
           id: 'cicoms-label',
           type: 'symbol',
           source: 'cicoms-source',
+          minzoom: 12.5,
           layout: {
-            'text-field': ['get', 'name'],
-            'text-size': 10.5,
+            'text-field': ['coalesce', ['get', 'label'], ['get', 'name']],
+            'text-size': 10,
             'text-font': ['Open Sans Semibold', 'Arial Unicode MS Bold'],
-            'text-anchor': 'center'
+            'text-anchor': 'center',
+            'text-allow-overlap': false,
+            'symbol-avoid-edges': true,
+            'text-padding': 12
           },
           paint: {
             'text-color': '#fef08a',
@@ -396,8 +405,10 @@ function MapCanvas({
           if (e.features && e.features[0]) {
             const p = e.features[0].properties as any;
             onSelectPolygon({
-              title: p.name,
-              desc: 'Subárea e Circunscrição Territorial Policial da CICOM'
+              title: p.label || p.name,
+              desc: p.setor
+                ? `Subárea de patrulhamento da ${p.cicom || 'CICOM'} · ${p.setor}`
+                : 'Subárea e Circunscrição Territorial Policial da CICOM'
             });
           }
         });
@@ -426,11 +437,15 @@ function MapCanvas({
           id: 'sedes-label',
           type: 'symbol',
           source: 'sedes-source',
+          minzoom: 10.5,
           layout: {
             'text-field': ['get', 'name'],
-            'text-size': 10.5,
+            'text-size': 10,
             'text-offset': [0, 1.4],
-            'text-anchor': 'top'
+            'text-anchor': 'top',
+            'text-allow-overlap': false,
+            'symbol-avoid-edges': true,
+            'text-padding': 6
           },
           paint: {
             'text-color': '#bfdbfe',
@@ -1071,7 +1086,9 @@ export function App() {
           zone,
           neighbourhood: neighbourhood !== 'Bairro não identificado' ? neighbourhood : '',
           road,
-          cicom: enablePolice ? extractCicom(police) : ''
+          cicom: enablePolice ? extractCicom(police) : '',
+          venueName,
+          isInitial: true
         }));
         return;
       }
@@ -1089,7 +1106,8 @@ export function App() {
           void say(geographicAnnouncement({
             zone: changedZone ? zone : '',
             neighbourhood: changedNeighbourhood ? neighbourhood : '',
-            cicom: changedNeighbourhood && enablePolice ? extractCicom(police) : ''
+            cicom: (changedNeighbourhood || changedZone) && enablePolice ? extractCicom(police) : '',
+            isBoundaryCrossing: true
           }));
         }
         return;
@@ -1111,7 +1129,9 @@ export function App() {
             zone: changedZone ? zone : '',
             neighbourhood: changedNeighbourhood ? neighbourhood : '',
             road,
-            cicom: changedNeighbourhood && enablePolice ? extractCicom(police) : ''
+            cicom: (changedNeighbourhood || changedZone) && enablePolice ? extractCicom(police) : '',
+            venueName,
+            isRoadTransition: true
           }));
         }
       } else {
@@ -1526,9 +1546,14 @@ export function App() {
             disabled={!place || place.road === 'Via não identificada'}
             onClick={() => {
               if (!place) return;
-              const msg = place.venueName
-                ? `Você está no ${place.venueName}, bairro ${place.neighbourhood}.`
-                : `Você está na ${place.road}, bairro ${place.neighbourhood}.`;
+              const msg = geographicAnnouncement({
+                zone: place.zone,
+                neighbourhood: place.neighbourhood !== 'Bairro não identificado' ? place.neighbourhood : '',
+                road: place.road,
+                cicom: enablePolice ? extractCicom(place.police) : '',
+                venueName: place.venueName,
+                isInitial: true
+              });
               void say(msg);
             }}
           >

@@ -118,8 +118,7 @@ no workflow Android do GitHub antes de distribuição.
    publicação; manter fallback para o mapa viário.
 8. Validar visualmente web e APK em celular pequeno, tablet e orientação
    horizontal. Build automatizado não comprova layout ou comportamento em rota.
-9. Dividir o bundle web principal, atualmente com cerca de 1,34 MB minificado
-   (377 KB gzip); o build passa, mas o Vite alerta acima de 500 KB.
+9. Dividir o bundle web principal: concluído via `vite.config.ts` (`manualChunks` para `maplibre` e `react-vendor`, reduzindo o index principal de 1,34 MB para 258 KB).
 
 ## Revisão dos nomes de CICOM e DIP
 

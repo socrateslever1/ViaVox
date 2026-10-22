@@ -40,6 +40,34 @@ class PlaceTest {
     }
 
     @Test
+    fun testCompleteScenario_withZoneAndPolice() {
+        val place = Place(
+            road = "Avenida Torquato Tapajós",
+            neighbourhood = "Novo Israel",
+            zone = "Zona Norte",
+            policeDistrict = "18º DIP · 18ª CICOM"
+        )
+
+        val speech = place.toSpeechMessage(includePolice = true)
+        assertEquals(
+            "Você está agora na Zona Norte, no bairro Novo Israel, na área da 18ª CICOM, Avenida Torquato Tapajós.",
+            speech
+        )
+    }
+
+    @Test
+    fun testTransitionRespects1xCadence() {
+        val place = Place(
+            road = "Rua das Flores",
+            neighbourhood = "Novo Israel",
+            zone = "Zona Norte"
+        )
+
+        val speech = place.toSpeechMessage(isTransition = true, includeNeighbourhood = false)
+        assertEquals("Agora você está na Rua das Flores.", speech)
+    }
+
+    @Test
     fun testDisplaySubtitle() {
         val place = Place(
             road = "Avenida Constantino Nery",

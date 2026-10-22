@@ -48,17 +48,88 @@ export function extractCicom(policeLabel: string): string {
   return policeLabel.match(/\b\d{1,2}\s*[ªa]\s*CICOM\b/i)?.[0] ?? '';
 }
 
-export function geographicAnnouncement(parts: {
+export interface GeographicAnnouncementParts {
   zone?: string;
   neighbourhood?: string;
   road?: string;
   cicom?: string;
-}): string {
-  const sentences = [
-    parts.zone ? `Entrando na ${parts.zone}` : '',
-    parts.neighbourhood ? `Bairro ${parts.neighbourhood}` : '',
-    parts.road || '',
-    parts.cicom ? `Área da ${parts.cicom}` : ''
-  ].filter(Boolean);
-  return sentences.length ? `${sentences.join('. ')}.` : '';
+  venueName?: string;
+  isInitial?: boolean;
+  isRoadTransition?: boolean;
+  isBoundaryCrossing?: boolean;
+}
+
+export function geographicAnnouncement(parts: GeographicAnnouncementParts): string {
+  const cleanZone = parts.zone?.trim() || '';
+  const cleanNeighbourhood = (parts.neighbourhood?.trim() && parts.neighbourhood !== 'Bairro não identificado')
+    ? parts.neighbourhood.trim()
+    : '';
+  const rawCicom = parts.cicom?.trim() || '';
+  const cicom = extractCicom(rawCicom) || rawCicom;
+  const road = parts.road?.trim() || '';
+  const venue = parts.venueName?.trim() || '';
+
+  const zonePhrase = cleanZone
+    ? (cleanZone.toLowerCase().startsWith('zona') ? `na ${cleanZone}` : `na Zona ${cleanZone}`)
+    : '';
+  const neighbourhoodPhrase = cleanNeighbourhood ? `no bairro ${cleanNeighbourhood}` : '';
+  const cicomPhrase = cicom
+    ? (cicom.toLowerCase().includes('área da') ? cicom : `na área da ${cicom}`)
+    : '';
+
+  // 1. Boundary crossing while on the same road
+  if (parts.isBoundaryCrossing) {
+    const enteringParts = [
+      zonePhrase ? `entrando ${zonePhrase}` : '',
+      neighbourhoodPhrase ? (zonePhrase ? neighbourhoodPhrase : `entrando ${neighbourhoodPhrase}`) : '',
+      cicomPhrase
+    ].filter(Boolean);
+    if (!enteringParts.length) return '';
+    const res = enteringParts.join(', ');
+    return `${res.charAt(0).toUpperCase()}${res.slice(1)}.`;
+  }
+
+  // 2. Road transition (new road detected)
+  if (parts.isRoadTransition) {
+    const prefix = venue ? `Agora você está no ${venue}` : (road ? `Agora você está na ${road}` : '');
+    const boundaryParts = [
+      zonePhrase ? `entrando ${zonePhrase}` : '',
+      neighbourhoodPhrase ? (zonePhrase ? neighbourhoodPhrase : `entrando ${neighbourhoodPhrase}`) : '',
+      cicomPhrase
+    ].filter(Boolean);
+
+    if (prefix && boundaryParts.length) {
+      return `${prefix}, ${boundaryParts.join(', ')}.`;
+    }
+    if (prefix) {
+      return `${prefix}.`;
+    }
+    if (boundaryParts.length) {
+      return `${boundaryParts.join(', ')}.`;
+    }
+    return '';
+  }
+
+  // 3. Initial identification or full scenario (Cenário Completo: "Você está agora na Zona X, no bairro Y, na área da Nª CICOM, Rua Z.")
+  const contextParts = [zonePhrase, neighbourhoodPhrase, cicomPhrase].filter(Boolean);
+
+  if (venue) {
+    const ctx = contextParts.length ? `, ${contextParts.join(', ')}` : '';
+    const rd = road ? `, ${road}` : '';
+    return `Você está agora no ${venue}${ctx}${rd}.`;
+  }
+
+  if (contextParts.length && road) {
+    return `Você está agora ${contextParts.join(', ')}, ${road}.`;
+  }
+
+  if (contextParts.length) {
+    return `Você está agora ${contextParts.join(', ')}.`;
+  }
+
+  if (road) {
+    return `Você está agora na ${road}.`;
+  }
+
+  return '';
 }

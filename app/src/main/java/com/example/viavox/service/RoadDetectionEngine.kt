@@ -190,7 +190,11 @@ class RoadDetectionEngine(
             pendingCandidatePlace = null
             pendingCandidateCount = 0
 
-            val message = normalizedPlace.toSpeechMessage(isTransition = false)
+            val message = normalizedPlace.toSpeechMessage(
+                isTransition = false,
+                includeNeighbourhood = true,
+                includePolice = enablePoliceCircumscription
+            )
             onRoadAnnounceNeeded(message, true)
             onGeographicTransition?.invoke(GeographicTransition(
                 zone = normalizedPlace.zone.takeIf { it.isNotBlank() },
