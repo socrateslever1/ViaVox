@@ -23,6 +23,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.style.TextAlign
 import com.example.viavox.model.TrackingState
+import com.example.viavox.model.ScanDirection
+import com.example.viavox.model.AssistanceMode
 
 private val midnight = Color(0xFF07111F)
 private val panel = Color(0xFF102237)
@@ -40,9 +42,10 @@ fun VoiceHome(
     onOpenPlaces: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenMap: () -> Unit,
+    onSelectMode: (String) -> Unit,
+    onScan: (ScanDirection) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var activeProfile by remember { mutableStateOf("Explorador") }
     val place = state.place
     Column(
         modifier = modifier.fillMaxSize()
@@ -123,24 +126,40 @@ fun VoiceHome(
                 }
             }
         }
-        Text("SEU MODO DE EXPLORAR", color = soft, fontWeight = FontWeight.Bold, fontSize = 11.sp, letterSpacing = 1.sp)
+        Text("EXPLORAÇÃO POR VOZ", color = soft, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Shortcut("Ao meu redor", Icons.Default.Explore, Modifier.weight(1f)) {
+                onScan(ScanDirection.AROUND)
+            }
+            Shortcut("À minha frente", Icons.Default.AssistantNavigation, Modifier.weight(1f)) {
+                onScan(ScanDirection.FRONT)
+            }
+        }
+        Text("Varredura 360° de até " + state.config.surroundingsRadiusMeters + " m · ajuste o alcance nas configurações",
+            color = soft, fontSize = 11.sp)
+        Text("MODO DE ASSISTÊNCIA", color = soft, fontWeight = FontWeight.Bold,
+            fontSize = 11.sp, letterSpacing = 1.sp)
         Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-            listOf("Explorador", "Territorial", "Acessível").forEach { profile ->
-                val chosen = activeProfile == profile
+            AssistanceMode.entries.forEach { mode ->
+                val chosen = state.config.assistanceMode == mode.storedValue
                 Surface(
-                    modifier = Modifier.weight(1f).clickable { activeProfile = profile },
+                    modifier = Modifier.weight(1f).clickable { onSelectMode(mode.storedValue) },
                     shape = RoundedCornerShape(13.dp),
                     color = if (chosen) mint else panel,
                     border = BorderStroke(1.dp, if (chosen) mint else Color(0xFF345066))
                 ) {
-                    Text(profile, modifier = Modifier.padding(vertical = 13.dp, horizontal = 3.dp),
-                        color = if (chosen) midnight else Color.White, fontSize = 12.sp,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center, fontWeight = FontWeight.SemiBold)
+                    Text(mode.title, modifier = Modifier.padding(vertical = 13.dp, horizontal = 3.dp),
+                        color = if (chosen) midnight else Color.White, fontSize = 11.sp,
+                        textAlign = TextAlign.Center, fontWeight = FontWeight.SemiBold,
+                        maxLines = 1)
                 }
             }
         }
-        Text("Os modos de narração serão configuráveis. A seleção visual ainda não altera as regras de anúncio.",
-            color = soft, fontSize = 11.sp)
+        if (state.config.assistanceMode == AssistanceMode.ACCESSIBILITY.storedValue) {
+            Text(if (state.config.tourEnabled) "Tour ativo · referências especiais narradas com intervalos."
+                else "Tour desligado · ative nas configurações para ouvir referências durante o percurso.",
+                color = soft, fontSize = 11.sp)
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Shortcut("Meus lugares", Icons.Default.Home, Modifier.weight(1f), onOpenPlaces)
             Shortcut("Salvar aqui", Icons.Default.BookmarkAdd, Modifier.weight(1f), onSavePlace)
