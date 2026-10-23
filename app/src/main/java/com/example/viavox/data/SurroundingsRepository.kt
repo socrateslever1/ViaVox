@@ -8,6 +8,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -124,27 +125,44 @@ class SurroundingsRepository(
             );
             out center 220;
         """.trimIndent()
-        for (endpoint in ENDPOINTS) {
+        ENDPOINTS.forEachIndexed { index, endpoint ->
             try {
-                val req = Request.Builder().url(endpoint)
-                    .post(q.toRequestBody("text/plain; charset=utf-8".toMediaType()))
+                // GET works on the Overpass interpreter and avoids some mobile
+                // intermediaries that reject raw POST bodies. The secondary
+                // endpoint keeps form-compatible POST as an independent path.
+                val builder = Request.Builder()
                     .header("User-Agent", "ViaVox/1.0 geographic voice assistant")
-                    .build()
-                client.newCall(req).execute().use { response ->
-                    if (!response.isSuccessful) return@use
+                val request = if (index == 0) {
+                    builder.url(endpoint.toHttpUrl().newBuilder()
+                        .addQueryParameter("data", q).build()).get().build()
+                } else {
+                    builder.url(endpoint)
+                        .post(q.toRequestBody("text/plain; charset=utf-8".toMediaType()))
+                        .build()
+                }
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        Log.w("ViaVoxSurroundings", "Overpass HTTP ${response.code}")
+                        return@use
+                    }
                     val raw = response.body?.string().orEmpty()
-                    if (raw.length > 1_500_000) return@use
+                    if (raw.isBlank() || raw.length > 1_500_000) return@use
                     return parse(raw)
                 }
             } catch (e: Exception) {
-                Log.w("ViaVoxSurroundings", "Nearby service unavailable", e)
+                Log.w("ViaVoxSurroundings", "Nearby source failed", e)
             }
         }
         return null
     }
 
     private fun parse(raw: String): List<NearbyLandmark> {
-        val arr = JSONObject(raw).optJSONArray("elements") ?: return emptyList()
+        val payload = JSONObject(raw)
+        // Overpass may return HTTP 200 with a timeout/rate-limit remark.
+        val remark = payload.optString("remark").trim()
+        if (remark.isNotBlank()) throw IllegalStateException("Overpass: " + remark.take(150))
+        val arr = payload.optJSONArray("elements")
+            ?: throw IllegalStateException("Overpass returned no elements array")
         val candidates = mutableListOf<NearbyLandmark>()
         for (i in 0 until arr.length()) {
             val entry = arr.optJSONObject(i) ?: continue
