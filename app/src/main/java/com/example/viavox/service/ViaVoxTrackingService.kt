@@ -23,6 +23,7 @@ import com.example.viavox.model.NavigationRoute
 import com.example.viavox.data.NominatimService
 import com.example.viavox.data.PoiDiscoveryService
 import com.example.viavox.data.SurroundingsRepository
+import com.example.viavox.data.GeoReminderStore
 import com.example.viavox.data.RoadJunctionRepository
 import com.example.viavox.model.RoadJunctionPolicy
 import com.example.viavox.model.AssistanceMode
@@ -51,6 +52,7 @@ class ViaVoxTrackingService : Service() {
     private var lastPoiCheckTimestamp = 0L
     private val poiAnnouncements = PoiAnnouncementCoordinator()
     private val surroundings = SurroundingsRepository()
+    private lateinit var geoReminders: GeoReminderStore
     private val roadJunctions = RoadJunctionRepository()
     private var junctionJob: Job? = null
     private var lastJunctionCheck = 0L
@@ -91,6 +93,7 @@ class ViaVoxTrackingService : Service() {
         currentConfig = ViaVoxConfig.loadFrom(prefs)
         val initialVoiceEnabled = prefs.getBoolean("voice_enabled", true)
         navigationStore = NavigationSessionStore(this)
+        geoReminders = GeoReminderStore(this)
         deviceHeading = DeviceHeadingProvider(this)
         tripRecorder = ServiceTripRecorder(this)
         recorderReady = serviceScope.async(Dispatchers.IO) { tripRecorder.restore() }
@@ -180,6 +183,7 @@ class ViaVoxTrackingService : Service() {
         )
 
         createNotificationChannel()
+        createGeoReminderChannel()
         // Navigation ownership is in this foreground service. Restoring an
         // interrupted activity must never create two competing voices.
         val startupEpoch = navigationEpoch
@@ -438,6 +442,13 @@ class ViaVoxTrackingService : Service() {
         val hasBearing = location.hasBearing()
 
         TrackingRepository.updateCoordinates(lat, lon, accuracy, speedKmh, bearing, hasBearing)
+        if (location.hasAccuracy() && location.accuracy in 0.1f..25f) {
+            geoReminders.onFix(lat, lon, location.accuracy).forEach { reminder ->
+                notifyGeoReminder(reminder.id, reminder.title)
+                speakIfAllowed("Lembrete de localização: " + reminder.title, true,
+                    SpeechKind.USER_REQUEST, "reminder:" + reminder.id)
+            }
+        }
         if (TripRecordingRepository.state.value.recording) {
             val point = TripPoint(lat,lon,System.currentTimeMillis(),
                 if (location.hasAccuracy()) location.accuracy else 100f)
@@ -844,6 +855,45 @@ class ViaVoxTrackingService : Service() {
         }
     }
 
+    private fun createGeoReminderChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                GEO_REMINDER_CHANNEL_ID,
+                "Lembretes por localização",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Avisos solicitados ao voltar a um lugar"
+            }
+            getSystemService(NotificationManager::class.java)?.createNotificationChannel(channel)
+        }
+    }
+
+    private fun notifyGeoReminder(id: String, title: String) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+            != PackageManager.PERMISSION_GRANTED) return
+        val mainIntent = Intent(this, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        val pending = PendingIntent.getActivity(this, id.hashCode(), mainIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val notification = NotificationCompat.Builder(this, GEO_REMINDER_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle("ViaVox · Lembrete de localização")
+            .setContentText(title.take(120))
+            .setStyle(NotificationCompat.BigTextStyle().bigText(title.take(120)))
+            .setContentIntent(pending)
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_REMINDER)
+            .build()
+        try {
+            val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+            manager.notify(20_000 + (id.hashCode() and 0x3FFF), notification)
+        } catch (e: SecurityException) {
+            Log.w(TAG, "Notification permission denied for reminder", e)
+        }
+    }
+
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
@@ -961,6 +1011,7 @@ class ViaVoxTrackingService : Service() {
         private const val TAG = "ViaVoxTrackingService"
         const val NOTIFICATION_ID = 1001
         const val CHANNEL_ID = "viavox_tracking_channel"
+        const val GEO_REMINDER_CHANNEL_ID = "viavox_geographic_reminders"
 
         const val ACTION_START = "com.example.viavox.ACTION_START"
         const val ACTION_RECORD_START = "com.example.viavox.ACTION_RECORD_START"
