@@ -28,6 +28,7 @@ object TrackingRepository {
                 place = null,
                 currentPoi = null,
                 poiDirection = null,
+                surroundingsResult = null,
                 isSpeaking = false
             )
         }
@@ -55,6 +56,10 @@ object TrackingRepository {
         _state.update {
             it.copy(currentPoi = poi, poiDirection = direction)
         }
+    }
+
+    fun updateSurroundingsResult(message: String?) {
+        _state.update { it.copy(surroundingsResult = message) }
     }
 
     fun updatePoiStatus(message: String) {
