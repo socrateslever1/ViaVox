@@ -194,6 +194,12 @@ fun OpenStreetMapComponent(
     var tileTick by remember { mutableIntStateOf(0) }
     var tileSuccesses by remember { mutableIntStateOf(0) }
     var tileFailures by remember { mutableIntStateOf(0) }
+    var tileLoadTimedOut by remember { mutableStateOf(false) }
+    var tileRetryGeneration by remember { mutableIntStateOf(0) }
+    LaunchedEffect(selectedMapStyle, tileRetryGeneration) {
+        delay(15_000L)
+        if (tileSuccesses == 0) tileLoadTimedOut = true
+    }
     val cartoApiKey = remember(context) {
         prefs.getString("carto_basemaps_key", "").orEmpty()
     }
@@ -743,7 +749,7 @@ fun OpenStreetMapComponent(
             }
         }
 
-        if (tileSuccesses == 0 && tileFailures >= 3) {
+        if (tileSuccesses == 0 && (tileFailures >= 3 || tileLoadTimedOut)) {
             Surface(
                 modifier = Modifier.align(Alignment.Center).padding(horizontal = 24.dp)
                     .testTag("map_tiles_error"),
@@ -764,6 +770,8 @@ fun OpenStreetMapComponent(
                         onClick = {
                             tileRepository.retryFailedTiles()
                             tileFailures = 0
+                            tileLoadTimedOut = false
+                            tileRetryGeneration++
                             tileTick++
                         },
                         modifier = Modifier.testTag("retry_map_tiles")
@@ -771,6 +779,18 @@ fun OpenStreetMapComponent(
                         Text("Tentar carregar novamente", color = Color(0xFF34DAC3))
                     }
                 }
+            }
+        }
+        if (tileSuccesses == 0 && tileFailures < 3 && !tileLoadTimedOut) {
+            Surface(
+                modifier = Modifier.align(Alignment.Center).testTag("map_tiles_loading"),
+                color = Color(0xE510243A),
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
+            ) {
+                Text("Carregando ruas e bairros...",
+                    color = Color.White,
+                    fontSize = 13.sp,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
             }
         }
         Surface(
@@ -824,6 +844,10 @@ fun OpenStreetMapComponent(
                                 styleMenuExpanded = false
                                 if (selectedMapStyle != key) {
                                     selectedMapStyle = key
+                                    tileSuccesses = 0
+                                    tileFailures = 0
+                                    tileLoadTimedOut = false
+                                    tileRetryGeneration++
                                     prefs.edit().putString("map_style", key).apply()
                                 }
                             }
