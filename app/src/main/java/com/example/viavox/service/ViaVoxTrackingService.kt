@@ -760,6 +760,7 @@ class ViaVoxTrackingService : Service() {
         TrackingRepository.updateSurroundingsResult("Consultando referências mapeadas...")
         scanJob = serviceScope.launch {
             var finalResult: String? = null
+            var delivered = false
             try {
                 // The public map API is best effort. Timeout always yields a terminal result.
                 val result = withTimeout(20_000L) {
@@ -785,6 +786,9 @@ class ViaVoxTrackingService : Service() {
                 var provider = result.source
                 if (candidates.isEmpty() &&
                     ManausArcGisLayer.inCoverage(latest.latitude, latest.longitude)) {
+                    TrackingRepository.updateSurroundingsResult(
+                        "Consultando referências locais de Manaus..."
+                    )
                     val deltaLat = radius / 111_195.0
                     val deltaLon = radius / (111_195.0 *
                         kotlin.math.cos(Math.toRadians(latest.latitude)).coerceAtLeast(0.1))
@@ -807,7 +811,7 @@ class ViaVoxTrackingService : Service() {
                     candidates, latest.latitude, latest.longitude, radius,
                     direction, heading, latest.accuracyMeters?.toFloat() ?: 100f
                 )
-                finalResult = if (nearby.isNotEmpty()) {
+                val mainText = if (nearby.isNotEmpty()) {
                     SurroundingsPolicy.scanSpeech(nearby, direction, heading != null) +
                         " Fonte: $provider."
                 } else if (result.error != null && candidates.isEmpty()) {
@@ -815,12 +819,14 @@ class ViaVoxTrackingService : Service() {
                 } else SurroundingsPolicy.scanSpeech(
                     emptyList(), direction, heading != null
                 )
+                finalResult = mainText
 
                 // Announce immediate POI results instead of holding the whole scan
                 // behind a second potentially slow query for junction topology.
                 if (generation == scanGeneration) {
-                    TrackingRepository.updateSurroundingsResult(finalResult)
-                    speakIfAllowed(finalResult, true, SpeechKind.USER_REQUEST,
+                    TrackingRepository.updateSurroundingsResult(mainText)
+                    delivered = true
+                    speakIfAllowed(mainText, true, SpeechKind.USER_REQUEST,
                         "scan:" + direction.name + ":" + generation)
                 }
                 if (direction == ScanDirection.FRONT && heading != null &&
@@ -839,7 +845,7 @@ class ViaVoxTrackingService : Service() {
                         isTrackingRunning) {
                         val junctionText = RoadJunctionPolicy.describe(crossing)
                         TrackingRepository.updateSurroundingsResult(
-                            finalResult + "\n" + junctionText
+                            mainText + "\n" + junctionText
                         )
                         speakIfAllowed(junctionText, true, SpeechKind.USER_REQUEST,
                             "scan-junction:" + generation)
@@ -854,7 +860,7 @@ class ViaVoxTrackingService : Service() {
                 finalResult = "Falha na consulta dos arredores. Tente novamente."
             } finally {
                 if (isTrackingRunning && generation == scanGeneration &&
-                    finalResult != null) {
+                    finalResult != null && !delivered) {
                     TrackingRepository.updateSurroundingsResult(finalResult)
                     if (finalResult.startsWith("Falha") ||
                         finalResult.startsWith("Consulta de mapa") ||
