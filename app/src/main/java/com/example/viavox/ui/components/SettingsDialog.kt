@@ -407,15 +407,21 @@ fun SettingsDialog(
                     HorizontalDivider(color = Color.White.copy(alpha = 0.09f))
                     Spacer(Modifier.height(14.dp))
 
-                    SectionTitle("Narração em segundo plano")
+                    SectionTitle("Funcionamento em segundo plano")
+                    Text(
+                        "Depois que você ativa o GPS, o ViaVox permanece ativo com notificação " +
+                            "ao trocar de aplicativo ou apagar a tela. Ao tocar em Encerrar localização, " +
+                            "o rastreamento é interrompido.",
+                        color = muted, fontSize = 12.sp, lineHeight = 17.sp,
+                        modifier = Modifier.padding(vertical = 7.dp)
+                    )
                     CategoryToggle(
-                        "Continuar narrando em segundo plano",
+                        "Tentar restaurar sessão interrompida pelo Android",
                         config.backgroundVoiceEnabled
                     ) { onBackgroundVoiceToggled(it) }
                     Text(
-                        "Quando habilitado, mantém GPS e voz por notificação persistente " +
-                            "mesmo ao sair do aplicativo. Aumenta o consumo de bateria. " +
-                            "Navegação e gravação ativas continuam automaticamente.",
+                        "Opcional. Não garante reinício em todas as versões do Android ou após " +
+                            "restrições de bateria. O ViaVox não liga o GPS apenas por abrir a tela.",
                         color = muted, fontSize = 11.sp, lineHeight = 15.sp,
                         modifier = Modifier.padding(bottom = 12.dp)
                     )
