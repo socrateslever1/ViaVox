@@ -10,6 +10,9 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.DisposableEffect
 import androidx.lifecycle.Lifecycle
@@ -37,6 +40,7 @@ class MainActivity : ComponentActivity() {
                 val navigationUi by navigation.ui.collectAsState()
                 val state by viewModel.state.collectAsState()
                 val isSettingsOpen by viewModel.isSettingsDialogOpen.collectAsState()
+                var startRequestedAfterPermission by remember { mutableStateOf(false) }
                 val lifecycleOwner = LocalLifecycleOwner.current
                 val currentNavigation by rememberUpdatedState(navigationUi)
                 val currentTracking by rememberUpdatedState(state)
@@ -65,8 +69,8 @@ class MainActivity : ComponentActivity() {
                     val coarseGranted = permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
                     val granted = fineGranted || coarseGranted
                     viewModel.onPermissionResult(granted)
-
-                    // Permission only: tracking begins after an explicit user action.
+                    if (startRequestedAfterPermission && granted) viewModel.startTracking()
+                    startRequestedAfterPermission = false
                 }
 
                 // Request permission on startup, but never start tracking without user action
@@ -81,13 +85,9 @@ class MainActivity : ComponentActivity() {
                         Manifest.permission.ACCESS_COARSE_LOCATION
                     ) == PackageManager.PERMISSION_GRANTED
 
-                    if (fine || coarse) {
-                        viewModel.onPermissionResult(true)
-                        // Do not auto-start GPS simply because permission is granted.
-                    } else {
-                        val permissionsToRequest = buildRequiredPermissionsList()
-                        permissionLauncher.launch(permissionsToRequest)
-                    }
+                    // Opening the app is not consent to begin GPS tracking.
+                    // Request permissions only after tapping Iniciar.
+                    viewModel.onPermissionResult(fine || coarse)
                 }
 
                 ViaVoxMainScreen(
@@ -131,6 +131,7 @@ class MainActivity : ComponentActivity() {
                         if (fine || coarse) {
                             viewModel.startTracking()
                         } else {
+                            startRequestedAfterPermission = true
                             permissionLauncher.launch(buildRequiredPermissionsList())
                         }
                     },
