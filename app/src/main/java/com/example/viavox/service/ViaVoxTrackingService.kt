@@ -252,9 +252,19 @@ class ViaVoxTrackingService : Service() {
             ACTION_REPEAT_SPEECH -> repeatCurrentSpeech()
             ACTION_SCAN_AROUND -> scanSurroundings(ScanDirection.AROUND)
             ACTION_SCAN_FRONT -> scanSurroundings(ScanDirection.FRONT)
-            ACTION_TEST_VOICE -> speakIfAllowed(
-                "ViaVox. Teste de voz em português.",true,SpeechKind.USER_REQUEST,"voice-test"
-            )
+            ACTION_TEST_VOICE -> {
+                if (isTrackingRunning) {
+                    speakIfAllowed(
+                        "ViaVox. Teste de voz em português.", true,
+                        SpeechKind.USER_REQUEST, "voice-test"
+                    )
+                } else {
+                    // A voice preview must work before users opt into GPS tracking.
+                    ttsManager.speakManaged(
+                        "ViaVox. Teste de voz em português."
+                    ) { stopSelfResult(startId) }
+                }
+            }
             ACTION_NAV_GUIDANCE -> {
                 val instruction = intent?.getStringExtra(EXTRA_NAV_TEXT).orEmpty().trim()
                 if (instruction.isNotBlank() && isTrackingRunning) {
