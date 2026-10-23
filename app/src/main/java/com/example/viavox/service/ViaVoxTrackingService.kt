@@ -173,11 +173,10 @@ class ViaVoxTrackingService : Service() {
                     poiAnnouncements.roadWasAnnounced(System.currentTimeMillis())
                 }
                 val mode = AssistanceMode.from(currentConfig.assistanceMode)
-                val adjusted = if (mode == AssistanceMode.EXPLORER)
-                    transition.copy(zone = null) else transition
-                if (!adjusted.isEmpty()) speakIfAllowed(
-                    adjusted.sentence(), false,
-                    SpeechKind.GEOGRAPHY, "geo:" + adjusted.dedupeKey()
+                val sentence = transition.sentence(mode)
+                if (sentence.isNotBlank()) speakIfAllowed(
+                    sentence, false,
+                    SpeechKind.GEOGRAPHY, "geo:" + mode.storedValue + ":" + transition.dedupeKey()
                 )
             },
             onStatusMessage = { status ->
