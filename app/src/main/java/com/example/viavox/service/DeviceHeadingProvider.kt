@@ -32,6 +32,7 @@ class DeviceHeadingProvider(context: Context) : SensorEventListener {
         registered = false
         lastHeading = null
         updatedAtMs = 0L
+        trusted = false
     }
 
     fun headingOrNull(): Float? =
