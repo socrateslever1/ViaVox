@@ -42,7 +42,15 @@ class DeviceHeadingProvider(context: Context) : SensorEventListener {
     override fun onSensorChanged(event: SensorEvent) {
         if (event.sensor.type != Sensor.TYPE_ROTATION_VECTOR &&
             event.sensor.type != Sensor.TYPE_GEOMAGNETIC_ROTATION_VECTOR) return
-        if (!trusted) return
+        // Several Android devices never invoke onAccuracyChanged for the
+        // rotation-vector sensor after registration. Read the accuracy shipped
+        // with each event instead of waiting indefinitely for that callback.
+        trusted = event.accuracy == SensorManager.SENSOR_STATUS_ACCURACY_MEDIUM ||
+            event.accuracy == SensorManager.SENSOR_STATUS_ACCURACY_HIGH
+        if (!trusted) {
+            lastHeading = null
+            return
+        }
         val rotation = FloatArray(9)
         SensorManager.getRotationMatrixFromVector(rotation, event.values)
         val angles = FloatArray(3)
