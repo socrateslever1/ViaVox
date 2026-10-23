@@ -85,6 +85,7 @@ class ViaVoxTrackingService : Service() {
     private lateinit var nominatimService: NominatimService
     private lateinit var poiService: PoiDiscoveryService
     private lateinit var roadEngine: RoadDetectionEngine
+    private var territoryMap: TerritoryGeojsonResolver? = null
     private lateinit var safetyAlertEngine: SafetyAlertEngine
     private var safetyJob: Job? = null
     private lateinit var navigationStore: NavigationSessionStore
@@ -184,6 +185,38 @@ class ViaVoxTrackingService : Service() {
             }
         )
         roadEngine.enablePoliceCircumscription = currentConfig.enablePoliceCircumscription
+        roadEngine.territoryPolygonLookup = { fix ->
+            territoryMap?.resolve(fix.latitude, fix.longitude, fix.accuracyMeters)
+        }
+        // Load large built-in polygons off the main thread only once per service.
+        // Each subsequent accepted GPS fix can resolve area entries offline.
+        serviceScope.launch {
+            val parsed = withContext(Dispatchers.IO) {
+                try {
+                    val neighbourhoods = assets.open("bairros_manaus.geojson")
+                        .bufferedReader().use { it.readText() }
+                    val cicoms = assets.open("cicoms_manaus.geojson")
+                        .bufferedReader().use { it.readText() }
+                    TerritoryGeojsonResolver.parse(neighbourhoods, cicoms)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Offline territory polygons unavailable", e)
+                    null
+                }
+            }
+            territoryMap = parsed
+            if (parsed != null && isTrackingRunning) {
+                val current = TrackingRepository.state.value
+                if (current.hasLocationFix) roadEngine.onGeoFixUpdate(
+                    GeoFix(
+                        current.latitude, current.longitude,
+                        current.accuracyMeters?.toFloat() ?: 100f,
+                        speedMps = current.speedKmh / 3.6f,
+                        bearing = current.bearing,
+                        hasBearing = current.hasBearing
+                    )
+                )
+            }
+        }
 
         locationTracker = LocationTrackingManager(
             context = this,
