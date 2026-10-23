@@ -46,7 +46,8 @@ fun VoiceHome(
     onScan: (ScanDirection) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val place = state.place
+    // Never present an old street as the current one after GPS is stopped.
+    val place = if (state.isActive && state.hasLocationFix) state.place else null
     Column(
         modifier = modifier.fillMaxSize()
             .background(Brush.verticalGradient(listOf(midnight, Color(0xFF102C40), midnight)))
@@ -63,16 +64,54 @@ fun VoiceHome(
                 Icon(Icons.Default.Settings, contentDescription = "Configurações", tint = Color.White)
             }
         }
-        Surface(shape = RoundedCornerShape(22.dp), color = Color(0xFF153449), border = BorderStroke(1.dp, Color(0xFF315367))) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(9.dp).background(if (state.isActive) mint else Color(0xFFFFAD70), CircleShape))
-                Spacer(Modifier.width(9.dp))
-                Text(if (state.isActive) "GPS ATIVO" else "GPS DESLIGADO", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.weight(1f))
-                Text(state.accuracyMeters?.let { "± ${it} m" } ?: "Sem sinal", color = soft, fontSize = 11.sp)
-                Spacer(Modifier.width(6.dp))
-                TextButton(onClick = { if (state.isActive) onStop() else onStart() }, modifier = Modifier.testTag("tracking_toggle")) {
-                    Text(if (state.isActive) "Parar" else "Iniciar", color = mint, fontSize = 12.sp)
+        Surface(
+            modifier = Modifier.fillMaxWidth().testTag("gps_status_card"),
+            shape = RoundedCornerShape(22.dp),
+            color = Color(0xFF153449),
+            border = BorderStroke(1.dp, Color(0xFF315367))
+        ) {
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(Modifier.size(9.dp).background(
+                        if (state.isActive) mint else Color(0xFFFFAD70), CircleShape
+                    ))
+                    Spacer(Modifier.width(9.dp))
+                    Text(
+                        if (state.isActive) "GPS ATIVO" else "GPS DESLIGADO",
+                        color = Color.White, fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold, maxLines = 1
+                    )
+                    Spacer(Modifier.weight(1f))
+                    Text(
+                        if (state.isActive) state.accuracyMeters?.let { "Precisão ±${it} m" }
+                            ?: "Obtendo sinal..." else "Privacidade ativada",
+                        color = soft, fontSize = 11.sp, maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Spacer(Modifier.height(7.dp))
+                OutlinedButton(
+                    onClick = { if (state.isActive) onStop() else onStart() },
+                    modifier = Modifier.fillMaxWidth().height(40.dp)
+                        .testTag("tracking_toggle"),
+                    shape = RoundedCornerShape(13.dp),
+                    border = BorderStroke(1.dp, mint.copy(alpha = 0.6f)),
+                    contentPadding = PaddingValues(horizontal = 9.dp, vertical = 0.dp)
+                ) {
+                    Icon(
+                        if (state.isActive) Icons.Default.Stop else Icons.Default.PlayArrow,
+                        contentDescription = null, tint = mint,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(7.dp))
+                    Text(
+                        if (state.isActive) "Encerrar localização" else "Ativar localização",
+                        color = mint, fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                        maxLines = 1
+                    )
                 }
             }
         }
@@ -82,11 +121,7 @@ fun VoiceHome(
                     .background(mint.copy(alpha = 0.13f), CircleShape)
                     .padding(14.dp)
                     .background(Brush.linearGradient(listOf(Color(0xFF43ECD5), Color(0xFF0F988F))), CircleShape)
-                    .clickable {
-                        if (!state.isActive) onStart()
-                        if (!state.isVoiceEnabled) onToggleVoice(true)
-                        if (state.isActive && state.isVoiceEnabled) onRepeat()
-                    }
+                    .clickable(enabled = state.isActive, onClick = onRepeat)
                     .testTag("voice_home_primary"),
                 contentAlignment = Alignment.Center
             ) {
@@ -94,9 +129,14 @@ fun VoiceHome(
             }
             Spacer(Modifier.height(10.dp))
             Text("ONDE ESTOU?", color = Color.White, fontWeight = FontWeight.Black, fontSize = 21.sp)
-            Text("Toque para ouvir sua localização", color = soft, fontSize = 12.sp)
+            Text(
+                if (!state.isActive) "Ative a localização para consultar"
+                else if (!state.hasLocationFix) "Obtendo localização..."
+                else "Toque para ouvir sua localização",
+                color = soft, fontSize = 12.sp
+            )
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Narração automática", color = soft, fontSize = 12.sp)
+                Text("Avisos automáticos por voz", color = soft, fontSize = 12.sp)
                 Spacer(Modifier.width(12.dp))
                 Switch(checked = state.isVoiceEnabled, onCheckedChange = onToggleVoice,
                     modifier = Modifier.testTag("voice_auto_toggle"))
@@ -105,7 +145,8 @@ fun VoiceHome(
         Surface(color = panel, shape = RoundedCornerShape(25.dp), border = BorderStroke(1.dp, Color(0xFF294659))) {
             Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("LOCALIZAÇÃO ATUAL", color = mint, fontWeight = FontWeight.Bold, fontSize = 11.sp, letterSpacing = 1.sp)
-                Text(place?.road?.takeIf { it.isNotBlank() } ?: "Aguardando identificação da rua",
+                Text(place?.road?.takeIf { it.isNotBlank() } ?:
+                    (if (state.isActive) "Identificando sua rua..." else "Localização desativada"),
                     color = Color.White, fontSize = 23.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 HorizontalDivider(color = Color.White.copy(alpha = 0.10f))
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -121,7 +162,7 @@ fun VoiceHome(
                         PlaceField("CICOM / CIRCUNSCRIÇÃO", place?.policeDistrict?.takeIf { it.isNotBlank() } ?: "Não confirmada")
                     }
                     Column(Modifier.weight(1f)) {
-                        PlaceField("VELOCIDADE", "${state.speedKmh.toInt().coerceAtLeast(0)} km/h")
+                        PlaceField("VELOCIDADE", if (state.isActive) "${state.speedKmh.toInt().coerceAtLeast(0)} km/h" else "—")
                     }
                 }
             }
