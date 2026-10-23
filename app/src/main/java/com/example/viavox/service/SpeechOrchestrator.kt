@@ -59,9 +59,11 @@ class SpeechOrchestrator(
         val event = SpeechEvent(kind,text.trim(),key,now,force)
         // A duplicate already playing must not interrupt itself.
         if (!force && (active?.key == key || waiting.any { it.key == key })) return false
-        // Fresh street/area update makes a pending old geographical fix obsolete.
+        // Never discard a zone or neighbourhood announcement merely because
+        // a road change was resolved a moment later. Only optional Tour items
+        // are disposable; fresh geographic events remain ordered by arrival.
         if (kind == SpeechKind.GEOGRAPHY) waiting.removeAll {
-            it.kind == SpeechKind.GEOGRAPHY || it.kind == SpeechKind.TOUR
+            it.kind == SpeechKind.TOUR
         }
         if (kind == SpeechKind.POI) waiting.removeAll { it.kind == SpeechKind.POI }
         if (kind == SpeechKind.TOUR) waiting.removeAll { it.kind == SpeechKind.TOUR }
