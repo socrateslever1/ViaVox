@@ -710,9 +710,18 @@ class ViaVoxTrackingService : Service() {
     }
 
     private fun headingForScan(state: com.example.viavox.model.TrackingState): Float? {
+        // Moving GPS course is already true-north relative. When stationary,
+        // Android sensor azimuth is magnetic and needs local declination.
         if (state.hasBearing && state.speedKmh >= 8f &&
             (state.accuracyMeters ?: 100) <= 25) return state.bearing
-        return deviceHeading.headingOrNull()
+        val magnetic = deviceHeading.headingOrNull() ?: return null
+        if (!state.hasLocationFix || (state.accuracyMeters ?: 100) > 55 ||
+            !state.latitude.isFinite() || !state.longitude.isFinite()) return null
+        val correction = android.hardware.GeomagneticField(
+            state.latitude.toFloat(), state.longitude.toFloat(), 0f,
+            System.currentTimeMillis()
+        ).declination
+        return HeadingCorrectionPolicy.trueNorth(magnetic, correction)
     }
 
     private fun scanSurroundings(direction: ScanDirection) {
