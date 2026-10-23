@@ -132,6 +132,7 @@ fun ViaVoxMainScreen(
                 onOpenMap = { mapChoiceOpen = true },
                 onSelectMode = onAssistanceModeChanged,
                 onScan = onScan,
+                onRadiusChanged = onRadiusChanged,
                 modifier = Modifier.fillMaxSize().safeDrawingPadding()
             )
         } else {
