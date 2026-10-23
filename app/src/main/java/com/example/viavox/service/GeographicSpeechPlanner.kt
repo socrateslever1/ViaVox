@@ -1,23 +1,36 @@
 package com.example.viavox.service
 
-/** One geographic announcement always follows Zona -> Bairro -> Rua. */
+import com.example.viavox.model.AssistanceMode
+
+/**
+ * A fresh, confirmed entry event. Fields that did not change remain null.
+ * Explorer and Accessibility: ZONA -> BAIRRO -> RUA.
+ * Territorial: ZONA -> CICOM -> CPA (only upon CPA entry) -> BAIRRO -> RUA.
+ */
 data class GeographicTransition(
     val zone: String? = null,
     val neighbourhood: String? = null,
-    val road: String? = null
+    val road: String? = null,
+    val cicom: String? = null,
+    val cpa: String? = null
 ) {
-    fun isEmpty(): Boolean = zone.isNullOrBlank() && neighbourhood.isNullOrBlank() && road.isNullOrBlank()
+    fun isEmpty(): Boolean = listOf(zone, neighbourhood, road, cicom, cpa)
+        .all { it.isNullOrBlank() }
 
-    fun sentence(): String {
+    fun sentence(mode: AssistanceMode = AssistanceMode.EXPLORER): String {
         val parts = mutableListOf<String>()
         zone?.takeIf { it.isNotBlank() }?.let { parts.add("Entrando na $it") }
+        if (mode == AssistanceMode.TERRITORIAL) {
+            cicom?.takeIf { it.isNotBlank() }?.let { parts.add("Área da $it") }
+            cpa?.takeIf { it.isNotBlank() }?.let { parts.add(it) }
+        }
         neighbourhood?.takeIf { it.isNotBlank() }?.let { parts.add("Bairro $it") }
         road?.takeIf { it.isNotBlank() }?.let { parts.add(it) }
         return if (parts.isEmpty()) "" else parts.joinToString(". ") + "."
     }
 
-    fun dedupeKey(): String = listOf(zone.orEmpty(),neighbourhood.orEmpty(),road.orEmpty())
-        .joinToString("|").lowercase()
+    fun dedupeKey(): String = listOf(zone.orEmpty(), cicom.orEmpty(), cpa.orEmpty(),
+        neighbourhood.orEmpty(), road.orEmpty()).joinToString("|").lowercase()
 }
 
 /** Audio-only normalization; never mutate GIS strings or saved destination names. */
