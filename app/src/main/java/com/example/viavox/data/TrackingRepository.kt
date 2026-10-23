@@ -16,7 +16,21 @@ object TrackingRepository {
     val state: StateFlow<TrackingState> = _state.asStateFlow()
 
     fun updateActive(active: Boolean) {
-        _state.update { it.copy(isActive = active) }
+        _state.update {
+            if (active) it.copy(isActive = true)
+            else it.copy(
+                isActive = false,
+                hasLocationFix = false,
+                accuracyMeters = null,
+                speedKmh = 0f,
+                bearing = 0f,
+                hasBearing = false,
+                place = null,
+                currentPoi = null,
+                poiDirection = null,
+                isSpeaking = false
+            )
+        }
     }
 
     fun updateCoordinates(lat: Double, lon: Double, accuracy: Int?, speedKmh: Float, bearing: Float, hasBearing: Boolean) {
