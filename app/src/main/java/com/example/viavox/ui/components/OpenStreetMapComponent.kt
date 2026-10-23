@@ -3,6 +3,8 @@ package com.example.viavox.ui.components
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
@@ -35,6 +37,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -87,6 +90,10 @@ import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import kotlin.math.ceil
+import kotlin.math.hypot
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan
@@ -160,7 +167,8 @@ fun OpenStreetMapComponent(
     var followPhoneCompass by remember {
         mutableStateOf(prefs.getBoolean("map_follow_device_compass", true))
     }
-    var threeDView by remember { mutableStateOf(true) }
+    // Flat, full-viewport map first. Perspective remains an explicit opt-in.
+    var threeDView by remember { mutableStateOf(false) }
     var followUser by remember { mutableStateOf(true) }
 
     val vehicleMode = VehicleMode.from(vehicleType)
@@ -184,10 +192,21 @@ fun OpenStreetMapComponent(
 
     // Tile loader & cache
     var tileTick by remember { mutableIntStateOf(0) }
+    var tileSuccesses by remember { mutableIntStateOf(0) }
+    var tileFailures by remember { mutableIntStateOf(0) }
+    val cartoApiKey = remember(context) {
+        prefs.getString("carto_basemaps_key", "").orEmpty()
+    }
     val tileRepository = remember(context) {
-        OsmTileRepository(context) {
-            tileTick++
-        }
+        OsmTileRepository(context,
+            onTileLoaded = {
+                tileSuccesses++
+                tileTick++
+            },
+            onTileFailed = {
+                tileFailures++
+            }
+        )
     }
 
     // Neighborhood boundaries (bairros_manaus.geojson)
@@ -367,8 +386,19 @@ fun OpenStreetMapComponent(
             strokeWidth = 4f
         }
     }
-    val tilePaint = remember {
-        Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+    val tilePaint = remember(selectedMapStyle, cartoApiKey) {
+        Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
+            // If no CARTO key is configured, dark mode uses OSM raster tiles
+            // with a visible local night filter, not a nonexistent tile service.
+            if (selectedMapStyle == "dark" && cartoApiKey.isBlank()) {
+                colorFilter = ColorMatrixColorFilter(ColorMatrix(floatArrayOf(
+                    -0.70f, 0f, 0f, 0f, 204f,
+                    0f, -0.70f, 0f, 0f, 206f,
+                    0f, 0f, -0.70f, 0f, 215f,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+        }
     }
 
     val currentSafetyFeatures by rememberUpdatedState(safetyFeatures)
@@ -505,7 +535,7 @@ fun OpenStreetMapComponent(
             val cx = size.width / 2f
             val cy = size.height / 2f
 
-            // 1. Draw OpenStreetMap / CartoDB Slippy Tiles
+            // 1. Render interactive-viewport OSM tiles, or CARTO if authorized
             drawSlippyTiles(
                 styleKey = selectedMapStyle,
                 centerLat = cameraLat,
@@ -711,6 +741,49 @@ fun OpenStreetMapComponent(
                     )
                 }
             }
+        }
+
+        if (tileSuccesses == 0 && tileFailures >= 3) {
+            Surface(
+                modifier = Modifier.align(Alignment.Center).padding(horizontal = 24.dp)
+                    .testTag("map_tiles_error"),
+                color = Color(0xEF10243A),
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(18.dp),
+                border = BorderStroke(1.dp, Color(0xFF46667B))
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text("Não foi possível carregar as ruas do mapa.",
+                        color = Color.White, fontSize = 14.sp)
+                    Text("O GPS continua ativo. Verifique a conexão com a internet.",
+                        color = Color(0xFFC7D8E4), fontSize = 12.sp)
+                    TextButton(
+                        onClick = {
+                            tileRepository.retryFailedTiles()
+                            tileFailures = 0
+                            tileTick++
+                        },
+                        modifier = Modifier.testTag("retry_map_tiles")
+                    ) {
+                        Text("Tentar carregar novamente", color = Color(0xFF34DAC3))
+                    }
+                }
+            }
+        }
+        Surface(
+            modifier = Modifier.align(Alignment.BottomEnd)
+                .padding(end = 12.dp, bottom = 190.dp),
+            color = Color(0xC900162A),
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp)
+        ) {
+            Text(
+                MapTileSourcePolicy.attribution(cartoApiKey),
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                color = Color.White, fontSize = 10.sp
+            )
         }
 
         // Keep the two controls ABOVE the lower street/navigation cards,
@@ -1032,7 +1105,12 @@ private fun DrawScope.drawSlippyTiles(
     val centerTileX = floor(centerWorldX / TILE_SIZE).toInt()
     val centerTileY = floor(centerWorldY / TILE_SIZE).toInt()
 
-    val radiusTiles = (max(size.width, size.height) / scaledTileSize / 2f).toInt() + 2
+    // Only ask for tiles visible within the rotated viewport, not an oversized
+    // square of hundreds of images on every redraw.
+    val rad = Math.toRadians(bearingDeg)
+    val extentX = (abs(cos(rad)) * size.width + abs(sin(rad)) * size.height) / 2f
+    val extentY = (abs(sin(rad)) * size.width + abs(cos(rad)) * size.height) / 2f
+    val radiusTiles = ceil(max(extentX, extentY) / scaledTileSize).toInt() + 1
 
     drawIntoCanvas { canvas ->
         val native = canvas.nativeCanvas
@@ -1052,6 +1130,8 @@ private fun DrawScope.drawSlippyTiles(
                 val left = ((txRaw * TILE_SIZE - centerWorldX) * scale).toFloat()
                 val top = ((ty * TILE_SIZE - centerWorldY) * scale).toFloat()
                 val dstRect = RectF(left, top, left + scaledTileSize + 0.6f, top + scaledTileSize + 0.6f)
+                if (dstRect.right < -extentX || dstRect.left > extentX ||
+                    dstRect.bottom < -extentY || dstRect.top > extentY) continue
 
                 val bmp = tileRepository.getTileOrRequest(styleKey, tileZoom, tx, ty, scope)
                 if (bmp != null) {
@@ -1062,15 +1142,9 @@ private fun DrawScope.drawSlippyTiles(
                     if (parent != null) {
                         native.drawBitmap(parent.bitmap, parent.srcRect, dstRect, tilePaint)
                     } else {
-                        // Subtle cartographic grid placeholder while loading
-                        val gridColor = if (isDark) Color(0xFF172A3E) else Color(0xFFDCE4EC)
-                        drawRect(
-                            color = gridColor,
-                            topLeft = Offset(left, top),
-                            size = androidx.compose.ui.geometry.Size(scaledTileSize, scaledTileSize),
-                            style = Stroke(width = 1f)
-                        )
-                    }
+                        // Keep the neutral background. A decorative grid is not
+                        // a real road map and looked like spurious diagonal roads.
+                    }}
                 }
             }
         }
@@ -1085,10 +1159,17 @@ private data class ParentTileSlice(
 
 private class OsmTileRepository(
     context: Context,
-    private val onTileLoaded: () -> Unit
+    private val onTileLoaded: () -> Unit,
+    private val onTileFailed: () -> Unit
 ) {
     private val memoryCache = LruCache<String, Bitmap>(160)
     private val inFlight = ConcurrentHashMap.newKeySet<String>()
+    private val lastFailure = ConcurrentHashMap<String, Long>()
+    private val concurrentDownloads = Semaphore(3)
+    private val cartoApiKey = context.getSharedPreferences("viavox_prefs", Context.MODE_PRIVATE)
+        .getString("carto_basemaps_key", "").orEmpty()
+
+    fun retryFailedTiles() { lastFailure.clear() }
     private val cacheDir = File(context.cacheDir, "viavox_osm_tiles").apply { mkdirs() }
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(7, TimeUnit.SECONDS)
@@ -1106,16 +1187,29 @@ private class OsmTileRepository(
     ): Bitmap? {
         val k = key(style, z, x, y)
         memoryCache.get(k)?.let { return it }
+        val previousFailure = lastFailure[k]
+        if (previousFailure != null &&
+            android.os.SystemClock.elapsedRealtime() - previousFailure < 45_000L) return null
         if (inFlight.add(k)) {
             scope.launch(Dispatchers.IO) {
                 try {
-                    val bmp = loadFromDiskOrNetwork(style, z, x, y)
-                    if (bmp != null) {
-                        memoryCache.put(k, bmp)
-                        withContext(Dispatchers.Main) {
-                            onTileLoaded()
+                    concurrentDownloads.withPermit {
+                        val bmp = loadFromDiskOrNetwork(style, z, x, y)
+                        if (bmp != null) {
+                            memoryCache.put(k, bmp)
+                            lastFailure.remove(k)
+                            withContext(Dispatchers.Main) { onTileLoaded() }
+                        } else {
+                            lastFailure[k] = android.os.SystemClock.elapsedRealtime()
+                            withContext(Dispatchers.Main) { onTileFailed() }
                         }
                     }
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    lastFailure[k] = android.os.SystemClock.elapsedRealtime()
+                    android.util.Log.w("ViaVoxMapTiles", "Tile loading failed", error)
+                    withContext(Dispatchers.Main) { onTileFailed() }
                 } finally {
                     inFlight.remove(k)
                 }
@@ -1149,25 +1243,13 @@ private class OsmTileRepository(
         if (diskFile.isFile && diskFile.length() > 100L) {
             BitmapFactory.decodeFile(diskFile.absolutePath)?.let { return it }
         }
-        val urls = when (style) {
-            "dark" -> listOf(
-                "https://a.basemaps.cartocdn.com/dark_all/$z/$x/$y.png",
-                "https://b.basemaps.cartocdn.com/dark_all/$z/$x/$y.png"
-            )
-            "liberty" -> listOf(
-                "https://tile.openstreetmap.org/$z/$x/$y.png",
-                "https://a.basemaps.cartocdn.com/rastertiles/voyager/$z/$x/$y.png"
-            )
-            else -> listOf(
-                "https://a.basemaps.cartocdn.com/rastertiles/voyager/$z/$x/$y.png",
-                "https://tile.openstreetmap.org/$z/$x/$y.png"
-            )
-        }
+        val urls = MapTileSourcePolicy.urls(style, z, x, y, cartoApiKey)
         for (url in urls) {
             try {
                 val request = Request.Builder()
                     .url(url)
-                    .header("User-Agent", "ViaVox/1.0 (Android Navigation Manaus)")
+                    .header("User-Agent",
+                        "ViaVox/0.10.7 (+https://github.com/socrateslever1/ViaVox)")
                     .build()
                 httpClient.newCall(request).execute().use { response ->
                     if (response.isSuccessful) {
@@ -1181,8 +1263,8 @@ private class OsmTileRepository(
                         }
                     }
                 }
-            } catch (_: Exception) {
-                // Fallback to next mirror
+            } catch (error: Exception) {
+                android.util.Log.w("ViaVoxMapTiles", "Map provider unavailable", error)
             }
         }
         return null
