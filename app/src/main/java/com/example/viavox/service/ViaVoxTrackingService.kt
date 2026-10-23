@@ -115,10 +115,7 @@ class ViaVoxTrackingService : Service() {
             ) },
             canPlay = { event ->
                 if (!VoiceAnnouncementPolicy.mayPlay(isTrackingRunning, TrackingRepository.state.value.isVoiceEnabled, event.kind)) false
-                else if (event.kind == SpeechKind.TOUR &&
-                    AssistanceMode.from(currentConfig.assistanceMode) != AssistanceMode.ACCESSIBILITY) false
-                else if (event.kind == SpeechKind.TOUR &&
-                    event.key.startsWith("tour:") && !currentConfig.tourEnabled) false
+                else if (!ModeSpeechPolicy.canPlay(event.kind, event.key, currentConfig)) false
                 else if (event.kind != SpeechKind.POI) true
                 else {
                     val latest = TrackingRepository.state.value
