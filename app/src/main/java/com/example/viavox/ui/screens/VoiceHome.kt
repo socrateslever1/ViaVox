@@ -176,6 +176,27 @@ fun VoiceHome(
             }
         }
         Text("EXPLORAÇÃO POR VOZ", color = soft, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+        state.surroundingsResult?.takeIf { it.isNotBlank() }?.let { result ->
+            Surface(
+                modifier = Modifier.fillMaxWidth().testTag("scan_feedback"),
+                color = panel, shape = RoundedCornerShape(14.dp),
+                border = BorderStroke(1.dp, Color(0xFF345066))
+            ) {
+                Column(Modifier.padding(13.dp),
+                    verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Text("RESULTADO DA BUSCA", color = mint,
+                        fontWeight = FontWeight.Bold, fontSize = 10.sp)
+                    if (result.startsWith("Pesquisando") || result.contains("iniciando busca")) {
+                        LinearProgressIndicator(
+                            modifier = Modifier.fillMaxWidth(),
+                            color = mint, trackColor = soft.copy(alpha = .22f)
+                        )
+                    }
+                    Text(result, color = Color.White, fontSize = 13.sp,
+                        lineHeight = 18.sp)
+                }
+            }
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Shortcut("Ao meu redor", Icons.Default.Explore, Modifier.weight(1f), enabled = state.isActive) {
                 onScan(ScanDirection.AROUND)
@@ -212,18 +233,6 @@ fun VoiceHome(
             color = soft, fontSize = 11.sp, lineHeight = 16.sp)
         if (!state.isActive) {
             Text("Ative o GPS para explorar os arredores.", color = soft, fontSize = 11.sp)
-        }
-        state.surroundingsResult?.takeIf { it.isNotBlank() && state.isActive }?.let { result ->
-            Surface(color = panel, shape = RoundedCornerShape(16.dp),
-                border = BorderStroke(1.dp, Color(0xFF345066))) {
-                Column(Modifier.fillMaxWidth().padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("RESULTADO DA BUSCA", color = mint,
-                        fontWeight = FontWeight.Bold, fontSize = 10.sp)
-                    Text(result, color = Color.White, fontSize = 13.sp,
-                        lineHeight = 19.sp)
-                }
-            }
         }
         Text("MODO DE ASSISTÊNCIA", color = soft, fontWeight = FontWeight.Bold,
             fontSize = 11.sp, letterSpacing = 1.sp)
