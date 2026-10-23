@@ -23,6 +23,8 @@ import com.example.viavox.model.NavigationRoute
 import com.example.viavox.data.NominatimService
 import com.example.viavox.data.PoiDiscoveryService
 import com.example.viavox.data.SurroundingsRepository
+import com.example.viavox.data.RoadJunctionRepository
+import com.example.viavox.model.RoadJunctionPolicy
 import com.example.viavox.model.AssistanceMode
 import com.example.viavox.model.ScanDirection
 import com.example.viavox.model.SurroundingsPolicy
@@ -49,6 +51,11 @@ class ViaVoxTrackingService : Service() {
     private var lastPoiCheckTimestamp = 0L
     private val poiAnnouncements = PoiAnnouncementCoordinator()
     private val surroundings = SurroundingsRepository()
+    private val roadJunctions = RoadJunctionRepository()
+    private var junctionJob: Job? = null
+    private var lastJunctionCheck = 0L
+    private var lastJunctionSpeech = 0L
+    private val announcedJunctions = mutableMapOf<Long, Long>()
     private lateinit var deviceHeading: DeviceHeadingProvider
     private var scanJob: Job? = null
     private var tourJob: Job? = null
@@ -366,8 +373,13 @@ class ViaVoxTrackingService : Service() {
         deviceHeading.stop()
         scanJob?.cancel()
         tourJob?.cancel()
+        junctionJob?.cancel()
         scanJob = null
         tourJob = null
+        junctionJob = null
+        lastJunctionCheck = 0L
+        lastJunctionSpeech = 0L
+        announcedJunctions.clear()
         lastTourCheckedAt = 0L
         lastTourSpokenAt = 0L
         tourSpoken.clear()
@@ -440,6 +452,7 @@ class ViaVoxTrackingService : Service() {
         // Identify current street or street transition
         roadEngine.onLocationUpdate(location)
         maybeNarrateTour(location)
+        maybeAnnounceJunction(location)
 
         // POI discovery is independent of the road-announcement cooldown:
         // 25-second scan delays previously skipped whole landmarks at driving speeds.
@@ -717,10 +730,59 @@ class ViaVoxTrackingService : Service() {
                 currentConfig.surroundingsRadiusMeters, direction, heading,
                 latest.accuracyMeters?.toFloat() ?: 100f
             )
-            val message = SurroundingsPolicy.scanSpeech(chosen, direction, heading != null)
-            TrackingRepository.updatePoiStatus(message)
+            val landmarksMessage = SurroundingsPolicy.scanSpeech(chosen, direction, heading != null)
+            val roadName = latest.place?.road.orEmpty()
+            val junction = if (direction == ScanDirection.FRONT && roadName.isNotBlank() &&
+                heading != null && (latest.accuracyMeters ?: 100) <= 20) {
+                val ways = roadJunctions.roads(latest.latitude, latest.longitude)
+                RoadJunctionPolicy.findAhead(
+                    ways, roadName, latest.latitude, latest.longitude, heading,
+                    latest.accuracyMeters?.toFloat() ?: 100f, maxDistanceMeters = 160
+                ).firstOrNull()
+            } else null
+            val message = if (junction == null) landmarksMessage
+                else RoadJunctionPolicy.describe(junction) + " " + landmarksMessage
+            TrackingRepository.updateSurroundingsResult(message)
             speakIfAllowed(message, true, SpeechKind.USER_REQUEST,
                 "scan:" + direction.name + ":" + System.currentTimeMillis())
+        }
+    }
+
+    private fun maybeAnnounceJunction(location: Location) {
+        if (!isTrackingRunning || !TrackingRepository.state.value.isVoiceEnabled ||
+            AssistanceMode.from(currentConfig.assistanceMode) != AssistanceMode.ACCESSIBILITY ||
+            !location.hasAccuracy() || location.accuracy > 18f ||
+            !location.hasSpeed() || location.speed < 1.0f) return
+        val now = System.currentTimeMillis()
+        if (now - lastJunctionCheck < 35_000L || junctionJob?.isActive == true ||
+            now - lastJunctionSpeech < 75_000L) return
+        val confirmedRoad = roadEngine.getCurrentConfirmedRoad() ?: return
+        val heading = headingForScan(TrackingRepository.state.value) ?: return
+        lastJunctionCheck = now
+        junctionJob = serviceScope.launch {
+            val ways = roadJunctions.roads(location.latitude, location.longitude)
+            val latest = TrackingRepository.state.value
+            if (!isTrackingRunning || !latest.isVoiceEnabled ||
+                AssistanceMode.from(currentConfig.assistanceMode) != AssistanceMode.ACCESSIBILITY ||
+                !latest.hasLocationFix || (latest.accuracyMeters ?: 100) > 18 ||
+                latest.speedKmh < 3.6f ||
+                !RoadJunctionPolicy.sameStreet(
+                    latest.place?.road.orEmpty(), confirmedRoad
+                )) return@launch
+            val freshHeading = headingForScan(latest) ?: return@launch
+            val crossing = RoadJunctionPolicy.findAhead(
+                ways, confirmedRoad, latest.latitude, latest.longitude, freshHeading,
+                latest.accuracyMeters?.toFloat() ?: 100f, 95
+            ).firstOrNull { feature ->
+                feature.distanceMeters in 30.0..90.0 &&
+                    (announcedJunctions[feature.nodeId]?.let { now - it >= 15 * 60_000L } ?: true)
+            } ?: return@launch
+            if (speakIfAllowed(RoadJunctionPolicy.describe(crossing), false,
+                    SpeechKind.TOUR, "junction:" + crossing.nodeId)) {
+                lastJunctionSpeech = now
+                announcedJunctions[crossing.nodeId] = now
+                announcedJunctions.entries.removeAll { now - it.value > 30 * 60_000L }
+            }
         }
     }
 
@@ -887,6 +949,7 @@ class ViaVoxTrackingService : Service() {
         poiAnnouncements.reset()
         scanJob?.cancel()
         tourJob?.cancel()
+        junctionJob?.cancel()
         if (::deviceHeading.isInitialized) deviceHeading.stop()
         serviceScope.cancel()
         tripRecorder.close()
