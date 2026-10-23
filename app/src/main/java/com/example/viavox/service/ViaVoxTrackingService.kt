@@ -900,7 +900,8 @@ class ViaVoxTrackingService : Service() {
                 val base = when {
                     selected.isNotEmpty() ->
                         SurroundingsPolicy.scanSpeech(selected, direction, heading != null)
-                    fromOsm?.error != null && fromGis.isEmpty() && localSelected.isEmpty() ->
+                    (fromOsm == null || fromOsm.error != null) &&
+                        fromGis.isEmpty() && localSelected.isEmpty() ->
                         "Fontes online indisponíveis. Não há referências verificadas no catálogo local para esse alcance."
                     else ->
                         SurroundingsPolicy.scanSpeech(emptyList(), direction, heading != null)
@@ -911,7 +912,8 @@ class ViaVoxTrackingService : Service() {
                 }.orEmpty()
                 val sourceInfo = if (providers.isNotEmpty())
                     "\nFonte: " + providers.distinct().joinToString(" + ") + "."
-                else if (fromOsm?.error != null) "\nServiço OpenStreetMap indisponível."
+                else if (fromOsm == null || fromOsm.error != null)
+                    "\nServiço OpenStreetMap indisponível."
                 else ""
                 publish(base + crossingText + sourceInfo, speak = true)
             } catch (cancelled: CancellationException) {
