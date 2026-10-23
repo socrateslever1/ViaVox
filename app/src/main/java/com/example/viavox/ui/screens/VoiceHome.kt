@@ -48,6 +48,7 @@ fun VoiceHome(
     onOpenMap: () -> Unit,
     onSelectMode: (String) -> Unit,
     onScan: (ScanDirection) -> Unit,
+    onRadiusChanged: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
     // Never present an old street as the current one after GPS is stopped.
@@ -183,8 +184,32 @@ fun VoiceHome(
                 onScan(ScanDirection.FRONT)
             }
         }
-        Text("Varredura 360° de até " + state.config.surroundingsRadiusMeters + " m · ajuste o alcance nas configurações",
-            color = soft, fontSize = 11.sp)
+        Text("ALCANCE DA BUSCA", color = soft, fontSize = 11.sp,
+            fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(100, 200, 350, 500).forEach { radius ->
+                val selected = state.config.surroundingsRadiusMeters == radius
+                Surface(
+                    modifier = Modifier.weight(1f)
+                        .testTag("scan_radius_$radius")
+                        .clickable { onRadiusChanged(radius) },
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (selected) mint else panel,
+                    border = BorderStroke(1.dp,
+                        if (selected) mint else Color(0xFF345066))
+                ) {
+                    Text(
+                        "$radius m",
+                        modifier = Modifier.padding(vertical = 12.dp, horizontal = 2.dp),
+                        color = if (selected) midnight else Color.White,
+                        textAlign = TextAlign.Center, fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp, maxLines = 1
+                    )
+                }
+            }
+        }
+        Text("O alcance selecionado vale para 360° e À minha frente. Toque em um dos botões para consultar.",
+            color = soft, fontSize = 11.sp, lineHeight = 16.sp)
         if (!state.isActive) {
             Text("Ative o GPS para explorar os arredores.", color = soft, fontSize = 11.sp)
         }
