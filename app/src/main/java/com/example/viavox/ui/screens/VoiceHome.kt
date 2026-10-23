@@ -43,6 +43,7 @@ fun VoiceHome(
     onRepeat: () -> Unit,
     onSavePlace: () -> Unit,
     onOpenPlaces: () -> Unit,
+    onOpenReminders: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenMap: () -> Unit,
     onSelectMode: (String) -> Unit,
@@ -227,6 +228,28 @@ fun VoiceHome(
             Shortcut("Meus lugares", Icons.Default.Home, Modifier.weight(1f), action = onOpenPlaces)
             Shortcut("Salvar aqui", Icons.Default.BookmarkAdd, Modifier.weight(1f), action = onSavePlace)
             Shortcut("Abrir mapa", Icons.Default.Map, Modifier.weight(1f), action = onOpenMap)
+        }
+        Surface(
+            modifier = Modifier.fillMaxWidth()
+                .clickable(onClick = onOpenReminders),
+            color = panel, shape = RoundedCornerShape(18.dp),
+            border = BorderStroke(1.dp, Color(0xFF294659))
+        ) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 17.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Default.NotificationsActive, contentDescription = null,
+                    tint = mint, modifier = Modifier.size(24.dp))
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Lembretes de localização", color = Color.White,
+                        fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Text("Crie alertas para quando voltar a um lugar",
+                        color = soft, fontSize = 11.sp)
+                }
+                Icon(Icons.Default.ChevronRight, contentDescription = null, tint = soft)
+            }
         }
         Spacer(Modifier.height(22.dp))
     }
