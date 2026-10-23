@@ -93,7 +93,7 @@ class ViaVoxTrackingService : Service() {
             onSpeakingStateChanged = { TrackingRepository.updateSpeaking(it) },
             onVoiceIssue = { TrackingRepository.updateVoiceIssue(it) }
         )
-        ttsManager.setVoiceEnabled(initialVoiceEnabled)
+        ttsManager.setVoiceEnabled(true)
         ttsManager.setSpeechRate(currentConfig.speechRate)
         ttsManager.franciscaEndpoint = currentConfig.franciscaBrokerUrl.ifBlank { null }
         ttsManager.franciscaAccessToken = currentConfig.franciscaAccessToken.ifBlank { null }
@@ -103,7 +103,8 @@ class ViaVoxTrackingService : Service() {
                 SpeechTextNormalizer.normalize(text), finished
             ) },
             canPlay = { event ->
-                if (event.kind != SpeechKind.POI) true
+                if (!VoiceAnnouncementPolicy.mayPlay(isTrackingRunning, TrackingRepository.state.value.isVoiceEnabled, event.kind)) false
+                else if (event.kind != SpeechKind.POI) true
                 else {
                     val latest = TrackingRepository.state.value
                     val poiId = event.key.removePrefix("poi:")
@@ -118,7 +119,7 @@ class ViaVoxTrackingService : Service() {
                 }
             }
         )
-        speechQueue.setEnabled(initialVoiceEnabled)
+        speechQueue.setEnabled(true)
 
         nominatimService = NominatimService()
         nominatimService.googleApiKey = currentConfig.googleMapsApiKey
@@ -265,8 +266,12 @@ class ViaVoxTrackingService : Service() {
                 val prefs = getSharedPreferences("viavox_prefs", Context.MODE_PRIVATE)
                 currentConfig = ViaVoxConfig.loadFrom(prefs)
                 val voiceEnabled = prefs.getBoolean("voice_enabled", true)
-                ttsManager.setVoiceEnabled(voiceEnabled)
-                speechQueue.setEnabled(voiceEnabled)
+                ttsManager.setVoiceEnabled(true)
+                if (!voiceEnabled) {
+                    speechQueue.cancelAll()
+                    ttsManager.stop()
+                }
+                speechQueue.setEnabled(true)
                 ttsManager.setSpeechRate(currentConfig.speechRate)
                 ttsManager.franciscaEndpoint = currentConfig.franciscaBrokerUrl.ifBlank { null }
                 ttsManager.franciscaAccessToken = currentConfig.franciscaAccessToken.ifBlank { null }
@@ -643,15 +648,25 @@ class ViaVoxTrackingService : Service() {
         kind: SpeechKind = SpeechKind.GEOGRAPHY,
         key: String = kind.name + ":" + message.lowercase()
     ): Boolean {
-        if (!isTrackingRunning || !TrackingRepository.state.value.isVoiceEnabled) return false
+        if (!VoiceAnnouncementPolicy.mayAnnounce(isTrackingRunning,
+            TrackingRepository.state.value.isVoiceEnabled, kind)) return false
         return speechQueue.offer(kind,message,key,forceRepeat)
     }
 
     private fun repeatCurrentSpeech() {
         val currentPlace = TrackingRepository.state.value.place
+        if (!isTrackingRunning) return
+        val snapshot = TrackingRepository.state.value
+        if (!snapshot.hasLocationFix) {
+            speakIfAllowed("Estou procurando seu sinal de localização.", true, SpeechKind.USER_REQUEST, "manual-awaiting-fix")
+            return
+        }
         if (currentPlace != null && currentPlace.hasValidRoad()) {
             val message = currentPlace.toSpeechMessage(isTransition = false)
             speakIfAllowed(message,true,SpeechKind.USER_REQUEST,"repeat-current-road")
+        } else {
+            speakIfAllowed("Localização recebida, mas ainda não identifiquei sua rua com segurança.",
+                true, SpeechKind.USER_REQUEST, "manual-awaiting-road")
         }
     }
 
