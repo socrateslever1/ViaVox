@@ -211,6 +211,7 @@ fun OpenStreetMapComponent(
             },
             onTileFailed = {
                 tileFailures++
+                tileTick++
             }
         )
     }
@@ -1144,10 +1145,14 @@ private fun DrawScope.drawSlippyTiles(
             native.rotate(-bearingDeg.toFloat())
         }
 
-        for (dy in -radiusTiles..radiusTiles) {
+        // Schedule the center tiles first: on a slow mobile connection the
+        // current street must become visible before distant screen corners.
+        val centerFirst = (-radiusTiles..radiusTiles).flatMap { dy ->
+            (-radiusTiles..radiusTiles).map { dx -> dx to dy }
+        }.sortedBy { (dx, dy) -> dx * dx + dy * dy }
+        for ((dx, dy) in centerFirst) {
             val ty = centerTileY + dy
             if (ty < 0 || ty >= numTiles) continue
-            for (dx in -radiusTiles..radiusTiles) {
                 val txRaw = centerTileX + dx
                 val tx = ((txRaw % numTiles) + numTiles) % numTiles
 
@@ -1170,7 +1175,6 @@ private fun DrawScope.drawSlippyTiles(
                         // a real road map and looked like spurious diagonal roads.
                     }
                 }
-            }
         }
         native.restore()
     }
@@ -1214,6 +1218,9 @@ private class OsmTileRepository(
         val previousFailure = lastFailure[k]
         if (previousFailure != null &&
             android.os.SystemClock.elapsedRealtime() - previousFailure < 45_000L) return null
+        // Keep a small viewport queue; each downloaded tile triggers a
+        // repaint and schedules the next nearest still-visible tile.
+        if (inFlight.size >= 9) return null
         if (inFlight.add(k)) {
             scope.launch(Dispatchers.IO) {
                 try {
