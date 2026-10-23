@@ -774,7 +774,12 @@ class ViaVoxTrackingService : Service() {
     }
 
     private fun scanSurroundings(direction: ScanDirection) {
-        if (!isTrackingRunning) return
+        if (!isTrackingRunning) {
+            TrackingRepository.updateSurroundingsResult(
+                "O rastreamento foi interrompido. Ative novamente a localização."
+            )
+            return
+        }
         val state = TrackingRepository.state.value
         val accuracy = state.accuracyMeters ?: 100
         if (!state.hasLocationFix || accuracy !in 1..55) {
