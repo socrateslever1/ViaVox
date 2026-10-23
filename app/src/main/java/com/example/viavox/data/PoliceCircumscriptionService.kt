@@ -20,9 +20,13 @@ object PoliceCircumscriptionService {
     // Official mappings for Manaus (DIPs & CICOMs)
     private val MANAUS_POLICE_DISTRICTS = mapOf(
         "Japiim" to PoliceZone("3º DIP", "3ª CICOM"),
+        "Petrópolis" to PoliceZone("3º DIP", "3ª CICOM"),
+        "São Francisco" to PoliceZone("3º DIP", "3ª CICOM"),
+        "Raiz" to PoliceZone("3º DIP", "3ª CICOM"),
         "Cachoeirinha" to PoliceZone("1º DIP", "1ª CICOM"),
         "Praça 14 de Janeiro" to PoliceZone("1º DIP", "1ª CICOM"),
         "Centro" to PoliceZone("24º DIP", "24ª CICOM"),
+        "Presidente Vargas" to PoliceZone("24º DIP", "24ª CICOM"),
         "Aparecida" to PoliceZone("24º DIP", "24ª CICOM"),
         "Educandos" to PoliceZone("2º DIP", "2ª CICOM"),
         "Santa Luzia" to PoliceZone("2º DIP", "2ª CICOM"),
