@@ -52,4 +52,5 @@
     <string name="settings_francisca_label">Servidor de voz (HTTPS opcional)</string>
     <string name="settings_francisca_hint">https://seu-servidor.exemplo/tts</string>
     <string name="btn_close">Concluir</string>
+    <string name="viavox_widget_description">Rua, bairro e consulta de localização por voz</string>
 </resources>
