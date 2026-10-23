@@ -54,7 +54,10 @@ class TerritoryGeojsonResolverTest {
                 onPlaceUpdated={},
                 onRoadAnnounceNeeded={_,_->},
                 onStatusMessage={},
-                onGeographicTransition=events::add
+                onGeographicTransition=events::add,
+                reverseGeocodeProvider = { _, _ ->
+                    Result.failure(java.io.IOException("offline test"))
+                }
             )
             engine.territoryPolygonLookup = { fix ->
                 resolver.resolve(fix.latitude,fix.longitude,fix.accuracyMeters)
