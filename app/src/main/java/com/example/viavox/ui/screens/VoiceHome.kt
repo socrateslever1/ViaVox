@@ -198,10 +198,10 @@ fun VoiceHome(
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Shortcut("Ao meu redor", Icons.Default.Explore, Modifier.weight(1f), enabled = state.isActive) {
+            Shortcut("Ao meu redor", Icons.Default.Explore, Modifier.weight(1f)) {
                 onScan(ScanDirection.AROUND)
             }
-            Shortcut("À minha frente", Icons.Default.Navigation, Modifier.weight(1f), enabled = state.isActive) {
+            Shortcut("À minha frente", Icons.Default.Navigation, Modifier.weight(1f)) {
                 onScan(ScanDirection.FRONT)
             }
         }
