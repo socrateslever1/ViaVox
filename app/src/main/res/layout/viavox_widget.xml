@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/viavox_widget_root"
+    android:orientation="vertical"
+    android:background="@drawable/viavox_widget_background"
+    android:padding="14dp"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+    <LinearLayout
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+        <ImageView android:src="@drawable/viavox_brand_mark"
+            android:contentDescription="ViaVox"
+            android:layout_width="28dp" android:layout_height="28dp" />
+        <TextView android:text="ViaVox"
+            android:textColor="#FFFFFF" android:textStyle="bold"
+            android:textSize="15sp" android:layout_marginStart="6dp"
+            android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="wrap_content" />
+        <TextView android:id="@+id/viavox_widget_status"
+            android:text="GPS DESLIGADO"
+            android:textColor="#35E0C3" android:textSize="10sp"
+            android:layout_width="wrap_content" android:layout_height="wrap_content" />
+    </LinearLayout>
+    <TextView android:id="@+id/viavox_widget_street"
+        android:text="Localização desligada"
+        android:ellipsize="end" android:maxLines="2"
+        android:textColor="#FFFFFF" android:textSize="17sp"
+        android:textStyle="bold" android:layout_marginTop="9dp"
+        android:layout_width="match_parent" android:layout_height="wrap_content" />
+    <TextView android:id="@+id/viavox_widget_neighbourhood"
+        android:text="Toque para abrir o ViaVox"
+        android:ellipsize="end" android:maxLines="1"
+        android:textColor="#AABDCF" android:textSize="12sp"
+        android:layout_marginTop="3dp"
+        android:layout_width="match_parent" android:layout_height="wrap_content" />
+    <TextView android:id="@+id/viavox_widget_listen"
+        android:text="Abrir para ativar"
+        android:textColor="#35E0C3" android:textStyle="bold"
+        android:textSize="12sp"
+        android:paddingTop="10dp" android:paddingBottom="3dp"
+        android:layout_width="wrap_content" android:layout_height="wrap_content" />
+</LinearLayout>
