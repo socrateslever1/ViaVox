@@ -151,8 +151,31 @@ class ViaVoxViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun scanSurroundings(direction: ScanDirection) {
-        if (state.value.isActive && state.value.hasLocationFix) {
+        val snapshot = state.value
+        val label = if (direction == ScanDirection.AROUND) "360°" else "À minha frente"
+        val issue = when {
+            !snapshot.isActive -> "GPS desligado. Toque em Ativar localização."
+            !snapshot.hasLocationFix -> "Aguardando o primeiro sinal GPS. Tente novamente."
+            (snapshot.accuracyMeters ?: 100) > 55 ->
+                "Precisão GPS insuficiente (±${snapshot.accuracyMeters ?: 100} m). Aguarde melhorar."
+            else -> null
+        }
+        if (issue != null) {
+            TrackingRepository.updateSurroundingsResult(issue)
+            return
+        }
+        // Immediate visual acknowledgement: never let a touch look inert.
+        TrackingRepository.updateSurroundingsResult(
+            "$label: iniciando busca em até ${snapshot.config.surroundingsRadiusMeters} m..."
+        )
+        try {
             ViaVoxTrackingService.scan(getApplication(), direction)
+        } catch (error: Exception) {
+            TrackingRepository.updateSurroundingsResult(
+                "$label: não foi possível enviar a solicitação ao serviço GPS. " +
+                    "Encerre e reative a localização."
+            )
+            android.util.Log.e("ViaVoxScan", "Failed to deliver manual scan", error)
         }
     }
 
