@@ -24,6 +24,7 @@ import com.example.viavox.data.NominatimService
 import com.example.viavox.data.PoiDiscoveryService
 import com.example.viavox.data.SurroundingsRepository
 import com.example.viavox.data.GeoReminderStore
+import com.example.viavox.widget.ViaVoxWidgetProvider
 import com.example.viavox.data.RoadJunctionRepository
 import com.example.viavox.model.RoadJunctionPolicy
 import com.example.viavox.model.AssistanceMode
@@ -149,6 +150,7 @@ class ViaVoxTrackingService : Service() {
             coroutineScope = serviceScope,
             onPlaceUpdated = { place ->
                 TrackingRepository.updatePlace(place)
+                ViaVoxWidgetProvider.refresh(this, TrackingRepository.state.value)
                 updateNotification(place.road, place.neighbourhood)
             },
             // Legacy callback retained for existing unit tests; service plays
@@ -357,6 +359,7 @@ class ViaVoxTrackingService : Service() {
         // Fused Location delivers callbacks without holding a persistent CPU wake lock.
         isTrackingRunning = true
         TrackingRepository.updateActive(true)
+        ViaVoxWidgetProvider.refresh(this, TrackingRepository.state.value)
         TrackingRepository.updateStatus(getString(R.string.status_waiting_gps))
 
         roadEngine.reset()
@@ -401,6 +404,7 @@ class ViaVoxTrackingService : Service() {
         TrackingRepository.updatePoiStatus("Referências pausadas")
 
         TrackingRepository.updateActive(false)
+        ViaVoxWidgetProvider.refresh(this, TrackingRepository.state.value)
         TrackingRepository.updateStatus(getString(R.string.status_location_paused))
 
         try {
