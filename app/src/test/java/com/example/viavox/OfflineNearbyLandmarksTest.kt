@@ -18,6 +18,22 @@ class OfflineNearbyLandmarksTest {
         assertFalse(matches.any { it.landmark.name == "Palácio Rio Negro" })
     }
 
+    @Test fun emilioMoreiraCorridorHasOfflinePlacesWithinSelectedRadius() {
+        // Coordinates are a publicly mapped sample of the street, not the user's GPS.
+        val points = OfflineNearbyLandmarks.verifiedSites()
+        val near100 = SurroundingsPolicy.select(
+            points, -3.1248, -60.0155, 100,
+            ScanDirection.AROUND, null, 7f
+        )
+        val near350 = SurroundingsPolicy.select(
+            points, -3.1248, -60.0155, 350,
+            ScanDirection.AROUND, null, 7f
+        )
+        assertTrue(near350.any { it.landmark.name == "Cartório Moreira" })
+        assertTrue(near350.size > near100.size)
+        assertTrue(near350.all { it.distanceMeters <= 350.0 })
+    }
+
     @Test fun forwardUsesTrueDirectionAndNeverInventsRightForBuildingCentres() {
         val points = OfflineNearbyLandmarks.verifiedSites()
         val matches = SurroundingsPolicy.select(
