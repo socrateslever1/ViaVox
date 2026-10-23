@@ -1,6 +1,9 @@
 package com.example.viavox.ui.screens
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
+import androidx.compose.ui.res.painterResource
+import com.example.viavox.R
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -56,9 +59,12 @@ fun VoiceHome(
         verticalArrangement = Arrangement.spacedBy(19.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
+            Image(painterResource(R.drawable.viavox_brand_mark),
+                contentDescription = "Logo ViaVox", modifier = Modifier.size(48.dp))
+            Spacer(Modifier.width(9.dp))
             Column(Modifier.weight(1f)) {
-                Text("V I A V O X", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Black, letterSpacing = 3.sp)
-                Text("SEU MUNDO, NARRADO PARA VOCÊ", color = mint, fontSize = 10.sp, letterSpacing = 1.sp)
+                Text("ViaVox", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp)
+                Text("SEU MUNDO, NARRADO PARA VOCÊ", color = mint, fontSize = 10.sp, maxLines = 2)
             }
             IconButton(onClick = onOpenSettings, modifier = Modifier.testTag("voice_home_settings")) {
                 Icon(Icons.Default.Settings, contentDescription = "Configurações", tint = Color.White)
@@ -169,15 +175,30 @@ fun VoiceHome(
         }
         Text("EXPLORAÇÃO POR VOZ", color = soft, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Shortcut("Ao meu redor", Icons.Default.Explore, Modifier.weight(1f)) {
+            Shortcut("Ao meu redor", Icons.Default.Explore, Modifier.weight(1f), enabled = state.isActive) {
                 onScan(ScanDirection.AROUND)
             }
-            Shortcut("À minha frente", Icons.Default.Navigation, Modifier.weight(1f)) {
+            Shortcut("À minha frente", Icons.Default.Navigation, Modifier.weight(1f), enabled = state.isActive) {
                 onScan(ScanDirection.FRONT)
             }
         }
         Text("Varredura 360° de até " + state.config.surroundingsRadiusMeters + " m · ajuste o alcance nas configurações",
             color = soft, fontSize = 11.sp)
+        if (!state.isActive) {
+            Text("Ative o GPS para explorar os arredores.", color = soft, fontSize = 11.sp)
+        }
+        state.surroundingsResult?.takeIf { it.isNotBlank() && state.isActive }?.let { result ->
+            Surface(color = panel, shape = RoundedCornerShape(16.dp),
+                border = BorderStroke(1.dp, Color(0xFF345066))) {
+                Column(Modifier.fillMaxWidth().padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("RESULTADO DA BUSCA", color = mint,
+                        fontWeight = FontWeight.Bold, fontSize = 10.sp)
+                    Text(result, color = Color.White, fontSize = 13.sp,
+                        lineHeight = 19.sp)
+                }
+            }
+        }
         Text("MODO DE ASSISTÊNCIA", color = soft, fontWeight = FontWeight.Bold,
             fontSize = 11.sp, letterSpacing = 1.sp)
         Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -189,7 +210,8 @@ fun VoiceHome(
                     color = if (chosen) mint else panel,
                     border = BorderStroke(1.dp, if (chosen) mint else Color(0xFF345066))
                 ) {
-                    Text(mode.title, modifier = Modifier.padding(vertical = 13.dp, horizontal = 3.dp),
+                    Text(if (mode == AssistanceMode.ACCESSIBILITY) "Acessível" else mode.title,
+                        modifier = Modifier.padding(vertical = 13.dp, horizontal = 3.dp),
                         color = if (chosen) midnight else Color.White, fontSize = 11.sp,
                         textAlign = TextAlign.Center, fontWeight = FontWeight.SemiBold,
                         maxLines = 1)
@@ -219,8 +241,10 @@ private fun PlaceField(label: String, value: String) {
 }
 
 @Composable
-private fun Shortcut(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, modifier: Modifier, action: () -> Unit) {
-    Surface(modifier = modifier.clickable(onClick = action), color = panel,
+private fun Shortcut(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, modifier: Modifier,
+    enabled: Boolean = true, action: () -> Unit) {
+    Surface(modifier = modifier.clickable(enabled = enabled, onClick = action),
+        color = if (enabled) panel else panel.copy(alpha = 0.55f),
         shape = RoundedCornerShape(18.dp), border = BorderStroke(1.dp, Color(0xFF294659))) {
         Column(Modifier.padding(vertical = 16.dp, horizontal = 3.dp),
             horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
