@@ -450,7 +450,7 @@ class ViaVoxTrackingService : Service() {
             geoReminders.onFix(lat, lon, location.accuracy).forEach { reminder ->
                 notifyGeoReminder(reminder.id, reminder.title)
                 speakIfAllowed("Lembrete de localização: " + reminder.title, true,
-                    SpeechKind.USER_REQUEST, "reminder:" + reminder.id)
+                    SpeechKind.REMINDER, "reminder:" + reminder.id)
             }
         }
         if (TripRecordingRepository.state.value.recording) {
