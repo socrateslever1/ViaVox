@@ -88,18 +88,32 @@ class RoadDetectionEngine(
     private val spokenCicom = EntryState()
     private val spokenCpa = EntryState()
 
+    private fun polygonTransition(match: TerritoryMatch, accuracy: Float): GeographicTransition =
+        GeographicTransition(
+            zone = spokenZone.changedTo(match.zone, accuracy),
+            neighbourhood = spokenNeighbourhood.changedTo(match.neighbourhood, accuracy),
+            cicom = if (enablePoliceCircumscription)
+                spokenCicom.changedTo(match.cicom, accuracy) else null,
+            cpa = if (enablePoliceCircumscription)
+                spokenCpa.changedTo(match.cpa, accuracy) else null
+        )
+
     private fun areaTransition(place: Place, fix: GeoFix): GeographicTransition {
+        val polygon = territoryPolygonLookup(fix)
         val jurisdiction = if (enablePoliceCircumscription)
-            PoliceJurisdictionSpeechResolver.resolve(place.policeDistrict, place.city)
-        else null
-        return GeographicTransition(
-            zone = spokenZone.changedTo(place.zone, fix.accuracyMeters),
-            neighbourhood = spokenNeighbourhood.changedTo(
-                place.neighbourhood.takeIf { place.hasValidNeighbourhood() },
-                fix.accuracyMeters
+            PoliceJurisdictionSpeechResolver.resolve(
+                polygon?.cicom ?: place.policeDistrict,
+                if (polygon != null) "Manaus" else place.city
+            ) else null
+        return polygonTransition(
+            TerritoryMatch(
+                zone = polygon?.zone ?: place.zone,
+                neighbourhood = polygon?.neighbourhood ?:
+                    place.neighbourhood.takeIf { place.hasValidNeighbourhood() },
+                cicom = polygon?.cicom ?: jurisdiction?.cicom,
+                cpa = polygon?.cpa ?: jurisdiction?.cpa
             ),
-            cicom = spokenCicom.changedTo(jurisdiction?.cicom, fix.accuracyMeters),
-            cpa = spokenCpa.changedTo(jurisdiction?.cpa, fix.accuracyMeters)
+            fix.accuracyMeters
         )
     }
 
@@ -107,6 +121,9 @@ class RoadDetectionEngine(
         val announcement = territory.copy(road = road)
         if (!announcement.isEmpty()) onGeographicTransition?.invoke(announcement)
     }
+
+    /** Optional GPS polygons loaded from bundled assets by the tracking service. */
+    var territoryPolygonLookup: (GeoFix) -> TerritoryMatch? = { null }
 
     var enablePoliceCircumscription: Boolean = true
 
@@ -166,6 +183,12 @@ class RoadDetectionEngine(
             return
         }
 
+        // Cached offline boundaries take priority. Entering a zone, bairro,
+        // CICOM or CPA must not wait for Nominatim's street name.
+        territoryPolygonLookup(fix)?.let { match ->
+            publish(polygonTransition(match, accuracy))
+        }
+
         val metersMoved = if (lastQueryLat != 0.0 || lastQueryLon != 0.0) {
             calculateMeters(lastQueryLat, lastQueryLon, lat, lon)
         } else {
@@ -209,7 +232,14 @@ class RoadDetectionEngine(
                 result.onSuccess { rawPlace ->
                     lastQuerySucceeded = true
                     val normalizedRoad = normalizeRoadName(rawPlace.road)
-                    val cleanPlace = rawPlace.copy(road = normalizedRoad)
+                    val local = territoryPolygonLookup(fix)
+                    val cleanPlace = rawPlace.copy(
+                        road = normalizedRoad,
+                        neighbourhood = local?.neighbourhood ?: rawPlace.neighbourhood,
+                        zone = local?.zone ?: rawPlace.zone,
+                        policeDistrict = local?.cicom ?: rawPlace.policeDistrict,
+                        city = if (local != null) "Manaus" else rawPlace.city
+                    )
 
                     onPlaceUpdated(cleanPlace)
                     onStatusMessage("Localização ativa")
