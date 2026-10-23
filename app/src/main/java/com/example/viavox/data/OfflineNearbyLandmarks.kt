@@ -13,16 +13,7 @@ import org.json.JSONObject
  * No arbitrary simulated stores or synthetic points are returned.
  */
 class OfflineNearbyLandmarks(private val context: Context) {
-    private val verifiedHistoricSites = listOf(
-        NearbyLandmark("museusgov:teatro-amazonas", "Teatro Amazonas",
-            -3.130237195, -60.023431219, "tourism", approximatePoint = true),
-        NearbyLandmark("osm:1812729522", "Palácio Rio Negro",
-            -3.13506, -60.01677, "historic", approximatePoint = true),
-        NearbyLandmark("osm:4586379890", "Mercado Municipal Adolpho Lisboa",
-            -3.13995, -60.02355, "amenity", approximatePoint = true),
-        NearbyLandmark("cultura:palacio-justica", "Palácio da Justiça",
-            -3.13024, -60.02439, "historic", approximatePoint = true)
-    )
+    private val verifiedHistoricSites = verifiedSites()
 
     private var loaded: List<NearbyLandmark>? = null
 
@@ -42,6 +33,17 @@ class OfflineNearbyLandmarks(private val context: Context) {
         // https://mapcarta.com/pt/N1812729522
         // https://mapcarta.com/pt/N4586379890
         // https://pt.aroundus.com/p/4321798-palacio-da-justica-do-amazonas
+        fun verifiedSites(): List<NearbyLandmark> = listOf(
+        NearbyLandmark("museusgov:teatro-amazonas", "Teatro Amazonas",
+            -3.130237195, -60.023431219, "tourism", approximatePoint = true),
+        NearbyLandmark("osm:1812729522", "Palácio Rio Negro",
+            -3.13506, -60.01677, "historic", approximatePoint = true),
+        NearbyLandmark("osm:4586379890", "Mercado Municipal Adolpho Lisboa",
+            -3.13995, -60.02355, "amenity", approximatePoint = true),
+        NearbyLandmark("cultura:palacio-justica", "Palácio da Justiça",
+            -3.13024, -60.02439, "historic", approximatePoint = true)
+    )
+
         fun parsePoliceStations(text: String): List<NearbyLandmark> {
             val array = JSONObject(text).optJSONArray("features") ?: return emptyList()
             return (0 until array.length()).mapNotNull { i ->
