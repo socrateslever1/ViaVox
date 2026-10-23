@@ -53,6 +53,61 @@ class RoadDetectionEngine(
     private var pendingCandidateStartLat = 0.0
     private var pendingCandidateStartLon = 0.0
 
+    /** Territorial labels are tracked independently of road changes. */
+    private class EntryState {
+        private var current: String? = null
+        private var pending: String? = null
+        private var pendingCount = 0
+
+        fun clear() { current = null; pending = null; pendingCount = 0 }
+
+        fun changedTo(value: String?, accuracy: Float): String? {
+            val candidate = value?.trim()?.takeIf { it.isNotBlank() } ?: return null
+            val key = normalizeForComparison(candidate)
+            if (current != null && normalizeForComparison(current!!) == key) {
+                pending = null
+                pendingCount = 0
+                return null
+            }
+            // Accurate mapped addresses are announced at their first confirmed
+            // lookup. Less accurate fixes need two consistent map responses.
+            if (accuracy > 25f) {
+                if (pending != null && normalizeForComparison(pending!!) == key) pendingCount++
+                else { pending = candidate; pendingCount = 1 }
+                if (pendingCount < 2) return null
+            }
+            current = candidate
+            pending = null
+            pendingCount = 0
+            return candidate
+        }
+    }
+
+    private val spokenZone = EntryState()
+    private val spokenNeighbourhood = EntryState()
+    private val spokenCicom = EntryState()
+    private val spokenCpa = EntryState()
+
+    private fun areaTransition(place: Place, fix: GeoFix): GeographicTransition {
+        val jurisdiction = if (enablePoliceCircumscription)
+            PoliceJurisdictionSpeechResolver.resolve(place.policeDistrict, place.city)
+        else null
+        return GeographicTransition(
+            zone = spokenZone.changedTo(place.zone, fix.accuracyMeters),
+            neighbourhood = spokenNeighbourhood.changedTo(
+                place.neighbourhood.takeIf { place.hasValidNeighbourhood() },
+                fix.accuracyMeters
+            ),
+            cicom = spokenCicom.changedTo(jurisdiction?.cicom, fix.accuracyMeters),
+            cpa = spokenCpa.changedTo(jurisdiction?.cpa, fix.accuracyMeters)
+        )
+    }
+
+    private fun publish(territory: GeographicTransition, road: String? = null) {
+        val announcement = territory.copy(road = road)
+        if (!announcement.isEmpty()) onGeographicTransition?.invoke(announcement)
+    }
+
     var enablePoliceCircumscription: Boolean = true
 
     fun getCurrentConfirmedRoad(): String? = currentConfirmedRoad
@@ -76,6 +131,10 @@ class RoadDetectionEngine(
         lastQueryLat = 0.0
         lastQueryLon = 0.0
         lastQuerySucceeded = false
+        spokenZone.clear()
+        spokenNeighbourhood.clear()
+        spokenCicom.clear()
+        spokenCpa.clear()
     }
 
     fun onLocationUpdate(location: Location) {
@@ -170,12 +229,13 @@ class RoadDetectionEngine(
 
     internal fun processRoadDecision(place: Place, fix: GeoFix) {
         val road = normalizeRoadName(place.road)
-        if (!place.copy(road = road).hasValidRoad()) {
-            // Do not invent or announce unidentified roads
+        val normalizedPlace = place.copy(road = road)
+        val territory = areaTransition(normalizedPlace, fix)
+        if (!normalizedPlace.hasValidRoad()) {
+            // Zone, CICOM and bairro may be confirmed even if the street is unknown.
+            publish(territory)
             return
         }
-
-        val normalizedPlace = place.copy(road = road)
         val normalized = normalizeForComparison(road)
         val currentNormalized = currentConfirmedRoad?.let { normalizeForComparison(it) }
 
@@ -192,11 +252,7 @@ class RoadDetectionEngine(
 
             val message = normalizedPlace.toSpeechMessage(isTransition = false)
             onRoadAnnounceNeeded(message, true)
-            onGeographicTransition?.invoke(GeographicTransition(
-                zone = normalizedPlace.zone.takeIf { it.isNotBlank() },
-                neighbourhood = normalizedPlace.neighbourhood.takeIf { normalizedPlace.hasValidNeighbourhood() },
-                road = road
-            ))
+            publish(territory, road)
             return
         }
 
@@ -233,11 +289,7 @@ class RoadDetectionEngine(
                 pendingNeighbourhood = null
                 pendingNeighbourhoodCount = 0
             }
-            if (newZone != null || newNeighbourhood != null) {
-                onGeographicTransition?.invoke(GeographicTransition(
-                    zone = newZone, neighbourhood = newNeighbourhood
-                ))
-            }
+            publish(territory)
             return
         }
 
@@ -251,15 +303,17 @@ class RoadDetectionEngine(
             pendingCandidateRoad = null
             pendingCandidatePlace = null
             pendingCandidateCount = 0
+            publish(territory)
             return
         }
 
         // If the user entered from a confirmed road and is now stationary or crawling (< 2.2 m/s, e.g. parking lot,
         // deep inside a store or condo), DO NOT switch to a parallel/back street. A car does not hop fences.
-        if (fix.speedMps < 2.2f) {
+        if (fix.speedMps < 0.35f) {
             pendingCandidateRoad = null
             pendingCandidatePlace = null
             pendingCandidateCount = 0
+            publish(territory)
             return
         }
 
@@ -307,11 +361,7 @@ class RoadDetectionEngine(
                     includeNeighbourhood = neighbourhoodChanged
                 )
                 onRoadAnnounceNeeded(message, false)
-                onGeographicTransition?.invoke(GeographicTransition(
-                    zone = normalizedPlace.zone.takeIf { zoneChanged },
-                    neighbourhood = normalizedPlace.neighbourhood.takeIf { neighbourhoodChanged },
-                    road = road
-                ))
+                publish(territory, road)
             }
         } else {
             // First sighting of a candidate road (protects against single-point GPS bounce at intersections)
@@ -321,6 +371,7 @@ class RoadDetectionEngine(
             pendingCandidateStartLat = fix.latitude
             pendingCandidateStartLon = fix.longitude
         }
+        if (normalized != normalizeForComparison(currentConfirmedRoad.orEmpty())) publish(territory)
     }
 
     /** Require two consistent geocoder readings for zone-only transitions. */
