@@ -224,9 +224,9 @@ fun VoiceHome(
                 color = soft, fontSize = 11.sp)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Shortcut("Meus lugares", Icons.Default.Home, Modifier.weight(1f), onOpenPlaces)
-            Shortcut("Salvar aqui", Icons.Default.BookmarkAdd, Modifier.weight(1f), onSavePlace)
-            Shortcut("Abrir mapa", Icons.Default.Map, Modifier.weight(1f), onOpenMap)
+            Shortcut("Meus lugares", Icons.Default.Home, Modifier.weight(1f), action = onOpenPlaces)
+            Shortcut("Salvar aqui", Icons.Default.BookmarkAdd, Modifier.weight(1f), action = onSavePlace)
+            Shortcut("Abrir mapa", Icons.Default.Map, Modifier.weight(1f), action = onOpenMap)
         }
         Spacer(Modifier.height(22.dp))
     }
