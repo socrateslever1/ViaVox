@@ -115,11 +115,15 @@ class ViaVoxTrackingService : Service() {
             ) },
             canPlay = { event ->
                 if (!VoiceAnnouncementPolicy.mayPlay(isTrackingRunning, TrackingRepository.state.value.isVoiceEnabled, event.kind)) false
+                else if (event.kind == SpeechKind.TOUR &&
+                    AssistanceMode.from(currentConfig.assistanceMode) != AssistanceMode.ACCESSIBILITY) false
+                else if (event.kind == SpeechKind.TOUR &&
+                    event.key.startsWith("tour:") && !currentConfig.tourEnabled) false
                 else if (event.kind != SpeechKind.POI) true
                 else {
                     val latest = TrackingRepository.state.value
                     val poiId = event.key.removePrefix("poi:")
-                    latest.hasLocationFix && currentConfig.narratePoiEnabled &&
+                    latest.hasLocationFix && strictPoiEnabled() &&
                         poiService.isStillRelevant(
                             poiId, latest.latitude,latest.longitude,
                             latest.accuracyMeters?.toFloat() ?: 100f,
@@ -728,6 +732,7 @@ class ViaVoxTrackingService : Service() {
             return
         }
         scanJob?.cancel()
+        TrackingRepository.updateSurroundingsResult("Consultando o mapa e as referências próximas...")
         scanJob = serviceScope.launch {
             val points = surroundings.nearby(
                 state.latitude, state.longitude, currentConfig.surroundingsRadiusMeters
@@ -745,7 +750,9 @@ class ViaVoxTrackingService : Service() {
                 currentConfig.surroundingsRadiusMeters, direction, heading,
                 latest.accuracyMeters?.toFloat() ?: 100f
             )
-            val landmarksMessage = SurroundingsPolicy.scanSpeech(chosen, direction, heading != null)
+            val landmarksMessage = if (points.isEmpty() && surroundings.lastError != null)
+                "Não foi possível consultar as referências pela internet agora."
+            else SurroundingsPolicy.scanSpeech(chosen, direction, heading != null)
             val roadName = latest.place?.road.orEmpty()
             val junction = if (direction == ScanDirection.FRONT && roadName.isNotBlank() &&
                 heading != null && (latest.accuracyMeters ?: 100) <= 20) {
