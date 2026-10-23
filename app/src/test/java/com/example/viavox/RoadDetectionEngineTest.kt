@@ -17,6 +17,59 @@ import java.io.IOException
 class RoadDetectionEngineTest {
 
     @Test
+    fun slowAddressLookupIsNotCancelledByNewGpsSamples() = runTest(UnconfinedTestDispatcher()) {
+        val deferred = kotlinx.coroutines.CompletableDeferred<Result<Place>>()
+        var networkCalls = 0
+        val spoken = mutableListOf<String>()
+        val engine = RoadDetectionEngine(
+            coroutineScope = backgroundScope,
+            onPlaceUpdated = {},
+            onRoadAnnounceNeeded = { message, _ -> spoken.add(message) },
+            onStatusMessage = {},
+            reverseGeocodeProvider = { _, _ ->
+                networkCalls++
+                deferred.await()
+            }
+        )
+        engine.onGeoFixUpdate(GeoFix(-3.1300, -60.0200,
+            accuracyMeters = 6f, speedMps = 4f, timestampMs = 1_000L))
+        engine.onGeoFixUpdate(GeoFix(-3.1299, -60.0200,
+            accuracyMeters = 6f, speedMps = 4f, timestampMs = 5_000L))
+        assertEquals("Only one reverse-geocode request may remain in flight",1,networkCalls)
+        deferred.complete(Result.success(Place("Rua 10 de Julho","Centro","Manaus")))
+        assertEquals(1,spoken.size)
+        assertEquals("Rua 10 de Julho",engine.getCurrentConfirmedRoad())
+    }
+
+    @Test
+    fun outdatedAddressIsNotAnnouncedAfterMovingFarAway() = runTest(UnconfinedTestDispatcher()) {
+        val delayed = kotlinx.coroutines.CompletableDeferred<Result<Place>>()
+        var count = 0
+        val announcements = mutableListOf<String>()
+        val engine = RoadDetectionEngine(
+            coroutineScope = backgroundScope,
+            onPlaceUpdated = {},
+            onRoadAnnounceNeeded = { message, _ -> announcements.add(message) },
+            onStatusMessage = {},
+            reverseGeocodeProvider = { _, _ ->
+                count++
+                if (count == 1) delayed.await()
+                else Result.success(Place("Avenida Eduardo Ribeiro","Centro","Manaus"))
+            }
+        )
+        engine.onGeoFixUpdate(GeoFix(-3.1300,-60.0200,
+            accuracyMeters=6f,speedMps=9f,timestampMs=1_000L))
+        engine.onGeoFixUpdate(GeoFix(-3.1290,-60.0200,
+            accuracyMeters=6f,speedMps=9f,timestampMs=6_000L))
+        delayed.complete(Result.success(Place("Rua Antiga","Centro","Manaus")))
+        assertTrue("Old geocode must be discarded",announcements.isEmpty())
+        engine.onGeoFixUpdate(GeoFix(-3.1289,-60.0200,
+            accuracyMeters=6f,speedMps=9f,timestampMs=10_000L))
+        assertEquals(listOf("Você está na Avenida Eduardo Ribeiro, bairro Centro."),
+            announcements)
+    }
+
+    @Test
     fun testNormalizeRoadName_abbreviationsExpanded() {
         assertEquals("Rua das Flores", RoadDetectionEngine.normalizeRoadName("R. das Flores"))
         assertEquals("Avenida Djalma Batista", RoadDetectionEngine.normalizeRoadName("Av. Djalma Batista"))
