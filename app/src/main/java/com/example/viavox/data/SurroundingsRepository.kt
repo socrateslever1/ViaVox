@@ -14,6 +14,13 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.util.Locale
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.CancellationException
+
+data class SurroundingsLookup(
+    val landmarks: List<NearbyLandmark>,
+    val source: String,
+    val error: String? = null
+)
 
 /**
  * Explicit 360/forward lookup and the optional Tour share ONE throttled cache.
@@ -23,7 +30,8 @@ import java.util.concurrent.TimeUnit
 class SurroundingsRepository(
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(8, TimeUnit.SECONDS)
-        .readTimeout(12, TimeUnit.SECONDS)
+        .readTimeout(8, TimeUnit.SECONDS)
+        .callTimeout(9, TimeUnit.SECONDS)
         .build()
 ) {
     private val mutex = Mutex()
@@ -33,15 +41,20 @@ class SurroundingsRepository(
     private var fetchedRadius = 0
     private var lastAttemptMs = 0L
     private var lastSuccessMs = 0L
+    private var lastSource = "OpenStreetMap"
     var lastError: String? = null
         private set
 
-    suspend fun nearby(
+    /** Explicit UI scan gets a terminal outcome; never interpret source failure as empty streets. */
+    suspend fun lookup(
         latitude: Double, longitude: Double, radiusMeters: Int,
         automatic: Boolean = false
-    ): List<NearbyLandmark> = mutex.withLock {
+    ): SurroundingsLookup = mutex.withLock {
         if (!latitude.isFinite() || !longitude.isFinite() ||
-            latitude !in -90.0..90.0 || longitude !in -180.0..180.0) return@withLock emptyList()
+            latitude !in -90.0..90.0 || longitude !in -180.0..180.0) {
+            return@withLock SurroundingsLookup(emptyList(), "GPS",
+                "Localização inválida. Aguarde uma nova leitura do GPS.")
+        }
         val radius = radiusMeters.coerceIn(50, 500)
         val now = System.currentTimeMillis()
         val moved = if (fetchedLat.isFinite()) {
@@ -49,17 +62,28 @@ class SurroundingsRepository(
                 "origin", "", com.example.viavox.model.PoiCategory.PUBLIC, fetchedLat, fetchedLon
             ).distanceTo(latitude, longitude)
         } else Double.POSITIVE_INFINITY
-        // Reuse cache only when the requested circle fits inside fetched area.
         val coversCircle = moved + radius <= fetchedRadius.toDouble()
         val recent = now - lastSuccessMs < if (automatic) 180_000L else 90_000L
-        if (coversCircle && recent) return@withLock cache
-        val throttleMs = if (automatic) 150_000L else 35_000L
+        if (coversCircle && recent) {
+            return@withLock SurroundingsLookup(cache, lastSource)
+        }
+        val throttleMs = if (automatic) 120_000L else 5_000L
         if (lastAttemptMs != 0L && now - lastAttemptMs < throttleMs) {
-            return@withLock if (coversCircle) cache else emptyList()
+            return@withLock if (coversCircle && lastSuccessMs != 0L)
+                SurroundingsLookup(cache, lastSource)
+            else SurroundingsLookup(emptyList(), "cache",
+                "Consulta recente indisponível. Tente novamente.")
         }
         lastAttemptMs = now
         val queryRadius = radius.coerceAtLeast(200)
-        val results = withContext(Dispatchers.IO) { query(latitude, longitude, queryRadius) }
+        val results = try {
+            withContext(Dispatchers.IO) { query(latitude, longitude, queryRadius) }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            Log.w("ViaVoxSurroundings", "Lookup failed", error)
+            null
+        }
         if (results != null) {
             cache = results
             fetchedLat = latitude
@@ -67,9 +91,20 @@ class SurroundingsRepository(
             fetchedRadius = queryRadius
             lastSuccessMs = now
             lastError = null
-        } else lastError = "Não foi possível consultar as referências agora."
-        if (results != null) results else if (coversCircle) cache else emptyList()
+            lastSource = "OpenStreetMap"
+            SurroundingsLookup(results, "OpenStreetMap")
+        } else {
+            lastError = "O serviço de referências está indisponível."
+            if (coversCircle && lastSuccessMs != 0L)
+                SurroundingsLookup(cache, "OpenStreetMap (cache)", lastError)
+            else SurroundingsLookup(emptyList(), "OpenStreetMap", lastError)
+        }
     }
+
+    suspend fun nearby(
+        latitude: Double, longitude: Double, radiusMeters: Int,
+        automatic: Boolean = false
+    ): List<NearbyLandmark> = lookup(latitude, longitude, radiusMeters, automatic).landmarks
 
     private fun query(lat: Double, lon: Double, radius: Int): List<NearbyLandmark>? {
         val latText = String.format(Locale.US, "%.6f", lat)
@@ -81,9 +116,9 @@ class SurroundingsRepository(
               nwr["name"]["tourism"~"^(museum|attraction|viewpoint|artwork|gallery)$"](around:$radius,$latText,$lonText);
               nwr["name"]["historic"](around:$radius,$latText,$lonText);
               nwr["name"]["leisure"~"^(park|garden|playground)$"](around:$radius,$latText,$lonText);
-              nwr["name"]["shop"~"^(department_store|supermarket|mall|books|convenience)$"](around:$radius,$latText,$lonText);
+              nwr["name"]["shop"](around:$radius,$latText,$lonText);
             );
-            out center 120;
+            out center 220;
         """.trimIndent()
         for (endpoint in ENDPOINTS) {
             try {
@@ -137,8 +172,8 @@ class SurroundingsRepository(
 
     private companion object {
         val ENDPOINTS = listOf(
-            "https://overpass.kumi.systems/api/interpreter",
-            "https://overpass.private.coffee/api/interpreter"
+            "https://overpass.private.coffee/api/interpreter",
+            "https://overpass-api.de/api/interpreter"
         )
     }
 }
