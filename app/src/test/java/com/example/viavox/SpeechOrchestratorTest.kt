@@ -9,6 +9,22 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SpeechOrchestratorTest {
+    @Test fun doesNotEraseEarlierZoneAndNeighbourhoodWhenStreetIsConfirmedLater() {
+        val said = mutableListOf<String>()
+        var finished: (() -> Unit)? = null
+        val q = SpeechOrchestrator(
+            play = { content, done -> said += content; finished = done }
+        )
+        q.offer(SpeechKind.NAVIGATION, "Navegação em andamento", "nav:active")
+        q.offer(SpeechKind.GEOGRAPHY, "Entrando na Zona Sul. Bairro Centro.", "geo:territory")
+        q.offer(SpeechKind.GEOGRAPHY, "Rua 10 de Julho.", "geo:street")
+        finished?.invoke()
+        assertEquals("Entrando na Zona Sul. Bairro Centro.", said.last())
+        finished?.invoke()
+        assertEquals("Rua 10 de Julho.", said.last())
+        assertEquals(3, said.size)
+    }
+
     @Test fun neverStartsSecondUtteranceUntilPreviousActuallyFinishes() {
         var done: (() -> Unit)? = null
         var now = 1_000L
