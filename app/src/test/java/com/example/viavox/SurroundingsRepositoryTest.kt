@@ -54,6 +54,42 @@ class SurroundingsRepositoryTest {
         assertEquals("Cache should tolerate ordinary GPS drift", 1, requests.get())
     }
 
+    @Test fun publicApiGetFailureTriesIndependentPostSource() = runBlocking {
+        val methods = mutableListOf<String>()
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            val method = chain.request().method
+            methods.add(method)
+            Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1)
+                .code(if (method == "GET") 503 else 200)
+                .message(if (method == "GET") "Unavailable" else "OK")
+                .body("""{"elements":[{"type":"node","id":55,
+                    "lat":-3.11955,"lon":-60.0100,
+                    "tags":{"name":"Lojas Americanas","shop":"variety_store"}}]}"""
+                    .toResponseBody("application/json".toMediaType()))
+                .build()
+        }.build()
+        val result = SurroundingsRepository(client).lookup(latitude,longitude,200)
+        assertNull(result.error)
+        assertEquals(listOf("GET","POST"), methods)
+        assertEquals("Lojas Americanas",result.landmarks.first().name)
+    }
+
+    @Test fun http200ErrorRemarkCannotMasqueradeAsEmptyMap() = runBlocking {
+        val methods = mutableListOf<String>()
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            methods.add(chain.request().method)
+            Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1)
+                .code(200).message("OK")
+                .body("""{"remark":"runtime error: Query timed out"}"""
+                    .toResponseBody("application/json".toMediaType()))
+                .build()
+        }.build()
+        val result = SurroundingsRepository(client).lookup(latitude,longitude,200)
+        assertNotNull(result.error)
+        assertTrue(result.landmarks.isEmpty())
+        assertEquals(listOf("GET","POST"),methods)
+    }
+
     @Test fun failureIsNotInterpretedAsNoMappedReferences() = runBlocking {
         val client = OkHttpClient.Builder().addInterceptor {
             throw IOException("test network unavailable")
