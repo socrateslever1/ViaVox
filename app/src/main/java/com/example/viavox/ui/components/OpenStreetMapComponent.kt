@@ -1144,7 +1144,7 @@ private fun DrawScope.drawSlippyTiles(
                     } else {
                         // Keep the neutral background. A decorative grid is not
                         // a real road map and looked like spurious diagonal roads.
-                    }}
+                    }
                 }
             }
         }
