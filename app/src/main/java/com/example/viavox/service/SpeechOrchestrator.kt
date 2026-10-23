@@ -10,6 +10,7 @@ enum class SpeechKind(val priority: Int, val maxAgeMs: Long) {
     GEOGRAPHY(3, 25_000L),
     SAFETY(3, 12_000L),
     USER_REQUEST(4, 60_000L),
+    REMINDER(3, 40_000L),
     POI(1, 9_000L),
     TOUR(1, 10_000L)
 }
