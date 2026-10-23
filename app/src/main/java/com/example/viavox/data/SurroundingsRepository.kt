@@ -39,7 +39,8 @@ class SurroundingsRepository(
     private var fetchedLat = Double.NaN
     private var fetchedLon = Double.NaN
     private var fetchedRadius = 0
-    private var lastAttemptMs = 0L
+    private var lastAutomaticAttemptMs = 0L
+    private var lastManualAttemptMs = 0L
     private var lastSuccessMs = 0L
     private var lastSource = "OpenStreetMap"
     var lastError: String? = null
@@ -67,15 +68,18 @@ class SurroundingsRepository(
         if (coversCircle && recent) {
             return@withLock SurroundingsLookup(cache, lastSource)
         }
+        val lastAttempt = if (automatic) lastAutomaticAttemptMs else lastManualAttemptMs
         val throttleMs = if (automatic) 120_000L else 5_000L
-        if (lastAttemptMs != 0L && now - lastAttemptMs < throttleMs) {
+        if (lastAttempt != 0L && now - lastAttempt < throttleMs) {
             return@withLock if (coversCircle && lastSuccessMs != 0L)
                 SurroundingsLookup(cache, lastSource)
             else SurroundingsLookup(emptyList(), "cache",
                 "Consulta recente indisponível. Tente novamente.")
         }
-        lastAttemptMs = now
-        val queryRadius = radius.coerceAtLeast(200)
+        if (automatic) lastAutomaticAttemptMs = now else lastManualAttemptMs = now
+        // Enlarge the network circle to allow movement without immediately
+        // invalidating the cache used by 360° and Tour.
+        val queryRadius = (radius + 150).coerceIn(200, 650)
         val results = try {
             withContext(Dispatchers.IO) { query(latitude, longitude, queryRadius) }
         } catch (cancelled: CancellationException) {
