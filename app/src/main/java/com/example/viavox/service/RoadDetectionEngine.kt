@@ -34,6 +34,7 @@ class RoadDetectionEngine(
 ) {
 
     private var activeQueryJob: Job? = null
+    private var newestFix: GeoFix? = null
     private var lastQueryTimestamp = 0L
     private var lastQueryLat = 0.0
     private var lastQueryLon = 0.0
@@ -148,6 +149,7 @@ class RoadDetectionEngine(
         lastQueryLat = 0.0
         lastQueryLon = 0.0
         lastQuerySucceeded = false
+        newestFix = null
         spokenZone.clear()
         spokenNeighbourhood.clear()
         spokenCicom.clear()
@@ -176,6 +178,7 @@ class RoadDetectionEngine(
         val lat = fix.latitude
         val lon = fix.longitude
         val accuracy = fix.accuracyMeters
+        newestFix = fix
         val now = fix.timestampMs
 
         if (accuracy > MAX_ACCEPTABLE_ACCURACY_METERS) {
@@ -215,7 +218,10 @@ class RoadDetectionEngine(
         val hasMovedEnough = (now - lastQueryTimestamp >= minInterval) &&
                 (metersMoved >= minDistance || now - lastQueryTimestamp >= 40_000L)
 
-        if (isFirstLookup || hasUnconfirmedInitialRoad || hasMovedEnough) {
+        // Do not continually cancel a slow reverse-geocoding request while
+        // walking or driving: otherwise the street name may never resolve.
+        if ((isFirstLookup || hasUnconfirmedInitialRoad || hasMovedEnough) &&
+            activeQueryJob?.isActive != true) {
             lastQueryTimestamp = now
             lastQueryLat = lat
             lastQueryLon = lon
@@ -224,12 +230,20 @@ class RoadDetectionEngine(
     }
 
     private fun queryReverseGeocode(lat: Double, lon: Double, fix: GeoFix) {
-        activeQueryJob?.cancel()
-
         activeQueryJob = coroutineScope.launch {
             try {
                 val result = reverseGeocodeProvider(lat, lon)
                 result.onSuccess { rawPlace ->
+                    // A slow response to an old coordinate cannot reannounce
+                    // a road the user has already passed.
+                    val latest = newestFix
+                    if (latest != null && calculateMeters(
+                            lat, lon, latest.latitude, latest.longitude
+                        ) > maxOf(35.0, fix.accuracyMeters * 2.0 + 12.0)) {
+                        lastQuerySucceeded = false
+                        lastQueryTimestamp = 0L
+                        return@onSuccess
+                    }
                     lastQuerySucceeded = true
                     val normalizedRoad = normalizeRoadName(rawPlace.road)
                     val local = territoryPolygonLookup(fix)
