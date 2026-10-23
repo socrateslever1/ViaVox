@@ -27,6 +27,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Arrangement
+import com.example.viavox.model.ExternalMapLinks
 import com.example.viavox.model.PoiCategory
 import com.example.viavox.model.TrackingState
 import com.example.viavox.model.ScanDirection
@@ -84,6 +92,9 @@ fun ViaVoxMainScreen(
         val compactHeight = maxHeight < 730.dp || maxWidth < 355.dp
 
         var mapVisible by remember { mutableStateOf(false) }
+        var mapChoiceOpen by remember { mutableStateOf(false) }
+        var mapLaunchError by remember { mutableStateOf(false) }
+        val uriHandler = LocalUriHandler.current
         if (!mapVisible) {
             VoiceHome(
                 state = state,
@@ -94,7 +105,7 @@ fun ViaVoxMainScreen(
                 onSavePlace = navigation::saveCurrentPoint,
                 onOpenPlaces = navigation::showSavedPlaces,
                 onOpenSettings = onOpenSettings,
-                onOpenMap = { mapVisible = true },
+                onOpenMap = { mapChoiceOpen = true },
                 onSelectMode = onAssistanceModeChanged,
                 onScan = onScan,
                 modifier = Modifier.fillMaxSize().safeDrawingPadding()
@@ -292,6 +303,57 @@ fun ViaVoxMainScreen(
             ) {
                 androidx.compose.material3.Text("Voz")
             }
+        }
+
+        if (mapChoiceOpen) {
+            AlertDialog(
+                onDismissRequest = { mapChoiceOpen = false },
+                title = { Text("Abrir mapa") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                        Text("Escolha onde consultar o mapa. Nenhum destino será definido automaticamente.")
+                        TextButton(onClick = {
+                            mapChoiceOpen = false
+                            mapVisible = true
+                        }) { Text("Mapa interno do ViaVox") }
+                        HorizontalDivider()
+                        TextButton(onClick = {
+                            mapChoiceOpen = false
+                            try {
+                                uriHandler.openUri(ExternalMapLinks.googleMaps(
+                                    state.latitude.takeIf { state.isActive && state.hasLocationFix },
+                                    state.longitude.takeIf { state.isActive && state.hasLocationFix }
+                                ))
+                            } catch (_: Exception) { mapLaunchError = true }
+                        }) { Text("Google Maps") }
+                        TextButton(onClick = {
+                            mapChoiceOpen = false
+                            try {
+                                uriHandler.openUri(ExternalMapLinks.waze(
+                                    state.latitude.takeIf { state.isActive && state.hasLocationFix },
+                                    state.longitude.takeIf { state.isActive && state.hasLocationFix }
+                                ))
+                            } catch (_: Exception) { mapLaunchError = true }
+                        }) { Text("Waze") }
+                        if (!state.isActive || !state.hasLocationFix) {
+                            Text("Sem GPS ativo: o aplicativo externo abrirá sem marcar sua posição atual.")
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { mapChoiceOpen = false }) { Text("Cancelar") }
+                }
+            )
+        }
+        if (mapLaunchError) {
+            AlertDialog(
+                onDismissRequest = { mapLaunchError = false },
+                title = { Text("Mapa indisponível") },
+                text = { Text("Não foi possível abrir o serviço de mapas neste aparelho.") },
+                confirmButton = {
+                    TextButton(onClick = { mapLaunchError = false }) { Text("Entendi") }
+                }
+            )
         }
 
         SavedPlaceEditorDialog(
