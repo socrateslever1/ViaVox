@@ -219,9 +219,22 @@ fun VoiceHome(
                 }
             }
         }
-        if (state.config.assistanceMode == AssistanceMode.ACCESSIBILITY.storedValue) {
-            Text(if (state.config.tourEnabled) "Tour ativo · referências especiais narradas com intervalos."
-                else "Tour desligado · ative nas configurações para ouvir referências durante o percurso.",
+        val currentMode = AssistanceMode.from(state.config.assistanceMode)
+        Text(
+            when (currentMode) {
+                AssistanceMode.EXPLORER ->
+                    "Fala: ZONA → BAIRRO → RUA · somente ao entrar ou mudar."
+                AssistanceMode.TERRITORIAL ->
+                    "Fala: ZONA → CICOM → CPA (1 vez por área) → BAIRRO → RUA."
+                AssistanceMode.ACCESSIBILITY ->
+                    "Fala: ZONA → BAIRRO → RUA · depois cruzamentos e orientações do ambiente."
+            },
+            color = soft, fontSize = 11.sp, lineHeight = 15.sp
+        )
+        if (currentMode == AssistanceMode.ACCESSIBILITY) {
+            Text(if (state.config.tourEnabled)
+                "Tour ativo: anuncia referências importantes sem repetir a cada GPS."
+                else "Tour desligado: ative nas configurações para ouvir referências no percurso.",
                 color = soft, fontSize = 11.sp)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
