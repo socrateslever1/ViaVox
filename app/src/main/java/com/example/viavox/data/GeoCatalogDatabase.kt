@@ -12,6 +12,8 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.text.Normalizer
 import java.util.Locale
+import java.io.InputStream
+import java.util.zip.GZIPInputStream
 import kotlin.math.cos
 
 /**
@@ -240,6 +242,87 @@ class GeoCatalogDatabase(context: Context) :
      * Offline suggestions only return verified geocoded POIs. A street learned
      * at a sample GPS fix is not automatically a safe routable entrance.
      */
+    /**
+     * A versioned, bounded, streamed geodata snapshot. Never import untrusted
+     * arbitrary SQL or overwrite user data. A closing count trailer detects
+     * truncated downloads before the installed version is advanced.
+     */
+    suspend fun importGeoPack(compressed: InputStream): Int = withContext(Dispatchers.IO) {
+        ensureSeeded()
+        val db=writableDatabase
+        var count=0
+        var completed=false
+        val municipalityCodes=AmazonasMunicipalityDirectory.all.map { it.first }.toSet()
+        GZIPInputStream(compressed).bufferedReader(Charsets.UTF_8).use { reader ->
+            val headerLine=reader.readLine() ?: error("Pacote vazio")
+            val header=JSONObject(headerLine)
+            require(header.optString("type")=="header" &&
+                header.optInt("schema")==1 &&
+                header.optString("region")=="AM") { "Pacote geográfico inválido" }
+            val version=header.optString("version").take(80)
+            require(Regex("""[0-9]{4}-[0-9]{2}-[0-9]{2}""").matches(version)) {
+                "Versão inválida"
+            }
+            db.beginTransaction()
+            try {
+                while(true) {
+                    val line=reader.readLine() ?: break
+                    require(line.length <= 4096) { "Registro geográfico excede limite" }
+                    val data=JSONObject(line)
+                    if(data.optString("type")=="end") {
+                        require(data.optInt("records",-1)==count &&
+                            reader.readLine()==null) { "Pacote incompleto" }
+                        db.execSQL(
+                            "INSERT OR REPLACE INTO metadata VALUES('geopack_version',?)",
+                            arrayOf(version))
+                        completed=true
+                        break
+                    }
+                    require(++count <= 1_500_000) { "Pacote muito grande" }
+                    val code=data.optInt("city_code")
+                    if (code !in municipalityCodes) continue
+                    val name=data.optString("name").trim().take(150)
+                    val lat=data.optDouble("lat",Double.NaN)
+                    val lon=data.optDouble("lon",Double.NaN)
+                    if(name.isBlank() || !lat.isFinite() || !lon.isFinite() ||
+                        lat !in -10.5..3.0 || lon !in -74.0..-56.0) continue
+                    when(data.optString("type")) {
+                        "poi" -> writePlaces(db,listOf(NearbyLandmark(
+                            data.optString("id").take(90),name,lat,lon,
+                            data.optString("kind","amenity").take(40),
+                            data.optBoolean("approximate",false))),"OSM:Geofabrik")
+                        "street" -> {
+                            val values=ContentValues().apply {
+                                put("city_code",code)
+                                put("name",name)
+                                put("lat",lat)
+                                put("lon",lon)
+                                put("source","OSM:Geofabrik")
+                                put("updated_at",System.currentTimeMillis())
+                            }
+                            db.insertWithOnConflict("streets",null,values,
+                                SQLiteDatabase.CONFLICT_IGNORE)
+                        }
+                    }
+                    if(count%700==0) {
+                        db.setTransactionSuccessful()
+                        db.endTransaction()
+                        db.beginTransaction()
+                    }
+                }
+                require(completed) { "Fim do pacote geográfico ausente" }
+                db.setTransactionSuccessful()
+            } finally { if(db.inTransaction()) db.endTransaction() }
+        }
+        count
+    }
+
+    suspend fun installedGeoPackVersion():String = withContext(Dispatchers.IO) {
+        readableDatabase.rawQuery(
+            "SELECT value FROM metadata WHERE key='geopack_version'",null)
+            .use { if(it.moveToFirst()) it.getString(0) else "" }
+    }
+
     suspend fun searchDestinations(query:String, limit:Int=8):
         List<com.example.viavox.model.MapPlace> = withContext(Dispatchers.IO) {
         val needle=fold(query)
