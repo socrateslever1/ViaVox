@@ -27,7 +27,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install geodata tooling
-        run: python -m pip install --disable-pip-version-check osmium shapely
+        run: python -m pip install --disable-pip-version-check osmium shapely ijson
       - name: Download current public source datasets
         run: |
           mkdir -p .geodata
@@ -37,6 +37,10 @@ jobs:
           curl --fail --location --silent --show-error --retry 3 --max-time 120 \
             'https://raw.githubusercontent.com/henriquemalvar/br-geojson/main/dist/municipios/AM.geojson' \
             -o .geodata/AM.geojson
+          curl --fail --location --silent --show-error --retry 3 --max-time 300 \
+            'https://geoftp.ibge.gov.br/recortes_para_fins_estatisticos/malha_de_setores_censitarios/censo_2022/base_de_faces_de_logradouros_versao_2022_censo_demografico/json/AM_faces_de_logradouros_2022_json.zip' \
+            -o .geodata/AM_faces_2022.zip
+          test $(stat -c%s .geodata/AM_faces_2022.zip) -gt 100000
           test $(stat -c%s .geodata/norte.osm.pbf) -gt 10000000
           test $(stat -c%s .geodata/AM.geojson) -gt 10000
       - name: Build and verify Amazonas-only gazetteer
@@ -44,6 +48,7 @@ jobs:
           python scripts/build_amazonas_geopack.py \
             --osm .geodata/norte.osm.pbf \
             --municipalities .geodata/AM.geojson \
+            --ibge-zip .geodata/AM_faces_2022.zip \
             --output .geodata/amazonas-geopack.jsonl.gz
           python - <<'PY'
           import gzip,json
