@@ -46,7 +46,7 @@ object SpeechTextNormalizer {
         // Voice-friendly landmark categories. Keep the official GIS name intact.
         // Specific terminal names are often too long or pronounced letter by letter.
         if (Regex("""(?i)\\b(?:terminal\\s+rodovi[aá]rio|rodovi[aá]ria)(?:\\b|\\s)""").containsMatchIn(trimmed)) {
-            return "Terminal rodoviário"
+            return "Terminal Rodoviário de Manaus"
         }
         val lowered = trimmed.lowercase(java.util.Locale.forLanguageTag("pt-BR"))
         if (Regex("""(?i)\b(?:ltda|eireli|s\/a|mei|comercio|supermercado|farmacia|drogaria|consultorio|petshop)\b""")
