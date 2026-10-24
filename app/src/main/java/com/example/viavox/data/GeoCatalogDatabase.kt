@@ -1,0 +1,248 @@
+package com.example.viavox.data
+
+import android.content.ContentValues
+import android.content.Context
+import android.database.sqlite.SQLiteDatabase
+import android.database.sqlite.SQLiteOpenHelper
+import com.example.viavox.model.NearbyLandmark
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.text.Normalizer
+import java.util.Locale
+import kotlin.math.cos
+
+/**
+ * Persistent, indexed local geographic catalogue. The source's official name is
+ * always preserved separately from the optional audio alias.
+ *
+ * Important: this database stores *verified points*, not guessed road entrances.
+ * Municipality and neighborhood records do not claim street-level GPS accuracy.
+ * All public methods run SQLite off the main thread.
+ */
+class GeoCatalogDatabase(context: Context) :
+    SQLiteOpenHelper(context.applicationContext, "viavox_geography.db", null, 1) {
+
+    private val appContext = context.applicationContext
+    private val seedMutex = Mutex()
+    private var seeded = false
+
+    override fun onCreate(db: SQLiteDatabase) {
+        db.execSQL("""CREATE TABLE municipalities(
+            ibge_code INTEGER PRIMARY KEY, name TEXT NOT NULL, uf TEXT NOT NULL,
+            source TEXT NOT NULL, updated_at INTEGER NOT NULL)""")
+        db.execSQL("""CREATE INDEX municipalities_names ON municipalities(name COLLATE NOCASE)""")
+        db.execSQL("""CREATE TABLE neighborhoods(
+            city_code INTEGER NOT NULL, name TEXT NOT NULL,
+            zone TEXT, source TEXT NOT NULL,
+            PRIMARY KEY(city_code, name))""")
+        db.execSQL("""CREATE TABLE streets(
+            city_code INTEGER NOT NULL, name TEXT NOT NULL,
+            lat REAL, lon REAL, source TEXT NOT NULL, updated_at INTEGER NOT NULL,
+            PRIMARY KEY(city_code, name))""")
+        db.execSQL("""CREATE TABLE places(
+            id TEXT UNIQUE NOT NULL, official_name TEXT NOT NULL,
+            speech_name TEXT, search_key TEXT NOT NULL,
+            lat REAL NOT NULL, lon REAL NOT NULL, kind TEXT NOT NULL,
+            approximate INTEGER NOT NULL DEFAULT 0, source TEXT NOT NULL,
+            updated_at INTEGER NOT NULL)""")
+        db.execSQL("""CREATE VIRTUAL TABLE place_bounds USING rtree(
+            rowid, min_lat, max_lat, min_lon, max_lon)""")
+        db.execSQL("""CREATE INDEX places_search_key ON places(search_key)""")
+        db.execSQL("""CREATE TABLE aliases(
+            canonical_key TEXT NOT NULL, spoken_name TEXT NOT NULL,
+            city_code INTEGER, source TEXT NOT NULL,
+            PRIMARY KEY(canonical_key, city_code))""")
+        db.execSQL("""CREATE TABLE metadata(key TEXT PRIMARY KEY, value TEXT NOT NULL)""")
+        // Explicit city-specific override, not a blind rename of every bus terminal.
+        db.execSQL("""INSERT INTO aliases(canonical_key,spoken_name,city_code,source)
+            VALUES('terminal rodoviario engenheiro huascar angelim',
+              'Terminal Rodoviário de Manaus',1302603,'user-approved')""")
+        db.execSQL("""INSERT INTO municipalities VALUES
+            (1302603,'Manaus','AM','IBGE',0),
+            (1301902,'Itacoatiara','AM','IBGE',0)""")
+    }
+
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        // Future releases must use additive migrations, preserving offline caches.
+    }
+
+    suspend fun ensureSeeded() = seedMutex.withLock {
+        if (seeded) return@withLock
+        withContext(Dispatchers.IO) {
+            val db = writableDatabase
+            val existing = db.rawQuery("SELECT value FROM metadata WHERE key='seed_v1'",null)
+                .use { if (it.moveToFirst()) it.getString(0) else null }
+            if (existing != "ok") {
+                val points = OfflineNearbyLandmarks.verifiedSites() +
+                    runCatching {
+                        appContext.assets.open("sedes_policiais.geojson").bufferedReader()
+                            .use { OfflineNearbyLandmarks.parsePoliceStations(it.readText()) }
+                    }.getOrDefault(emptyList())
+                db.beginTransaction()
+                try {
+                    writePlaces(db,points,"bundled:verified")
+                    val root = JSONObject(appContext.assets.open("bairros_manaus.geojson")
+                        .bufferedReader().use { it.readText() })
+                    val features = root.optJSONArray("features")
+                    if (features != null) for (i in 0 until features.length()) {
+                        val props = features.optJSONObject(i)?.optJSONObject("properties") ?: continue
+                        val name = props.optString("name").trim()
+                        if (name.isBlank()) continue
+                        val v = ContentValues().apply {
+                            put("city_code",1302603)
+                            put("name",name)
+                            put("zone",props.optString("zona"))
+                            put("source","municipal:bundled")
+                        }
+                        db.insertWithOnConflict("neighborhoods",null,v,
+                            SQLiteDatabase.CONFLICT_IGNORE)
+                    }
+                    db.execSQL("INSERT OR REPLACE INTO metadata VALUES('seed_v1','ok')")
+                    db.setTransactionSuccessful()
+                } finally { db.endTransaction() }
+            }
+            seeded = true
+        }
+    }
+
+    suspend fun upsertPlaces(places: List<NearbyLandmark>, source: String) =
+        withContext(Dispatchers.IO) {
+            if (places.isEmpty()) return@withContext
+            ensureSeeded()
+            val db = writableDatabase
+            db.beginTransaction()
+            try {
+                writePlaces(db,places,source)
+                db.setTransactionSuccessful()
+            } finally { db.endTransaction() }
+        }
+
+    private fun writePlaces(db: SQLiteDatabase, points: List<NearbyLandmark>, source: String) {
+        val now = System.currentTimeMillis()
+        for (poi in points) {
+            if (!poi.latitude.isFinite() || !poi.longitude.isFinite() ||
+                poi.latitude !in -90.0..90.0 || poi.longitude !in -180.0..180.0 ||
+                poi.id.isBlank() || poi.name.isBlank()) continue
+            val name = poi.name.trim().take(150)
+            val values = ContentValues().apply {
+                put("official_name",name)
+                put("speech_name",GeoSpeechPolicy.referenceAlias(name))
+                put("search_key",fold(name))
+                put("lat",poi.latitude)
+                put("lon",poi.longitude)
+                put("kind",poi.kind.take(40))
+                put("approximate",if (poi.approximatePoint) 1 else 0)
+                put("source",source.take(90))
+                put("updated_at",now)
+            }
+            val rows = db.update("places",values,"id=?",arrayOf(poi.id))
+            if (rows == 0) {
+                values.put("id",poi.id)
+                db.insertWithOnConflict("places",null,values,
+                    SQLiteDatabase.CONFLICT_IGNORE)
+            }
+            db.rawQuery("SELECT rowid FROM places WHERE id=?",arrayOf(poi.id)).use { cursor ->
+                if (cursor.moveToFirst()) {
+                    db.execSQL("INSERT OR REPLACE INTO place_bounds VALUES(?,?,?,?,?)",
+                        arrayOf(cursor.getLong(0),poi.latitude,poi.latitude,
+                            poi.longitude,poi.longitude))
+                }
+            }
+        }
+    }
+
+    suspend fun around(lat: Double, lon: Double, radiusMeters: Int): List<NearbyLandmark> =
+        withContext(Dispatchers.IO) {
+            if (!lat.isFinite() || !lon.isFinite() ||
+                lat !in -90.0..90.0 || lon !in -180.0..180.0) return@withContext emptyList()
+            ensureSeeded()
+            val radius = radiusMeters.coerceIn(50,1500)
+            val dLat = radius / 111_195.0
+            val dLon = radius / (111_195.0 * cos(Math.toRadians(lat)).coerceAtLeast(0.15))
+            val results = ArrayList<NearbyLandmark>()
+            readableDatabase.rawQuery(
+                """SELECT p.id,p.official_name,p.lat,p.lon,p.kind,p.approximate
+                   FROM place_bounds b JOIN places p ON p.rowid=b.rowid
+                   WHERE b.max_lat>=? AND b.min_lat<=? AND b.max_lon>=? AND b.min_lon<=?
+                   LIMIT 1000""",
+                arrayOf((lat-dLat).toString(),(lat+dLat).toString(),
+                    (lon-dLon).toString(),(lon+dLon).toString())
+            ).use { c ->
+                while(c.moveToNext()) {
+                    val point = NearbyLandmark(c.getString(0),c.getString(1),
+                        c.getDouble(2),c.getDouble(3),c.getString(4),c.getInt(5)==1)
+                    if (point.distanceTo(lat,lon) <= radius) results.add(point)
+                }
+            }
+            results
+        }
+
+    suspend fun learnStreet(cityCode:Int, name:String, lat:Double, lon:Double,
+                            source:String = "nominatim") = withContext(Dispatchers.IO) {
+        if (name.isBlank() || !lat.isFinite() || !lon.isFinite() ||
+            lat !in -90.0..90.0 || lon !in -180.0..180.0) return@withContext
+        ensureSeeded()
+        val values=ContentValues().apply {
+            put("city_code",cityCode);put("name",name.take(150));put("lat",lat)
+            put("lon",lon);put("source",source);put("updated_at",System.currentTimeMillis())
+        }
+        writableDatabase.insertWithOnConflict("streets",null,values,
+            SQLiteDatabase.CONFLICT_REPLACE)
+    }
+
+    suspend fun replaceMunicipalities(municipalities:List<Pair<Int,String>>) =
+        withContext(Dispatchers.IO) {
+            // An incomplete or malformed response may not erase existing locations.
+            if(municipalities.size != 62 || municipalities.any {
+                it.first !in 1300000..1399999 || it.second.isBlank()
+            } || municipalities.map { it.first }.distinct().size != 62) return@withContext false
+            val db=writableDatabase
+            db.beginTransaction()
+            try {
+                municipalities.forEach { (id,name) ->
+                    val values=ContentValues().apply {
+                        put("ibge_code",id);put("name",name);put("uf","AM")
+                        put("source","IBGE");put("updated_at",System.currentTimeMillis())
+                    }
+                    db.insertWithOnConflict("municipalities",null,values,
+                        SQLiteDatabase.CONFLICT_REPLACE)
+                }
+                db.execSQL("INSERT OR REPLACE INTO metadata VALUES('ibge_updated_at',?)",
+                    arrayOf(System.currentTimeMillis().toString()))
+                db.setTransactionSuccessful()
+            } finally { db.endTransaction() }
+            true
+        }
+
+    suspend fun lastMunicipalitySync():Long = withContext(Dispatchers.IO) {
+        readableDatabase.rawQuery("SELECT value FROM metadata WHERE key='ibge_updated_at'",null)
+            .use { if (it.moveToFirst()) it.getString(0).toLongOrNull() ?: 0L else 0L }
+    }
+
+    suspend fun municipalityCount():Int = withContext(Dispatchers.IO) {
+        readableDatabase.rawQuery("SELECT COUNT(*) FROM municipalities",null)
+            .use { if (it.moveToFirst()) it.getInt(0) else 0 }
+    }
+
+    suspend fun searchByName(query:String, limit:Int=20):List<String> =
+        withContext(Dispatchers.IO) {
+            val needle=fold(query)
+            if (needle.length < 2) return@withContext emptyList()
+            val results=mutableListOf<String>()
+            readableDatabase.rawQuery(
+                "SELECT official_name FROM places WHERE search_key LIKE ? LIMIT ?",
+                arrayOf("%$needle%",limit.coerceIn(1,50).toString())
+            ).use { while(it.moveToNext()) results.add(it.getString(0)) }
+            results
+        }
+
+    companion object {
+        fun fold(s:String):String=Normalizer.normalize(s,Normalizer.Form.NFD)
+            .replace(Regex("\\p{M}+"),"")
+            .lowercase(Locale.forLanguageTag("pt-BR"))
+            .replace(Regex("[^a-z0-9 ]")," ").replace(Regex("\\s+")," ").trim()
+    }
+}
