@@ -228,6 +228,17 @@ class GeoCatalogDatabase(context: Context) :
             true
         }
 
+    data class Statistics(val municipalities:Int, val streets:Int, val places:Int)
+
+    suspend fun statistics():Statistics = withContext(Dispatchers.IO) {
+        ensureSeeded()
+        fun count(table:String):Int =
+            readableDatabase.rawQuery("SELECT COUNT(*) FROM "+table,null).use {
+                if(it.moveToFirst()) it.getInt(0) else 0
+            }
+        Statistics(count("municipalities"),count("streets"),count("places"))
+    }
+
     suspend fun lastMunicipalitySync():Long = withContext(Dispatchers.IO) {
         readableDatabase.rawQuery("SELECT value FROM metadata WHERE key='ibge_updated_at'",null)
             .use { if (it.moveToFirst()) it.getString(0).toLongOrNull() ?: 0L else 0L }
