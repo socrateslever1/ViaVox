@@ -271,6 +271,15 @@ class GeoCatalogDatabase(context: Context) :
         }
 
     companion object {
+        @Volatile private var sharedInstance: GeoCatalogDatabase? = null
+
+        fun shared(context: Context): GeoCatalogDatabase =
+            sharedInstance ?: synchronized(this) {
+                sharedInstance ?: GeoCatalogDatabase(context.applicationContext).also {
+                    sharedInstance = it
+                }
+            }
+
         fun fold(s:String):String=Normalizer.normalize(s,Normalizer.Form.NFD)
             .replace(Regex("\\p{M}+"),"")
             .lowercase(Locale.forLanguageTag("pt-BR"))
