@@ -10,6 +10,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.viavox.data.NavigationNetworkService
 import com.example.viavox.data.VerifiedManausLandmarks
 import com.example.viavox.data.DestinationSearchPolicy
+import com.example.viavox.data.GeoCatalogDatabase
 import com.example.viavox.data.TrackingRepository
 import com.example.viavox.data.TripRecordingRepository
 import com.example.viavox.data.RecentDestinationsStore
@@ -71,6 +72,7 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
     private val network = NavigationNetworkService()
     private val db = ViaVoxHistoryDatabase(application)
     private val recentDestinationsStore = RecentDestinationsStore(application)
+    private val geoCatalog = GeoCatalogDatabase.shared(application)
     private val _ui = MutableStateFlow(
         NavigationUiState(
             recentDestinations = recentDestinationsStore.load(),
@@ -150,7 +152,17 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
         ) }
         if (!ready) return
         suggestionJob = viewModelScope.launch {
-            delay(480L)
+            // The first suggestions come from indexed SQLite, not 480 ms network debounce.
+            val offline = runCatching {
+                geoCatalog.searchDestinations(normalized,8)
+            }.getOrDefault(emptyList())
+            if (_ui.value.query.trim() != normalized) return@launch
+            val quick = DestinationSearchPolicy.merge(offline,instant).take(8)
+            _ui.update { state -> state.copy(
+                results = quick, suggesting = true, suggestionsVisible = true,
+                searchNotice = if (quick.isNotEmpty()) "Referências do banco local" else null
+            ) }
+            delay(350L)
             val tracking = TrackingRepository.state.value
             val places = runCatching {
                 network.suggest(
@@ -161,14 +173,12 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
                 )
             }.getOrDefault(emptyList())
             if (_ui.value.query.trim() != normalized) return@launch
-            _ui.update { state ->
-                state.copy(
-                    results = DestinationSearchPolicy.merge(places,instant).take(6),
-                    suggesting = false,
-                    suggestionsVisible = true,
-                    searchNotice = null
-                )
-            }
+            _ui.update { state -> state.copy(
+                results = DestinationSearchPolicy.merge(quick,places).take(8),
+                suggesting = false, suggestionsVisible = true,
+                searchNotice = if (places.isEmpty() && quick.isNotEmpty())
+                    "Resultados locais disponíveis mesmo sem internet" else null
+            ) }
         }
     }
 
@@ -201,16 +211,28 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
         ) }
         val location = TrackingRepository.state.value
         searchJob = viewModelScope.launch {
-            // Personal bookmarks remain available even when public geocoders fail.
             val saved = _ui.value.savedPlaces.map { it.second }
+            val local = runCatching { geoCatalog.searchDestinations(query,12) }
+                .getOrDefault(emptyList())
+            val cached = DestinationSearchPolicy.merge(saved.filter {
+                DestinationSearchPolicy.normalize(it.name).contains(
+                    DestinationSearchPolicy.normalize(query))
+            },local)
+            if (_ui.value.query.trim() != query) return@launch
+            if (cached.isNotEmpty()) _ui.update { it.copy(
+                results = cached, searching = true,
+                searchNotice = "Referências locais encontradas; ampliando a busca..."
+            ) }
             val result = network.search(
                 query,
                 location.latitude.takeIf { location.hasLocationFix },
                 location.longitude.takeIf { location.hasLocationFix },
                 saved
             )
+            if (_ui.value.query.trim() != query) return@launch
             result.fold(
-                onSuccess = { items ->
+                onSuccess = { remote ->
+                    val items = DestinationSearchPolicy.merge(cached,remote)
                     val updatedRecent = items.firstOrNull()?.let { top ->
                         recentDestinationsStore.record(top)
                     } ?: _ui.value.recentDestinations
@@ -218,16 +240,22 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
                         results = items, searching = false,
                         recentDestinations = updatedRecent,
                         error = if (items.isEmpty())
-                            "Destino não encontrado. Experimente o nome completo ou selecione um ponto no mapa."
-                            else null,
+                            "Destino não encontrado no banco nem no serviço de mapas."
+                        else null,
                         searchNotice = if (items.isNotEmpty())
-                            "${items.size} destino(s) encontrado(s). Escolha um para traçar a rota."
-                            else null
+                            items.size.toString() + " destino(s). Escolha um para traçar a rota."
+                        else null
                     ) }
                 },
                 onFailure = { error ->
-                    _ui.update { it.copy(searching = false, results = emptyList(), searchNotice = null,
-                        error = error.message ?: "Busca online indisponível. Escolha o destino no mapa.") }
+                    _ui.update { it.copy(
+                        searching = false, results = cached,
+                        searchNotice = if (cached.isNotEmpty())
+                            "Busca online indisponível. Resultados locais preservados." else null,
+                        error = if (cached.isEmpty())
+                            error.message ?: "Busca online indisponível."
+                        else null
+                    ) }
                 }
             )
         }
