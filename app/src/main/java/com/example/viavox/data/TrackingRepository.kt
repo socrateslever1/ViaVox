@@ -58,6 +58,10 @@ object TrackingRepository {
         }
     }
 
+    fun updateGeoCatalogStatus(message: String) {
+        _state.update { it.copy(geoCatalogStatus = message) }
+    }
+
     fun updateSurroundingsResult(message: String?) {
         _state.update { it.copy(surroundingsResult = message) }
     }
