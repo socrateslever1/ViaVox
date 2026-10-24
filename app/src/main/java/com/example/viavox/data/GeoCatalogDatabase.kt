@@ -364,10 +364,15 @@ class GeoCatalogDatabase(context: Context) :
         val needle=fold(query)
         if (needle.length < 2) return@withContext emptyList()
         ensureSeeded()
+        val officialAlias = GeoSpeechPolicy.officialSearchNameFor(query)
         val results=mutableListOf<com.example.viavox.model.MapPlace>()
         readableDatabase.rawQuery(
-            "SELECT official_name,lat,lon,source FROM places WHERE search_key LIKE ? LIMIT ?",
-            arrayOf("%$needle%",limit.coerceIn(1,20).toString())
+            """SELECT official_name,lat,lon,source FROM places
+                WHERE search_key LIKE ? OR search_key LIKE ?
+                ORDER BY CASE WHEN search_key=? THEN 0 ELSE 1 END
+                LIMIT ?""",
+            arrayOf("%$needle%","%"+(officialAlias ?: needle)+"%",
+                officialAlias ?: needle,limit.coerceIn(1,20).toString())
         ).use { c ->
             while(c.moveToNext()) results.add(com.example.viavox.model.MapPlace(
                 name=c.getString(0),latitude=c.getDouble(1),longitude=c.getDouble(2),
