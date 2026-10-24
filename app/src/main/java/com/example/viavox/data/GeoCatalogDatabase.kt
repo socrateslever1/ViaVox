@@ -263,6 +263,9 @@ class GeoCatalogDatabase(context: Context) :
         val db=writableDatabase
         var count=0
         var completed=false
+        var acceptedPoi=0
+        var acceptedStreet=0
+        val startedAt=System.currentTimeMillis()
         val municipalityCodes=AmazonasMunicipalityDirectory.all.map { it.first }.toSet()
         GZIPInputStream(compressed).bufferedReader(Charsets.UTF_8).use { reader ->
             val headerLine=reader.readLine() ?: error("Pacote vazio")
@@ -283,6 +286,23 @@ class GeoCatalogDatabase(context: Context) :
                     if(data.optString("type")=="end") {
                         require(data.optInt("records",-1)==count &&
                             reader.readLine()==null) { "Pacote incompleto" }
+                        // A complete gazetteer must contain both POIs and roads.
+                        // This prevents accidental mass deletion by a small/truncated
+                        // package that happens to have a self-consistent trailer.
+                        require(acceptedPoi>=1_000 && acceptedStreet>=1_000) {
+                            "Pacote sem cobertura regional suficiente"
+                        }
+                        // Snapshot update: remove obsolete POIs and road names
+                        // only after every new item has passed validation.
+                        db.execSQL("""DELETE FROM place_bounds WHERE rowid IN
+                            (SELECT rowid FROM places
+                             WHERE source='OSM:Geofabrik' AND updated_at<?)""",
+                            arrayOf(startedAt))
+                        db.execSQL("""DELETE FROM places WHERE source='OSM:Geofabrik'
+                            AND updated_at<?""",arrayOf(startedAt))
+                        db.execSQL("""DELETE FROM streets WHERE
+                            source IN ('OSM:Geofabrik','IBGE:faces:2022')
+                            AND updated_at<?""",arrayOf(startedAt))
                         db.execSQL(
                             "INSERT OR REPLACE INTO metadata VALUES('geopack_version',?)",
                             arrayOf(version))
@@ -298,10 +318,15 @@ class GeoCatalogDatabase(context: Context) :
                     if(name.isBlank() || !lat.isFinite() || !lon.isFinite() ||
                         lat !in -10.5..3.0 || lon !in -74.0..-56.0) continue
                     when(data.optString("type")) {
-                        "poi" -> writePlaces(db,listOf(NearbyLandmark(
-                            data.optString("id").take(90),name,lat,lon,
-                            data.optString("kind","amenity").take(40),
-                            data.optBoolean("approximate",false))),"OSM:Geofabrik")
+                        "poi" -> {
+                            if (data.optString("id").isNotBlank()) {
+                                writePlaces(db,listOf(NearbyLandmark(
+                                    data.optString("id").take(90),name,lat,lon,
+                                    data.optString("kind","amenity").take(40),
+                                    data.optBoolean("approximate",false))),"OSM:Geofabrik")
+                                acceptedPoi++
+                            }
+                        }
                         "street" -> {
                             val values=ContentValues().apply {
                                 put("city_code",code)
@@ -313,7 +338,8 @@ class GeoCatalogDatabase(context: Context) :
                                 put("updated_at",System.currentTimeMillis())
                             }
                             db.insertWithOnConflict("streets",null,values,
-                                SQLiteDatabase.CONFLICT_IGNORE)
+                                SQLiteDatabase.CONFLICT_REPLACE)
+                            acceptedStreet++
                         }
                     }
                     // One atomic transaction for the whole pack. Publishing
