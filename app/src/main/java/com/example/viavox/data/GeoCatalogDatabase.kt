@@ -236,6 +236,28 @@ class GeoCatalogDatabase(context: Context) :
             .use { if (it.moveToFirst()) it.getInt(0) else 0 }
     }
 
+    /**
+     * Offline suggestions only return verified geocoded POIs. A street learned
+     * at a sample GPS fix is not automatically a safe routable entrance.
+     */
+    suspend fun searchDestinations(query:String, limit:Int=8):
+        List<com.example.viavox.model.MapPlace> = withContext(Dispatchers.IO) {
+        val needle=fold(query)
+        if (needle.length < 2) return@withContext emptyList()
+        ensureSeeded()
+        val results=mutableListOf<com.example.viavox.model.MapPlace>()
+        readableDatabase.rawQuery(
+            "SELECT official_name,lat,lon,source FROM places WHERE search_key LIKE ? LIMIT ?",
+            arrayOf("%$needle%",limit.coerceIn(1,20).toString())
+        ).use { c ->
+            while(c.moveToNext()) results.add(com.example.viavox.model.MapPlace(
+                name=c.getString(0),latitude=c.getDouble(1),longitude=c.getDouble(2),
+                subtitle="Referência mapeada · "+c.getString(3)
+            ))
+        }
+        results
+    }
+
     suspend fun searchByName(query:String, limit:Int=20):List<String> =
         withContext(Dispatchers.IO) {
             val needle=fold(query)
