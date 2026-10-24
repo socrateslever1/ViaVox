@@ -21,6 +21,9 @@ import pathlib
 import re
 import sys
 import unicodedata
+import zipfile
+
+import ijson
 
 import osmium
 from shapely.geometry import Point, shape
@@ -71,6 +74,7 @@ class Gazetteer(osmium.SimpleHandler):
         self.count = 0
         self.pois = 0
         self.streets = 0
+        self.ibge_streets = 0
         self.streets_seen = set()
 
     def municipality(self, lat, lon):
@@ -121,6 +125,53 @@ class Gazetteer(osmium.SimpleHandler):
                         "approximate":approximate})
             self.pois += 1
 
+    def ingest_ibge_zip(self, zip_path):
+        """Stream official 2022 IBGE face names by municipality."""
+        valid_codes=set(self.codes)
+        with zipfile.ZipFile(zip_path) as archive:
+            members=[m for m in archive.infolist() if
+                     m.filename.lower().endswith((".json",".geojson"))
+                     and not m.is_dir()]
+            if not members:
+                raise ValueError("IBGE ZIP contains no geographic JSON")
+            for member in members:
+                if member.file_size>450*1024*1024:
+                    raise ValueError("IBGE decompressed file too large")
+                with archive.open(member) as source:
+                    for feature in ijson.items(source,"features.item"):
+                        props=feature.get("properties") or {}
+                        sector=str(props.get("CD_SETOR") or "")
+                        if not re.match(r"^13\\d{5}",sector):
+                            continue
+                        code=int(sector[:7])
+                        if code not in valid_codes:
+                            continue
+                        parts=[str(props.get(key) or "").strip()
+                               for key in ("NM_TIP_LOG","NM_TIT_LOG","NM_LOG")]
+                        name=" ".join(x for x in parts if x)
+                        if not 2<=len(name)<=140 or fold(name) in {
+                            "sem nome","nao identificado","logradouro sem nome"
+                        }:
+                            continue
+                        key=(code,fold(name))
+                        if key in self.streets_seen:
+                            continue
+                        geom=feature.get("geometry")
+                        if not geom:
+                            continue
+                        try:
+                            center=shape(geom).centroid
+                            if center.is_empty or not center.is_valid:
+                                continue
+                        except (TypeError,ValueError):
+                            continue
+                        self.streets_seen.add(key)
+                        self.write({"type":"street", "city_code":code,
+                            "name":name,"lat":round(center.y,7),
+                            "lon":round(center.x,7),
+                            "source":"IBGE:faces:2022"})
+                        self.ibge_streets+=1
+
     def node(self, obj):
         if not obj.location.valid():
             return
@@ -149,6 +200,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--osm", required=True, type=pathlib.Path)
     parser.add_argument("--municipalities", required=True, type=pathlib.Path)
+    parser.add_argument("--ibge-zip", type=pathlib.Path)
     parser.add_argument("--output", required=True, type=pathlib.Path)
     args = parser.parse_args()
     polygons, codes, names = municipality_shapes(args.municipalities)
@@ -164,9 +216,12 @@ def main():
         },ensure_ascii=False,separators=(",",":")) + "\n")
         collector = Gazetteer(polygons,codes,writer)
         collector.apply_file(str(args.osm), locations=True, idx="flex_mem")
+        if args.ibge_zip is not None:
+            collector.ingest_ibge_zip(args.ibge_zip)
         writer.write(json.dumps({"type":"end","records":collector.count})+"\n")
     print(f"Amazonas pack: municipalities={len(codes)}, "
-          f"POIs={collector.pois}, streets={collector.streets}, "
+          f"POIs={collector.pois}, OSM streets={collector.streets}, "
+          f"IBGE added streets={collector.ibge_streets}, "
           f"records={collector.count}, file={args.output.stat().st_size} bytes")
     if collector.pois < 1000 or collector.streets < 500:
         raise RuntimeError("Suspiciously empty source extraction")
