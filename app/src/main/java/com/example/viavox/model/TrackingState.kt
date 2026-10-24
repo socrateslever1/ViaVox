@@ -17,6 +17,7 @@ data class TrackingState(
     val poiDirection: RelativeDirection? = null,
     val poiStatus: String = "Buscando referências próximas...",
     val surroundingsResult: String? = null,
+    val geoCatalogStatus: String = "Preparando referências locais...",
     val statusMessage: String = "Pronto para localizar",
     val isVoiceEnabled: Boolean = true,
     val isSpeaking: Boolean = false,
