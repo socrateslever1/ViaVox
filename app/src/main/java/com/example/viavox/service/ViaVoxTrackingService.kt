@@ -121,8 +121,19 @@ class ViaVoxTrackingService : Service() {
         geoCatalog = GeoCatalogDatabase.shared(this)
         serviceScope.launch(Dispatchers.IO) {
             // Populate local RTree without blocking TTS/GPS/UI. Retain SQLite across restarts.
-            runCatching { geoCatalog.ensureSeeded() }.onFailure {
-                Log.w(TAG, "Local geocatalogue seed failed", it)
+            val seedOk = runCatching { geoCatalog.ensureSeeded(); true }
+                .getOrElse {
+                    Log.w(TAG, "Local geocatalogue seed failed", it)
+                    false
+                }
+            if (!seedOk) {
+                TrackingRepository.updateGeoCatalogStatus(
+                    "Banco local indisponível. Referências online ainda podem funcionar.")
+            } else {
+                val count = runCatching { geoCatalog.statistics() }.getOrNull()
+                if (count != null) TrackingRepository.updateGeoCatalogStatus(
+                    "Dados locais: "+count.municipalities+" municípios, "+
+                        count.streets+" vias e "+count.places+" referências.")
             }
             runCatching { AmazonasMunicipalitySync(geoCatalog).refreshIfDue() }.onFailure {
                 Log.w(TAG, "IBGE directory refresh failed", it)
@@ -130,6 +141,15 @@ class ViaVoxTrackingService : Service() {
             runCatching { GeoPackUpdater(this@ViaVoxTrackingService,geoCatalog)
                 .refreshIfDue() }.onFailure {
                 Log.w(TAG, "Amazonas geo pack update failed", it)
+            }
+            val refreshed = runCatching { geoCatalog.statistics() }.getOrNull()
+            if (refreshed != null) {
+                val version = geoCatalog.installedGeoPackVersion()
+                TrackingRepository.updateGeoCatalogStatus(
+                    "Banco local: "+refreshed.municipalities+" municípios, "+
+                    refreshed.streets+" vias, "+refreshed.places+" referências"+
+                    if(version.isNotBlank()) " · atualização "+version else " · base inicial"
+                )
             }
         }
         val initialVoiceEnabled = prefs.getBoolean("voice_enabled", true)
