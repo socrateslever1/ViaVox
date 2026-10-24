@@ -24,6 +24,9 @@ import com.example.viavox.data.NominatimService
 import com.example.viavox.data.PoiDiscoveryService
 import com.example.viavox.data.SurroundingsRepository
 import com.example.viavox.data.OfflineNearbyLandmarks
+import com.example.viavox.data.GeoCatalogDatabase
+import com.example.viavox.data.AmazonasMunicipalitySync
+import com.example.viavox.data.AmazonasMunicipalityDirectory
 import com.example.viavox.data.SurroundingsLookup
 import com.example.viavox.data.ArcGisManausPlacesService
 import com.example.viavox.data.ManausArcGisLayer
@@ -66,6 +69,11 @@ class ViaVoxTrackingService : Service() {
     // Manual scans never queue behind automatic Tour network lookups.
     private val manualSurroundings = SurroundingsRepository()
     private lateinit var offlineNearby: OfflineNearbyLandmarks
+    private lateinit var geoCatalog: GeoCatalogDatabase
+    private var prefetchJob: Job? = null
+    private var lastPrefetchAt = 0L
+    private var lastPrefetchLat = Double.NaN
+    private var lastPrefetchLon = Double.NaN
     private val manausReferences = ArcGisManausPlacesService()
     private var scanGeneration = 0L
     private lateinit var geoReminders: GeoReminderStore
@@ -109,6 +117,16 @@ class ViaVoxTrackingService : Service() {
         val prefs = getSharedPreferences("viavox_prefs", Context.MODE_PRIVATE)
         currentConfig = ViaVoxConfig.loadFrom(prefs)
         offlineNearby = OfflineNearbyLandmarks(this)
+        geoCatalog = GeoCatalogDatabase(this)
+        serviceScope.launch(Dispatchers.IO) {
+            // Populate local RTree without blocking TTS/GPS/UI. Retain SQLite across restarts.
+            runCatching { geoCatalog.ensureSeeded() }.onFailure {
+                Log.w(TAG, "Local geocatalogue seed failed", it)
+            }
+            runCatching { AmazonasMunicipalitySync(geoCatalog).refreshIfDue() }.onFailure {
+                Log.w(TAG, "IBGE directory refresh failed", it)
+            }
+        }
         val initialVoiceEnabled = prefs.getBoolean("voice_enabled", true)
         navigationStore = NavigationSessionStore(this)
         geoReminders = GeoReminderStore(this)
@@ -170,6 +188,20 @@ class ViaVoxTrackingService : Service() {
                 TrackingRepository.updatePlace(place)
                 ViaVoxWidgetProvider.refresh(this, TrackingRepository.state.value)
                 updateNotification(place.road, place.neighbourhood)
+                if (place.hasValidRoad()) {
+                    val location = TrackingRepository.state.value
+                    val municipality = AmazonasMunicipalityDirectory.codeOf(place.city)
+                    if (municipality != null && location.hasLocationFix) {
+                        serviceScope.launch(Dispatchers.IO) {
+                            runCatching {
+                                geoCatalog.learnStreet(
+                                    municipality, place.road, location.latitude,
+                                    location.longitude
+                                )
+                            }.onFailure { Log.w(TAG, "Street cache failed", it) }
+                        }
+                    }
+                }
             },
             // Legacy callback retained for existing unit tests; service plays
             // only the structured transition to avoid double announcements.
@@ -431,6 +463,9 @@ class ViaVoxTrackingService : Service() {
         scanJob?.cancel()
         tourJob?.cancel()
         junctionJob?.cancel()
+        prefetchJob?.cancel()
+        prefetchJob = null
+        lastPrefetchAt = 0L
         scanJob = null
         tourJob = null
         junctionJob = null
@@ -516,6 +551,7 @@ class ViaVoxTrackingService : Service() {
         onNavigationFix(location)
         // Identify current street or street transition
         roadEngine.onLocationUpdate(location)
+        maybePrefetchGeoCatalogue(location)
         maybeNarrateTour(location)
         maybeAnnounceJunction(location)
 
@@ -773,168 +809,215 @@ class ViaVoxTrackingService : Service() {
         return HeadingCorrectionPolicy.trueNorth(magnetic, correction)
     }
 
+    /**
+     * Local-first progressive scan. Never hold a tap behind two sequential
+     * Overpass mirrors and an additional ArcGIS / junction request.
+     * Each source publishes as it finishes, with a strict independent timeout.
+     */
     private fun scanSurroundings(direction: ScanDirection) {
         if (!isTrackingRunning) {
             TrackingRepository.updateSurroundingsResult(
-                "O rastreamento foi interrompido. Ative novamente a localização."
-            )
+                "Ative a localização para consultar os arredores.")
             return
         }
-        val state = TrackingRepository.state.value
-        val accuracy = state.accuracyMeters ?: 100
-        if (!state.hasLocationFix || accuracy !in 1..55) {
-            val message = "Aguardando GPS mais preciso para pesquisar os arredores."
-            TrackingRepository.updateSurroundingsResult(message)
-            speakIfAllowed(message, true, SpeechKind.USER_REQUEST, "scan-gps")
+        val initial = TrackingRepository.state.value
+        val accuracy = initial.accuracyMeters ?: 100
+        if (!initial.hasLocationFix || accuracy !in 1..55) {
+            val msg = "Aguardando GPS mais preciso para consultar os arredores."
+            TrackingRepository.updateSurroundingsResult(msg)
+            speakIfAllowed(msg, true, SpeechKind.USER_REQUEST, "scan-gps")
             return
         }
-        if (direction == ScanDirection.FRONT && headingForScan(state) == null) {
-            val message = "Direção indisponível. Aponte o celular e calibre a bússola, ou comece a caminhar."
-            TrackingRepository.updateSurroundingsResult(message)
-            speakIfAllowed(message, true, SpeechKind.USER_REQUEST, "scan-heading")
+        val initialHeading = headingForScan(initial)
+        if (direction == ScanDirection.FRONT && initialHeading == null) {
+            val msg = "Direção indisponível. Calibre a bússola ou comece a caminhar."
+            TrackingRepository.updateSurroundingsResult(msg)
+            speakIfAllowed(msg, true, SpeechKind.USER_REQUEST, "scan-heading")
             return
         }
 
         scanJob?.cancel()
+        // Tour and prefetch must not take precedence over the explicit request.
         tourJob?.cancel()
         val generation = ++scanGeneration
-        val radius = currentConfig.surroundingsRadiusMeters.coerceIn(50, 500)
-        TrackingRepository.updateSurroundingsResult("Pesquisando até $radius metros...")
+        val radius = currentConfig.surroundingsRadiusMeters.coerceIn(50,500)
+        TrackingRepository.updateSurroundingsResult(
+            "Consultando banco geográfico local (até $radius metros)...")
         scanJob = serviceScope.launch {
-            var resultText: String? = null
-            var answeredByVoice = false
+            val seen = LinkedHashMap<String,NearbyLandmark>()
+            val usedSources = linkedSetOf<String>()
+            var spokenOnce = false
+            var completedSources = 0
+            var failedSources = 0
+            var latestCrossing: String? = null
 
-            fun publish(text: String, speak: Boolean) {
+            fun refresh(done: Boolean = false) {
                 if (generation != scanGeneration || !isTrackingRunning) return
-                TrackingRepository.updateSurroundingsResult(text)
-                resultText = text
-                if (speak && !answeredByVoice) {
-                    answeredByVoice = speakIfAllowed(text.substringBefore("\nFonte:"),
-                        true, SpeechKind.USER_REQUEST, "scan:" + generation)
+                val state = TrackingRepository.state.value
+                if (!state.hasLocationFix || (state.accuracyMeters ?: 100) > 55) return
+                val heading = headingForScan(state)
+                if (direction == ScanDirection.FRONT && heading == null) return
+                val points = SurroundingsPolicy.select(
+                    seen.values.toList(), state.latitude, state.longitude, radius,
+                    direction, heading, state.accuracyMeters?.toFloat() ?: 100f
+                )
+                if (points.isNotEmpty()) {
+                    val narration = SurroundingsPolicy.scanSpeech(points,direction,heading!=null)
+                    val sources = usedSources.joinToString(" + ")
+                    val result = narration +
+                        (latestCrossing?.let { "\n"+it } ?: "") +
+                        "\nFonte: " + sources + "."
+                    TrackingRepository.updateSurroundingsResult(result)
+                    if (!spokenOnce) {
+                        spokenOnce = speakIfAllowed(narration,true,SpeechKind.USER_REQUEST,
+                            "scan:" + generation)
+                    }
+                } else if (latestCrossing != null) {
+                    TrackingRepository.updateSurroundingsResult(latestCrossing)
+                    if (!spokenOnce) {
+                        spokenOnce = speakIfAllowed(latestCrossing!!,true,SpeechKind.USER_REQUEST,
+                            "scan-junction:" + generation)
+                    }
+                } else if (done) {
+                    val message = if (failedSources >= 2 && seen.isEmpty())
+                        "Fontes online indisponíveis. Nenhuma referência local cadastrada para este alcance."
+                    else SurroundingsPolicy.scanSpeech(emptyList(),direction,heading!=null)
+                    TrackingRepository.updateSurroundingsResult(message)
+                    if (!spokenOnce) speakIfAllowed(message,true,SpeechKind.USER_REQUEST,
+                        "scan-empty:" + generation)
+                } else {
+                    TrackingRepository.updateSurroundingsResult(
+                        "Nenhuma referência local confirmada neste raio. Complementando pela internet...")
                 }
             }
 
+            fun accept(points: List<NearbyLandmark>, source: String) {
+                if (generation != scanGeneration || !isTrackingRunning) return
+                points.forEach { seen[it.id] = it }
+                if (points.isNotEmpty()) usedSources.add(source)
+                refresh()
+            }
+
             try {
-                val initial = TrackingRepository.state.value
-                val initialHeading = headingForScan(initial)
-                // Verified points shipped with the app: never await public servers
-                // before returning the first usable manual 360-degree result.
-                val offline = offlineNearby.all()
-                val localSelected = SurroundingsPolicy.select(
-                    offline, initial.latitude, initial.longitude, radius, direction,
-                    initialHeading, initial.accuracyMeters?.toFloat() ?: 100f
-                )
-                if (localSelected.isNotEmpty()) {
-                    publish(
-                        SurroundingsPolicy.scanSpeech(localSelected, direction,
-                            initialHeading != null) + "\nFonte: catálogo local verificado (cobertura parcial).",
-                        speak = true
-                    )
-                }
-
-                // OSM and municipal ArcGIS are independent. A slow/failing source
-                // must never prevent results from the other source or offline data.
-                val osmDeferred = async {
-                    withTimeoutOrNull(16_000L) {
-                        manualSurroundings.lookup(
-                            initial.latitude, initial.longitude, radius, automatic = false
-                        )
-                    }
-                }
-                val gisDeferred = async {
-                    if (!ManausArcGisLayer.inCoverage(initial.latitude, initial.longitude))
-                        emptyList<NearbyLandmark>()
-                    else withTimeoutOrNull(12_000L) {
-                        val deltaLat = (radius + 50) / 111_195.0
-                        val deltaLon = (radius + 50) /
-                            (111_195.0 * kotlin.math.cos(
-                                Math.toRadians(initial.latitude)).coerceAtLeast(0.12))
-                        manausReferences.loadVisible(
-                            GisBounds(initial.longitude - deltaLon,
-                                initial.latitude - deltaLat,
-                                initial.longitude + deltaLon,
-                                initial.latitude + deltaLat), 18.0
-                        ).map { ref ->
-                            NearbyLandmark("arcgis:" + ref.id, ref.shortLabel,
-                                ref.latitude, ref.longitude, ref.type,
-                                approximatePoint = true)
-                        }
-                    }.orEmpty()
-                }
-                val junctionDeferred = async {
-                    if (direction != ScanDirection.FRONT || initialHeading == null ||
-                        initial.place?.road.isNullOrBlank() || accuracy > 20) null
-                    else withTimeoutOrNull(11_000L) {
-                        val roads = roadJunctions.roads(initial.latitude, initial.longitude)
-                        RoadJunctionPolicy.findAhead(
-                            roads, initial.place?.road.orEmpty(),
-                            initial.latitude, initial.longitude, initialHeading,
-                            accuracy.toFloat(), maxDistanceMeters = 160
-                        ).firstOrNull()
-                    }
-                }
-
-                val fromOsm = osmDeferred.await()
-                val fromGis = gisDeferred.await()
-                val crossing = junctionDeferred.await()
-                if (generation != scanGeneration || !isTrackingRunning) return@launch
-
-                val latest = TrackingRepository.state.value
-                if (!latest.hasLocationFix || (latest.accuracyMeters ?: 100) > 55) {
-                    publish("A precisão do GPS piorou. Toque novamente quando estabilizar.",
-                        speak = true)
-                    return@launch
-                }
-                val heading = headingForScan(latest)
-                if (direction == ScanDirection.FRONT && heading == null) {
-                    publish("Não foi possível confirmar a direção atual do aparelho.", speak = true)
-                    return@launch
-                }
-
-                val all = (fromOsm?.landmarks.orEmpty() + fromGis + offline)
-                    .distinctBy { it.name.trim().lowercase(java.util.Locale.ROOT) }
-                val selected = SurroundingsPolicy.select(
-                    all, latest.latitude, latest.longitude, radius, direction,
-                    heading, latest.accuracyMeters?.toFloat() ?: 100f
-                )
-                val providers = mutableListOf<String>()
-                if (fromOsm?.landmarks?.isNotEmpty() == true) providers.add("OpenStreetMap")
-                if (fromGis.isNotEmpty()) providers.add("ArcGIS Manaus")
-                if (localSelected.isNotEmpty()) providers.add("catálogo local")
-
-                val base = when {
-                    selected.isNotEmpty() ->
-                        SurroundingsPolicy.scanSpeech(selected, direction, heading != null)
-                    (fromOsm == null || fromOsm.error != null) &&
-                        fromGis.isEmpty() && localSelected.isEmpty() ->
-                        "Fontes online indisponíveis. Não há referências verificadas no catálogo local para esse alcance."
-                    else ->
-                        SurroundingsPolicy.scanSpeech(emptyList(), direction, heading != null)
-                }
-                val crossingText = crossing?.let {
-                    // Do not invent a legal turn or safe crossing based on map topology.
-                    "\n" + RoadJunctionPolicy.describe(it)
+                // Small bundled catalogue is available even on cold first launch.
+                val initialPoints = offlineNearby.all()
+                accept(initialPoints,"catálogo local")
+                val cached = withTimeoutOrNull(2_000L) {
+                    geoCatalog.around(initial.latitude,initial.longitude,radius)
                 }.orEmpty()
-                val sourceInfo = if (providers.isNotEmpty())
-                    "\nFonte: " + providers.distinct().joinToString(" + ") + "."
-                else if (fromOsm == null || fromOsm.error != null)
-                    "\nServiço OpenStreetMap indisponível."
-                else ""
-                publish(base + crossingText + sourceInfo, speak = true)
+                accept(cached,"banco local")
+
+                // The 360° / forward button returns a local response before
+                // remote enrichment begins. A slow provider is never awaited first.
+                kotlinx.coroutines.supervisorScope {
+                    val osm = launch {
+                        val result = try {
+                            withTimeoutOrNull(6_500L) {
+                                manualSurroundings.lookup(
+                                    initial.latitude, initial.longitude, radius)
+                            }
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            Log.w(TAG,"OSM manual scan failed",e)
+                            null
+                        }
+                        completedSources++
+                        if (result == null || result.error != null) failedSources++
+                        accept(result?.landmarks.orEmpty(),"OpenStreetMap")
+                        result?.landmarks?.takeIf { it.isNotEmpty() }?.let { found ->
+                            serviceScope.launch(Dispatchers.IO) {
+                                geoCatalog.upsertPlaces(found,"OpenStreetMap")
+                            }
+                        }
+                    }
+                    val gis = launch {
+                        val ref = if (ManausArcGisLayer.inCoverage(
+                                initial.latitude,initial.longitude)) {
+                            val deltaLat=(radius+50)/111_195.0
+                            val deltaLon=(radius+50)/(111_195.0 *
+                                kotlin.math.cos(Math.toRadians(initial.latitude))
+                                    .coerceAtLeast(0.12))
+                            withTimeoutOrNull(6_500L) {
+                                manausReferences.loadVisible(GisBounds(
+                                    initial.longitude-deltaLon,initial.latitude-deltaLat,
+                                    initial.longitude+deltaLon,initial.latitude+deltaLat),18.0)
+                            }
+                        } else emptyList()
+                        completedSources++
+                        if (ref == null) failedSources++
+                        val points=ref.orEmpty().map { item ->
+                            NearbyLandmark("arcgis:"+item.id,item.shortLabel,
+                                item.latitude,item.longitude,item.type,
+                                approximatePoint=true)
+                        }
+                        accept(points,"ArcGIS Manaus")
+                        if (points.isNotEmpty()) serviceScope.launch(Dispatchers.IO) {
+                            geoCatalog.upsertPlaces(points,"ArcGIS Manaus")
+                        }
+                    }
+                    if (direction == ScanDirection.FRONT && initialHeading != null &&
+                        initial.place?.hasValidRoad() == true && accuracy <= 20) {
+                        launch {
+                            val crossing=withTimeoutOrNull(4_500L) {
+                                val roads=roadJunctions.roads(
+                                    initial.latitude,initial.longitude)
+                                RoadJunctionPolicy.findAhead(
+                                    roads,initial.place.road,initial.latitude,
+                                    initial.longitude,initialHeading,accuracy.toFloat(),
+                                    maxDistanceMeters=160).firstOrNull()
+                            }
+                            if (crossing != null && generation == scanGeneration) {
+                                latestCrossing=RoadJunctionPolicy.describe(crossing)
+                                refresh()
+                            }
+                        }
+                    }
+                }
+                if (generation == scanGeneration && isTrackingRunning) refresh(done=true)
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (failure: Exception) {
-                Log.w(TAG, "Manual 360 scan failed", failure)
-                if (resultText == null) publish(
-                    "A busca de arredores falhou. Verifique a conexão e tente novamente.",
-                    speak = true
-                )
-            } finally {
-                if (generation == scanGeneration && isTrackingRunning &&
-                    resultText == null) {
-                    publish("A consulta foi encerrada sem resposta. Tente novamente.",
-                        speak = true)
+            } catch (e: Exception) {
+                Log.w(TAG,"Progressive geographic scan failed",e)
+                if (generation == scanGeneration && isTrackingRunning) refresh(done=true)
+            }
+        }
+    }
+
+    /**
+     * Prime the persistent cache along the route at most every two minutes,
+     * only after significant movement. Automatic requests use their own
+     * repository and cannot hold the user-triggered scan's mutex.
+     */
+    private fun maybePrefetchGeoCatalogue(location: Location) {
+        if (!isTrackingRunning || !location.hasAccuracy() || location.accuracy > 25f ||
+            prefetchJob?.isActive == true) return
+        val now=System.currentTimeMillis()
+        if (lastPrefetchAt != 0L) {
+            if (now-lastPrefetchAt < 120_000L) return
+            if (lastPrefetchLat.isFinite() &&
+                com.example.viavox.model.NavigationMath.meters(
+                    lastPrefetchLat,lastPrefetchLon,location.latitude,location.longitude
+                ) < 160.0) return
+        }
+        lastPrefetchAt=now
+        lastPrefetchLat=location.latitude
+        lastPrefetchLon=location.longitude
+        val lat=location.latitude
+        val lon=location.longitude
+        prefetchJob=serviceScope.launch {
+            try {
+                withTimeoutOrNull(6_000L) {
+                    geoCatalog.around(lat,lon,500)
+                    val data=surroundings.lookup(lat,lon,500,automatic=true)
+                    if (data.landmarks.isNotEmpty()) {
+                        geoCatalog.upsertPlaces(data.landmarks,"OpenStreetMap:prefetch")
+                    }
                 }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (e: Exception) {
+                Log.w(TAG,"Predictive reference prefetch unavailable",e)
             }
         }
     }
@@ -1180,6 +1263,8 @@ class ViaVoxTrackingService : Service() {
         scanJob?.cancel()
         tourJob?.cancel()
         junctionJob?.cancel()
+        prefetchJob?.cancel()
+        if (::geoCatalog.isInitialized) geoCatalog.close()
         if (::deviceHeading.isInitialized) deviceHeading.stop()
         serviceScope.cancel()
         tripRecorder.close()
