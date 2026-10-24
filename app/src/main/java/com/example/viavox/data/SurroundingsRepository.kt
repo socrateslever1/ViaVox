@@ -10,6 +10,13 @@ import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.Response
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import java.io.IOException
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
@@ -111,7 +118,7 @@ class SurroundingsRepository(
         automatic: Boolean = false
     ): List<NearbyLandmark> = lookup(latitude, longitude, radiusMeters, automatic).landmarks
 
-    private fun query(lat: Double, lon: Double, radius: Int): List<NearbyLandmark>? {
+    private suspend fun query(lat: Double, lon: Double, radius: Int): List<NearbyLandmark>? {
         val latText = String.format(Locale.US, "%.6f", lat)
         val lonText = String.format(Locale.US, "%.6f", lon)
         val q = """
@@ -140,7 +147,7 @@ class SurroundingsRepository(
                         .post(q.toRequestBody("text/plain; charset=utf-8".toMediaType()))
                         .build()
                 }
-                client.newCall(request).execute().use { response ->
+                requestResponse(request).use { response ->
                     if (!response.isSuccessful) {
                         Log.w("ViaVoxSurroundings", "Overpass HTTP ${response.code}")
                         return@use
@@ -149,12 +156,29 @@ class SurroundingsRepository(
                     if (raw.isBlank() || raw.length > 1_500_000) return@use
                     return parse(raw)
                 }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (e: Exception) {
                 Log.w("ViaVoxSurroundings", "Nearby source failed", e)
             }
         }
         return null
     }
+
+    private suspend fun requestResponse(request: Request): Response =
+        suspendCancellableCoroutine { continuation ->
+            val call = client.newCall(request)
+            continuation.invokeOnCancellation { call.cancel() }
+            call.enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
+                    if (continuation.isActive) continuation.resumeWithException(e)
+                }
+                override fun onResponse(call: Call, response: Response) {
+                    if (continuation.isActive) continuation.resume(response)
+                    else response.close()
+                }
+            })
+        }
 
     private fun parse(raw: String): List<NearbyLandmark> {
         val payload = JSONObject(raw)
