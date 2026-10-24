@@ -234,8 +234,11 @@ def main():
           f"POIs={collector.pois}, OSM streets={collector.streets}, "
           f"IBGE added streets={collector.ibge_streets}, "
           f"records={collector.count}, file={args.output.stat().st_size} bytes")
-    if args.ibge_zip is not None and collector.ibge_streets == 0:
-        raise RuntimeError("IBGE street-face import yielded zero names")
+    if args.ibge_zip is not None and collector.ibge_streets < 5_000:
+        raise RuntimeError(
+            "Incomplete official IBGE import: only "
+            + str(collector.ibge_streets) + " extra streets"
+        )
     if collector.pois < 1000 or collector.streets < 500:
         raise RuntimeError("Suspiciously empty source extraction")
     if args.output.stat().st_size > 60*1024*1024:
