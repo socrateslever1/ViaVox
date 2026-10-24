@@ -60,9 +60,18 @@ class GeoCatalogDatabase(context: Context) :
         db.execSQL("""INSERT INTO aliases(canonical_key,spoken_name,city_code,source)
             VALUES('terminal rodoviario engenheiro huascar angelim',
               'Terminal Rodoviário de Manaus',1302603,'user-approved')""")
-        db.execSQL("""INSERT INTO municipalities VALUES
-            (1302603,'Manaus','AM','IBGE',0),
-            (1301902,'Itacoatiara','AM','IBGE',0)""")
+        // First launch is fully functional offline; IBGE revalidates codes monthly.
+        AmazonasMunicipalityDirectory.all.forEach { (code,name) ->
+            val values = ContentValues().apply {
+                put("ibge_code",code)
+                put("name",name)
+                put("uf","AM")
+                put("source","IBGE/AAM:seed")
+                put("updated_at",0L)
+            }
+            db.insertWithOnConflict("municipalities",null,values,
+                SQLiteDatabase.CONFLICT_IGNORE)
+        }
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
