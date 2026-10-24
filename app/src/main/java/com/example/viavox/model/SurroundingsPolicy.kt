@@ -57,7 +57,10 @@ object SurroundingsPolicy {
         val radius = radiusMeters.coerceIn(50, 500).toDouble()
         val heading = headingDegrees?.takeIf { it.isFinite() }?.toDouble()
         return points.asSequence()
-            .filter { it.name.isNotBlank() && it.latitude.isFinite() && it.longitude.isFinite() }
+            .filter {
+                com.example.viavox.data.GeoSpeechPolicy.speakableReference(it.name) != null &&
+                    it.latitude.isFinite() && it.longitude.isFinite()
+            }
             .map { landmark ->
                 val distance = landmark.distanceTo(lat, lon)
                 val angle = heading?.let {
@@ -104,7 +107,7 @@ object SurroundingsPolicy {
         else "Não encontrei referências mapeadas à frente dentro do alcance selecionado."
         val opener = if (direction == ScanDirection.AROUND) "Ao seu redor:" else "À sua frente:"
         return opener + " " + items.joinToString(". ") { item ->
-            "${item.landmark.name}, ${directionText(item, preciseHeading)}, ${metersText(item.distanceMeters)}"
+            "${com.example.viavox.data.GeoSpeechPolicy.speakableReference(item.landmark.name) ?: item.landmark.name}, ${directionText(item, preciseHeading)}, ${metersText(item.distanceMeters)}"
         } + "."
     }
 }
