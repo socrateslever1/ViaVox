@@ -43,11 +43,9 @@ object SpeechTextNormalizer {
     fun normalizeReferenceName(raw: String): String? {
         val trimmed = raw.trim().replace(Regex("""\s+"""), " ")
         if (trimmed.isBlank() || trimmed.length > 100) return null
-        // Voice-friendly landmark categories. Keep the official GIS name intact.
-        // Specific terminal names are often too long or pronounced letter by letter.
-        if (Regex("""(?i)\\b(?:terminal\\s+rodovi[aá]rio|rodovi[aá]ria)(?:\\b|\\s)""").containsMatchIn(trimmed)) {
-            return "Terminal Rodoviário de Manaus"
-        }
+        // User-approved aliases and absolute no-spelling gate for unknown GIS IDs.
+        val speakable = com.example.viavox.data.GeoSpeechPolicy
+            .speakableReference(trimmed) ?: return null
         val lowered = trimmed.lowercase(java.util.Locale.forLanguageTag("pt-BR"))
         if (Regex("""(?i)\b(?:ltda|eireli|s\/a|mei|comercio|supermercado|farmacia|drogaria|consultorio|petshop)\b""")
                 .containsMatchIn(lowered)) return null
@@ -70,12 +68,18 @@ object SpeechTextNormalizer {
                 !word.any { it in "AEIOU" } // unpronounceable acronym
         }
         if (unknownInitialism) return null
-        val normalized = normalize(trimmed)
+        val normalized = normalize(speakable)
         return normalized.takeIf { it.isNotBlank() }
     }
 
     fun normalize(raw: String): String {
         var text = raw.replace(Regex("""\s+"""), " ").trim()
+        // Simplify only the confirmed Manaus bus terminal, even inside a sentence.
+        text = text.replace(
+            Regex("""(?i)\bterminal\s+rodovi[aá]rio\s+(?:engenheiro\s+)?huascar\s+angelim\b"""),
+            "Terminal Rodoviário de Manaus"
+        )
+        text = com.example.viavox.data.GeoSpeechPolicy.expandAcronyms(text)
         text = text.replace(Regex("""(?i)\b(\d{1,2})\s*[ªaºo]?\s*CICOM\b""")) {
             val n = it.groupValues[1].toIntOrNull()
             val ordinal = if (n != null) portugueseOrdinalFeminine(n) else null
