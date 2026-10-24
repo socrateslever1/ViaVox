@@ -242,17 +242,32 @@ class ArcGisManausPlacesService(
         }
     }
 
-    private fun fetch(parameters: Map<String,String>): String {
+    private suspend fun fetch(parameters: Map<String,String>): String {
         val url = ManausArcGisLayer.API.toHttpUrl().newBuilder().apply {
             parameters.forEach { (key,value) -> addQueryParameter(key,value) }
             addQueryParameter("f","json")
         }.build()
-        client.newCall(Request.Builder().url(url)
-            .header("User-Agent","ViaVox/0.7 Android (https://github.com/socrateslever1/ViaVox)")
-            .build()).execute().use { response ->
-            if (!response.isSuccessful)
-                throw IllegalStateException("ArcGIS HTTP ${response.code}")
-            return response.body?.string() ?: error("ArcGIS respondeu sem dados")
+        val request = Request.Builder().url(url)
+            .header("User-Agent","ViaVox/0.11 Android (https://github.com/socrateslever1/ViaVox)")
+            .build()
+        val response = kotlinx.coroutines.suspendCancellableCoroutine<okhttp3.Response> {
+            continuation ->
+            val call=client.newCall(request)
+            continuation.invokeOnCancellation { call.cancel() }
+            call.enqueue(object : okhttp3.Callback {
+                override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
+                    if(continuation.isActive) continuation.resumeWith(Result.failure(e))
+                }
+                override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
+                    if(continuation.isActive) continuation.resume(response)
+                    else response.close()
+                }
+            })
+        }
+        response.use {
+            if (!it.isSuccessful)
+                throw IllegalStateException("ArcGIS HTTP ${it.code}")
+            return it.body?.string() ?: error("ArcGIS respondeu sem dados")
         }
     }
 }
