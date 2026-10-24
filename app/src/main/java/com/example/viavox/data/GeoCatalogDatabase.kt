@@ -316,11 +316,9 @@ class GeoCatalogDatabase(context: Context) :
                                 SQLiteDatabase.CONFLICT_IGNORE)
                         }
                     }
-                    if(count%700==0) {
-                        db.setTransactionSuccessful()
-                        db.endTransaction()
-                        db.beginTransaction()
-                    }
+                    // One atomic transaction for the whole pack. Publishing
+                    // geopack_version must mean all accepted records committed.
+                    // Never retain half an update after a corrupt download.
                 }
                 require(completed) { "Fim do pacote geográfico ausente" }
                 db.setTransactionSuccessful()
