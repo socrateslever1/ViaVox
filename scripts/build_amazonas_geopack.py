@@ -142,15 +142,21 @@ class Gazetteer(osmium.SimpleHandler):
             for member in members:
                 if member.file_size>450*1024*1024:
                     raise ValueError("IBGE decompressed file too large")
+                filename_match = re.search(r"(13[0-9]{5})_faces", member.filename)
+                if filename_match is None:
+                    raise ValueError("Unexpected IBGE municipality filename: "+member.filename)
+                code=int(filename_match.group(1))
+                if code not in valid_codes:
+                    continue
                 with archive.open(member) as source:
                     for feature in ijson.items(source,"features.item"):
                         props=feature.get("properties") or {}
+                        # IBGE JSON is split into one file per municipality.
+                        # CD_SETOR can be absent in some features; the municipality
+                        # identity comes from the official filename, not the sector.
                         sector=str(props.get("CD_SETOR") or "")
-                        if not re.match(r"^13\\d{5}",sector):
-                            continue
-                        code=int(sector[:7])
-                        if code not in valid_codes:
-                            continue
+                        if sector and sector[:7].isdigit() and int(sector[:7]) != code:
+                            raise ValueError("Sector municipality mismatches IBGE ZIP filename")
                         parts=[str(props.get(key) or "").strip()
                                for key in ("NM_TIP_LOG","NM_TIT_LOG","NM_LOG")]
                         name=" ".join(x for x in parts if x)
