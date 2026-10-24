@@ -76,7 +76,11 @@ object SurroundingsPolicy {
                 it.distanceMeters + gpsAccuracyMeters <= radius }
             .filter { direction == ScanDirection.AROUND || (it.angle != null && abs(it.angle) <= 65.0) }
             .distinctBy { it.landmark.name.lowercase().trim() }
-            .sortedWith(compareBy<LandmarkCandidate> { it.distanceMeters }.thenBy { it.landmark.name })
+            .let { candidates ->
+                com.example.viavox.data.GeoContextInterpreter.rank(
+                    candidates.toList(), direction == ScanDirection.FRONT
+                ).asSequence()
+            }
             .take(limit.coerceIn(1, 8))
             .toList()
     }
