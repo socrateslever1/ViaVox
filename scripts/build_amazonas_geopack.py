@@ -134,6 +134,11 @@ class Gazetteer(osmium.SimpleHandler):
                      and not m.is_dir()]
             if not members:
                 raise ValueError("IBGE ZIP contains no geographic JSON")
+            print("IBGE ZIP files:", [(m.filename,m.file_size) for m in members[:4]])
+            import itertools
+            with archive.open(members[0]) as sample:
+                print("IBGE first JSON tokens:",
+                      list(itertools.islice(ijson.parse(sample),18)))
             for member in members:
                 if member.file_size>450*1024*1024:
                     raise ValueError("IBGE decompressed file too large")
@@ -223,6 +228,8 @@ def main():
           f"POIs={collector.pois}, OSM streets={collector.streets}, "
           f"IBGE added streets={collector.ibge_streets}, "
           f"records={collector.count}, file={args.output.stat().st_size} bytes")
+    if args.ibge_zip is not None and collector.ibge_streets == 0:
+        raise RuntimeError("IBGE street-face import yielded zero names")
     if collector.pois < 1000 or collector.streets < 500:
         raise RuntimeError("Suspiciously empty source extraction")
     if args.output.stat().st_size > 60*1024*1024:
