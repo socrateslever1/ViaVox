@@ -25,6 +25,15 @@ object GeoSpeechPolicy {
             "Terminal Rodoviário de Manaus"
     )
 
+    /** Reverse lookup allows searching the spoken alias in the indexed official name. */
+    fun officialSearchNameFor(spokenOrOfficial: String): String? {
+        val query=fold(spokenOrOfficial)
+        if (query.isBlank()) return null
+        return localAliases.entries.firstOrNull { (official,spoken) ->
+            fold(spoken)==query || official==query
+        }?.key
+    }
+
     /** Only returns an alias for a known name or a transparently generic category. */
     fun referenceAlias(official: String): String? {
         val key = fold(official)
