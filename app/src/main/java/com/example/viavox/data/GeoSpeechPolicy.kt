@@ -56,12 +56,14 @@ object GeoSpeechPolicy {
             it.value !in validAcronyms && it.value !in grammar &&
                 !it.value.any { char -> char in "AEIOU" }
         }) return null
-        // A code-only feature must never be read out letter by letter.
-        if (Regex("""^[A-Z0-9\s./_-]{2,15}$""").matches(name) &&
-            name.none { it in "aeiouáéíóúãõ" }) {
-            if (Regex("""\b(?:[A-Z]{2,6})\b""").findAll(name)
-                .any { it.value !in validAcronyms }) return null
-        }
+        // Short code-only labels are not useful locations; preserve normal
+        // uppercase natural words such as "HOSPITAL GERAL".
+        val tokens = name.split(Regex("""[\\s./_-]+"""))
+            .filter { it.isNotBlank() }
+        if (tokens.isNotEmpty() && tokens.all { token ->
+            token.length <= 4 && token.all(Char::isUpperCase) &&
+                token !in validAcronyms && token !in grammar
+        }) return null
         return name
     }
 
