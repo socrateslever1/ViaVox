@@ -1,0 +1,28 @@
+name: Inspect IBGE Amazonas Faces Schema
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/inspect-ibge-faces.yml']
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Download IBGE and print first feature properties
+        run: |
+          curl --fail --location --silent --show-error --retry 2 --max-time 140             'https://geoftp.ibge.gov.br/recortes_para_fins_estatisticos/malha_de_setores_censitarios/censo_2022/base_de_faces_de_logradouros_versao_2022_censo_demografico/json/AM_faces_de_logradouros_2022_json.zip'             -o /tmp/ibge.zip
+          python - <<'PY'
+          import zipfile,json
+          with zipfile.ZipFile('/tmp/ibge.zip') as archive:
+              names=archive.namelist()
+              print('Filenames', names[:3], 'total',len(names))
+              for filename in names[:3]:
+                  if filename.endswith('.json'):
+                      with archive.open(filename) as f:
+                          j=json.load(f)
+                          print('FILE',filename,'features',len(j.get('features',[])))
+                          for feature in j.get('features',[])[:2]:
+                              print('PROPS', json.dumps(feature.get('properties'),ensure_ascii=False)[:1500])
+                              print('GEOMETRY',feature.get('geometry',{}).get('type'))
+          PY
