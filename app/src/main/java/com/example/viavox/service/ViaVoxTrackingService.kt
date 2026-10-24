@@ -27,6 +27,7 @@ import com.example.viavox.data.OfflineNearbyLandmarks
 import com.example.viavox.data.GeoCatalogDatabase
 import com.example.viavox.data.AmazonasMunicipalitySync
 import com.example.viavox.data.AmazonasMunicipalityDirectory
+import com.example.viavox.data.GeoPackUpdater
 import com.example.viavox.data.SurroundingsLookup
 import com.example.viavox.data.ArcGisManausPlacesService
 import com.example.viavox.data.ManausArcGisLayer
@@ -125,6 +126,10 @@ class ViaVoxTrackingService : Service() {
             }
             runCatching { AmazonasMunicipalitySync(geoCatalog).refreshIfDue() }.onFailure {
                 Log.w(TAG, "IBGE directory refresh failed", it)
+            }
+            runCatching { GeoPackUpdater(this@ViaVoxTrackingService,geoCatalog)
+                .refreshIfDue() }.onFailure {
+                Log.w(TAG, "Amazonas geo pack update failed", it)
             }
         }
         val initialVoiceEnabled = prefs.getBoolean("voice_enabled", true)
