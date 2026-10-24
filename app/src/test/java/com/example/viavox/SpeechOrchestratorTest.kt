@@ -144,9 +144,9 @@ class SpeechOrchestratorTest {
             SpeechTextNormalizer.normalize("24ª CICOM"))
         assertEquals("Comando Geral",
             SpeechTextNormalizer.normalize("COMANDO GERALCMDOGERAL"))
-        assertEquals("BR 1 7 4",
+        assertEquals("Rodovia federal 174",
             SpeechTextNormalizer.normalize("BR-174"))
-        assertEquals("AM 0 1 0",
+        assertEquals("Rodovia estadual 10",
             SpeechTextNormalizer.normalize("AM-010"))
         assertEquals("Rua Pará",SpeechTextNormalizer.normalize("Rua Pará"))
         assertEquals("unidade de pronto atendimento São Jorge",SpeechTextNormalizer.normalize("UPA São Jorge"))
