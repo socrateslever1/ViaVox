@@ -34,9 +34,23 @@ object GeoSpeechPolicy {
         }?.key
     }
 
+    @Volatile private var catalogueAliases: Map<String,String> = emptyMap()
+
+    /** Swap a fully loaded immutable snapshot; never query SQLite in a TTS callback. */
+    fun installCatalogueAliases(source:Map<String,String>) {
+        catalogueAliases = source.entries.mapNotNull { (key,value) ->
+            val spoken=value.trim()
+            val normalized=fold(key)
+            if (normalized.isBlank() || spoken.isBlank() || spoken.length > 110 ||
+                spoken.contains("http",true) || spoken.contains('@')) null
+            else normalized to spoken
+        }.toMap()
+    }
+
     /** Only returns an alias for a known name or a transparently generic category. */
     fun referenceAlias(official: String): String? {
         val key = fold(official)
+        catalogueAliases[key]?.let { return it }
         if (key.isBlank()) return null
         localAliases[key]?.let { return it }
         if (key.contains("huascar angelim") &&
