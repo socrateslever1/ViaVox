@@ -1,0 +1,86 @@
+name: Amazonas Geographic Data Pack
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '20 4 * * 1'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/build_amazonas_geopack.py'
+      - '.github/workflows/amazonas-geopack.yml'
+
+concurrency:
+  group: viavox-amazonas-geopack
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-geopack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install geodata tooling
+        run: python -m pip install --disable-pip-version-check osmium shapely
+      - name: Download current public source datasets
+        run: |
+          mkdir -p .geodata
+          curl --fail --location --silent --show-error --retry 3 --max-time 900 \
+            'https://download.geofabrik.de/south-america/brazil/norte-latest.osm.pbf' \
+            -o .geodata/norte.osm.pbf
+          curl --fail --location --silent --show-error --retry 3 --max-time 120 \
+            'https://raw.githubusercontent.com/henriquemalvar/br-geojson/main/dist/municipios/AM.geojson' \
+            -o .geodata/AM.geojson
+          test $(stat -c%s .geodata/norte.osm.pbf) -gt 10000000
+          test $(stat -c%s .geodata/AM.geojson) -gt 10000
+      - name: Build and verify Amazonas-only gazetteer
+        run: |
+          python scripts/build_amazonas_geopack.py \
+            --osm .geodata/norte.osm.pbf \
+            --municipalities .geodata/AM.geojson \
+            --output .geodata/amazonas-geopack.jsonl.gz
+          python - <<'PY'
+          import gzip,json
+          path='.geodata/amazonas-geopack.jsonl.gz'
+          with gzip.open(path,'rt') as f:
+              hdr=json.loads(f.readline())
+              assert hdr['region']=='AM' and hdr['schema']==1
+              count=0
+              for row in f:
+                  doc=json.loads(row)
+                  if doc['type']=='end':
+                      assert doc['records']==count
+                      print('Verified',count,'Amazonas geodata entries')
+                      break
+                  assert doc['city_code']//100000==13
+                  count+=1
+              else:
+                  raise RuntimeError('Geopack truncated: no end trailer')
+          PY
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ViaVox-Amazonas-GeoPack
+          path: .geodata/amazonas-geopack.jsonl.gz
+          retention-days: 14
+          if-no-files-found: error
+      - name: Publish stable Android-updater asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view geopack-am-latest >/dev/null 2>&1; then
+            gh release upload geopack-am-latest \
+              .geodata/amazonas-geopack.jsonl.gz --clobber
+          else
+            gh release create geopack-am-latest \
+              .geodata/amazonas-geopack.jsonl.gz \
+              --target "$GITHUB_SHA" --latest=false \
+              --title "ViaVox — Amazonas Geographic Index" \
+              --notes "Atualização da base de logradouros e locais, extraída do OpenStreetMap (© colaboradores, ODbL-1.0) com recorte territorial a partir de geometrias municipais do IBGE. Nomes e POIs não constituem indicação oficial de segurança ou trânsito."
+          fi
