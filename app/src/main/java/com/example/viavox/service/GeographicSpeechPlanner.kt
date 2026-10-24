@@ -139,10 +139,21 @@ object SpeechTextNormalizer {
                 .replaceFirstChar { letter -> letter.uppercaseChar() }
         }
         text = text.replace(Regex("""(?i)\bBR[-\s]*(\d{2,3})\b""")) {
-            "BR " + it.groupValues[1].map(Char::digitToInt).joinToString(" ")
+            "Rodovia federal " + (it.groupValues[1].toIntOrNull() ?: 0)
         }
         text = text.replace(Regex("""(?i)\bAM[-\s]*(\d{2,3})\b""")) {
-            "AM " + it.groupValues[1].map(Char::digitToInt).joinToString(" ")
+            "Rodovia estadual " + (it.groupValues[1].toIntOrNull() ?: 0)
+        }
+        // Final guard: map service abbreviations must never be spelled as
+        // disconnected letters. Use a neutral description rather than
+        // inventing the missing official name.
+        val allowed = setOf("DE","DA","DO","DAS","DOS","EM","NA","NO","E",
+            "AV","R","PA","BR","AM","ONU")
+        text = text.replace(Regex("""\b[A-Z]{2,8}\b""")) {
+            val word = it.value
+            if (word !in allowed && word.none { ch -> ch in "AEIOU" })
+                "referência não identificada"
+            else word
         }
         return text.replace(Regex("""\s+""")," ").trim()
     }
