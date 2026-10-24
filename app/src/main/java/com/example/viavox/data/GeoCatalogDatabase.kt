@@ -297,7 +297,8 @@ class GeoCatalogDatabase(context: Context) :
                                 put("name",name)
                                 put("lat",lat)
                                 put("lon",lon)
-                                put("source","OSM:Geofabrik")
+                                put("source",if(data.optString("source")=="IBGE:faces:2022")
+                                    "IBGE:faces:2022" else "OSM:Geofabrik")
                                 put("updated_at",System.currentTimeMillis())
                             }
                             db.insertWithOnConflict("streets",null,values,
