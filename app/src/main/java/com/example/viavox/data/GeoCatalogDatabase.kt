@@ -239,6 +239,18 @@ class GeoCatalogDatabase(context: Context) :
         Statistics(count("municipalities"),count("streets"),count("places"))
     }
 
+    /** Approved aliases are loaded off-thread, then held in memory for TTS. */
+    suspend fun spokenAliases(): Map<String,String> = withContext(Dispatchers.IO) {
+        ensureSeeded()
+        val found = linkedMapOf<String,String>()
+        readableDatabase.rawQuery(
+            "SELECT canonical_key,spoken_name FROM aliases ORDER BY city_code",null
+        ).use { cursor ->
+            while(cursor.moveToNext()) found[cursor.getString(0)] = cursor.getString(1)
+        }
+        found
+    }
+
     suspend fun lastMunicipalitySync():Long = withContext(Dispatchers.IO) {
         readableDatabase.rawQuery("SELECT value FROM metadata WHERE key='ibge_updated_at'",null)
             .use { if (it.moveToFirst()) it.getString(0).toLongOrNull() ?: 0L else 0L }
