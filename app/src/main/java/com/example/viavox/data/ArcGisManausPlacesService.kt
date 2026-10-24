@@ -259,7 +259,7 @@ class ArcGisManausPlacesService(
                     if(continuation.isActive) continuation.resumeWith(Result.failure(e))
                 }
                 override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
-                    if(continuation.isActive) continuation.resume(response)
+                    if(continuation.isActive) continuation.resumeWith(Result.success(response))
                     else response.close()
                 }
             })
