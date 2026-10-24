@@ -176,6 +176,13 @@ fun VoiceHome(
             }
         }
         Text("EXPLORAÇÃO POR VOZ", color = soft, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+        Text(
+            state.geoCatalogStatus,
+            color = soft,
+            fontSize = 11.sp,
+            lineHeight = 15.sp,
+            modifier = Modifier.testTag("geo_catalog_status")
+        )
         state.surroundingsResult?.takeIf { it.isNotBlank() }?.let { result ->
             Surface(
                 modifier = Modifier.fillMaxWidth().testTag("scan_feedback"),
