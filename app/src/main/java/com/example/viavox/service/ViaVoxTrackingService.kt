@@ -117,7 +117,7 @@ class ViaVoxTrackingService : Service() {
         val prefs = getSharedPreferences("viavox_prefs", Context.MODE_PRIVATE)
         currentConfig = ViaVoxConfig.loadFrom(prefs)
         offlineNearby = OfflineNearbyLandmarks(this)
-        geoCatalog = GeoCatalogDatabase(this)
+        geoCatalog = GeoCatalogDatabase.shared(this)
         serviceScope.launch(Dispatchers.IO) {
             // Populate local RTree without blocking TTS/GPS/UI. Retain SQLite across restarts.
             runCatching { geoCatalog.ensureSeeded() }.onFailure {
@@ -1264,7 +1264,6 @@ class ViaVoxTrackingService : Service() {
         tourJob?.cancel()
         junctionJob?.cancel()
         prefetchJob?.cancel()
-        if (::geoCatalog.isInitialized) geoCatalog.close()
         if (::deviceHeading.isInitialized) deviceHeading.stop()
         serviceScope.cancel()
         tripRecorder.close()
