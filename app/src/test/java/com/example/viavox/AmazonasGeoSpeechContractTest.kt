@@ -28,6 +28,9 @@ class AmazonasGeoSpeechContractTest {
             SpeechTextNormalizer.normalize("Ao seu lado, "+official)
                 .removePrefix("Ao seu lado, "))
         assertEquals(null,GeoSpeechPolicy.referenceAlias("Terminal Rodoviário de Tefé"))
+        assertEquals("terminal rodoviario engenheiro huascar angelim",
+            GeoSpeechPolicy.officialSearchNameFor("Terminal Rodoviário de Manaus"))
+        assertNull(GeoSpeechPolicy.officialSearchNameFor("Terminal Rodoviário de Tefé"))
     }
 
     @Test fun forbidsSpellingRawIdentifiersButKeepsNaturalUppercaseNames() {
