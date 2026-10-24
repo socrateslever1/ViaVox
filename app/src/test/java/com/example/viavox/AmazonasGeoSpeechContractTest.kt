@@ -33,6 +33,22 @@ class AmazonasGeoSpeechContractTest {
         assertNull(GeoSpeechPolicy.officialSearchNameFor("Terminal Rodoviário de Tefé"))
     }
 
+    @Test fun approvedAliasesCanBeUpdatedWithoutChangingOfficialNames() {
+        val official="Centro Cultural do Amazonas"
+        assertNull(GeoSpeechPolicy.referenceAlias(official))
+        try {
+            GeoSpeechPolicy.installCatalogueAliases(
+                mapOf("centro cultural do amazonas" to "Centro Cultural")
+            )
+            assertEquals("Centro Cultural",GeoSpeechPolicy.referenceAlias(official))
+            assertEquals("Centro Cultural",
+                SpeechTextNormalizer.normalizeReferenceName(official))
+        } finally {
+            GeoSpeechPolicy.installCatalogueAliases(emptyMap())
+        }
+        assertNull(GeoSpeechPolicy.referenceAlias(official))
+    }
+
     @Test fun forbidsSpellingRawIdentifiersButKeepsNaturalUppercaseNames() {
         assertNull(GeoSpeechPolicy.speakableReference("DELEGACIA QWRT"))
         assertNull(GeoSpeechPolicy.speakableReference("HOSPITAL XPT"))
