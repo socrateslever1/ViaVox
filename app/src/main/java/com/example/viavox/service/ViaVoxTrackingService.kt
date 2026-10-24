@@ -25,6 +25,7 @@ import com.example.viavox.data.PoiDiscoveryService
 import com.example.viavox.data.SurroundingsRepository
 import com.example.viavox.data.OfflineNearbyLandmarks
 import com.example.viavox.data.GeoCatalogDatabase
+import com.example.viavox.data.GeoSpeechPolicy
 import com.example.viavox.data.AmazonasMunicipalitySync
 import com.example.viavox.data.AmazonasMunicipalityDirectory
 import com.example.viavox.data.GeoPackUpdater
@@ -130,6 +131,9 @@ class ViaVoxTrackingService : Service() {
                 TrackingRepository.updateGeoCatalogStatus(
                     "Banco local indisponível. Referências online ainda podem funcionar.")
             } else {
+                runCatching { GeoSpeechPolicy.installCatalogueAliases(
+                    geoCatalog.spokenAliases()
+                ) }.onFailure { Log.w(TAG,"Audio alias catalogue unavailable",it) }
                 val count = runCatching { geoCatalog.statistics() }.getOrNull()
                 if (count != null) TrackingRepository.updateGeoCatalogStatus(
                     "Dados locais: "+count.municipalities+" municípios, "+
