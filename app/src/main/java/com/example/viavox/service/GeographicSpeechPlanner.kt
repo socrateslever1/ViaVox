@@ -43,6 +43,11 @@ object SpeechTextNormalizer {
     fun normalizeReferenceName(raw: String): String? {
         val trimmed = raw.trim().replace(Regex("""\s+"""), " ")
         if (trimmed.isBlank() || trimmed.length > 100) return null
+        // Voice-friendly landmark categories. Keep the official GIS name intact.
+        // Specific terminal names are often too long or pronounced letter by letter.
+        if (Regex("""(?i)\\b(?:terminal\\s+rodovi[aá]rio|rodovi[aá]ria)(?:\\b|\\s)""").containsMatchIn(trimmed)) {
+            return "Terminal rodoviário"
+        }
         val lowered = trimmed.lowercase(java.util.Locale.forLanguageTag("pt-BR"))
         if (Regex("""(?i)\b(?:ltda|eireli|s\/a|mei|comercio|supermercado|farmacia|drogaria|consultorio|petshop)\b""")
                 .containsMatchIn(lowered)) return null
