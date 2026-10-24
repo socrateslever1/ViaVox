@@ -90,6 +90,17 @@ jobs:
       - name: Run unit tests
         run: gradle --no-daemon --stacktrace -PviavoxDebugKeystore="$HOME/.android/debug.keystore" :app:testDebugUnitTest
 
+      - name: Upload test reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ViaVox-unit-test-failures
+          path: |
+            app/build/test-results/testDebugUnitTest/**/*.xml
+            app/build/reports/tests/testDebugUnitTest/**
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Upload APK
         if: success()
         uses: actions/upload-artifact@v4
