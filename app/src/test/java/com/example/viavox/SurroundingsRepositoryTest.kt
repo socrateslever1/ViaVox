@@ -54,6 +54,28 @@ class SurroundingsRepositoryTest {
         assertEquals("Cache should tolerate ordinary GPS drift", 1, requests.get())
     }
 
+    @Test fun officialOsmNameIsKeptWhileAudioUsesShortAlias() = runBlocking {
+        val original = "Terminal Rodoviário Engenheiro Huascar Angelim"
+        val payload = """{"elements":[
+            {"type":"node","id":72,"lat":-3.11955,"lon":-60.0100,
+            "tags":{"name":"Terminal Rodoviário Engenheiro Huascar Angelim",
+            "amenity":"bus_station"}}
+        ]}"""
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            Response.Builder().request(chain.request())
+                .protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                .body(payload.toResponseBody("application/json".toMediaType())).build()
+        }.build()
+        val result = SurroundingsRepository(client).lookup(latitude,longitude,200)
+        assertNull(result.error)
+        // Exact original remains stored for audit/search, not the spoken alias.
+        assertEquals(original,result.landmarks.single().name)
+        val points = SurroundingsPolicy.select(result.landmarks,latitude,longitude,
+            200,ScanDirection.AROUND,null,5f)
+        assertTrue(SurroundingsPolicy.scanSpeech(points,ScanDirection.AROUND,false)
+            .contains("Terminal Rodoviário de Manaus"))
+    }
+
     @Test fun publicApiGetFailureTriesIndependentPostSource() = runBlocking {
         val methods = mutableListOf<String>()
         val client = OkHttpClient.Builder().addInterceptor { chain ->
