@@ -29,6 +29,8 @@ class GeoCatalogDatabase(context: Context) :
 
     private val appContext = context.applicationContext
     private val seedMutex = Mutex()
+    // Only one write transaction at a time, including the weekly regional import.
+    private val mutationMutex = Mutex()
     private var seeded = false
 
     override fun onCreate(db: SQLiteDatabase) {
@@ -123,12 +125,14 @@ class GeoCatalogDatabase(context: Context) :
         withContext(Dispatchers.IO) {
             if (places.isEmpty()) return@withContext
             ensureSeeded()
-            val db = writableDatabase
-            db.beginTransaction()
-            try {
-                writePlaces(db,places,source)
-                db.setTransactionSuccessful()
-            } finally { db.endTransaction() }
+            mutationMutex.withLock {
+                val db = writableDatabase
+                db.beginTransaction()
+                try {
+                    writePlaces(db,places,source)
+                    db.setTransactionSuccessful()
+                } finally { db.endTransaction() }
+            }
         }
 
     private fun writePlaces(db: SQLiteDatabase, points: List<NearbyLandmark>, source: String) {
@@ -200,8 +204,10 @@ class GeoCatalogDatabase(context: Context) :
             put("city_code",cityCode);put("name",name.take(150));put("lat",lat)
             put("lon",lon);put("source",source);put("updated_at",System.currentTimeMillis())
         }
-        writableDatabase.insertWithOnConflict("streets",null,values,
-            SQLiteDatabase.CONFLICT_REPLACE)
+        mutationMutex.withLock {
+            writableDatabase.insertWithOnConflict("streets",null,values,
+                SQLiteDatabase.CONFLICT_REPLACE)
+        }
     }
 
     suspend fun replaceMunicipalities(municipalities:List<Pair<Int,String>>) =
@@ -210,10 +216,11 @@ class GeoCatalogDatabase(context: Context) :
             if(municipalities.size != 62 || municipalities.any {
                 it.first !in 1300000..1399999 || it.second.isBlank()
             } || municipalities.map { it.first }.distinct().size != 62) return@withContext false
-            val db=writableDatabase
-            db.beginTransaction()
-            try {
-                municipalities.forEach { (id,name) ->
+            mutationMutex.withLock {
+                val db=writableDatabase
+                db.beginTransaction()
+                try {
+                    municipalities.forEach { (id,name) ->
                     val values=ContentValues().apply {
                         put("ibge_code",id);put("name",name);put("uf","AM")
                         put("source","IBGE");put("updated_at",System.currentTimeMillis())
@@ -223,8 +230,9 @@ class GeoCatalogDatabase(context: Context) :
                 }
                 db.execSQL("INSERT OR REPLACE INTO metadata VALUES('ibge_updated_at',?)",
                     arrayOf(System.currentTimeMillis().toString()))
-                db.setTransactionSuccessful()
-            } finally { db.endTransaction() }
+                    db.setTransactionSuccessful()
+                } finally { db.endTransaction() }
+            }
             true
         }
 
@@ -289,10 +297,11 @@ class GeoCatalogDatabase(context: Context) :
             require(Regex("""[0-9]{4}-[0-9]{2}-[0-9]{2}""").matches(version)) {
                 "Versão inválida"
             }
-            db.beginTransaction()
-            try {
-                while(true) {
-                    val line=reader.readLine() ?: break
+            mutationMutex.withLock {
+                db.beginTransaction()
+                try {
+                    while(true) {
+                        val line=reader.readLine() ?: break
                     require(line.length <= 4096) { "Registro geográfico excede limite" }
                     val data=JSONObject(line)
                     if(data.optString("type")=="end") {
@@ -358,9 +367,10 @@ class GeoCatalogDatabase(context: Context) :
                     // geopack_version must mean all accepted records committed.
                     // Never retain half an update after a corrupt download.
                 }
-                require(completed) { "Fim do pacote geográfico ausente" }
-                db.setTransactionSuccessful()
-            } finally { if(db.inTransaction()) db.endTransaction() }
+                    require(completed) { "Fim do pacote geográfico ausente" }
+                    db.setTransactionSuccessful()
+                } finally { if(db.inTransaction()) db.endTransaction() }
+            }
         }
         count
     }
