@@ -194,8 +194,9 @@ class SurroundingsRepository(
             val name = tags.optString("name").trim()
             // Unlike strict automatic road speech, shops may appear on request.
             if (name.isBlank() || name.length > 75 || name.contains("http", true)) continue
-            val clean = SpeechTextNormalizer.normalize(name)
-            if (clean.isBlank()) continue
+            // Preserve the official OSM label. Pronunciation is an audio-only
+            // concern handled downstream by GeoSpeechPolicy/SurroundingsPolicy.
+            if (SpeechTextNormalizer.normalizeReferenceName(name) == null) continue
             val kind = listOf("historic", "tourism", "amenity", "leisure", "shop")
                 .firstOrNull { tags.has(it) } ?: continue
             val point = if (entry.optString("type") == "node") entry
@@ -205,7 +206,7 @@ class SurroundingsRepository(
             val id = entry.optLong("id")
             if (id <= 0 || !latitude.isFinite() || !longitude.isFinite()) continue
             val candidate = NearbyLandmark(
-                "${entry.optString("type")}:$id", clean, latitude, longitude, kind,
+                "${entry.optString("type")}:$id", name, latitude, longitude, kind,
                 approximatePoint = entry.optString("type") != "node"
             )
             if (candidates.none {
