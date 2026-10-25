@@ -2,7 +2,6 @@ package com.example.viavox.data
 
 import android.util.Log
 import com.example.viavox.model.NearbyLandmark
-import com.example.viavox.service.SpeechTextNormalizer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -196,7 +195,9 @@ class SurroundingsRepository(
             if (name.isBlank() || name.length > 75 || name.contains("http", true)) continue
             // Preserve the official OSM label. Pronunciation is an audio-only
             // concern handled downstream by GeoSpeechPolicy/SurroundingsPolicy.
-            if (SpeechTextNormalizer.normalizeReferenceName(name) == null) continue
+            // A manual scan should retain legitimate commerce and pharmacy POIs.
+            // Do not apply the stricter *automatic narration* category exclusions.
+            if (GeoSpeechPolicy.speakableReference(name) == null) continue
             val kind = listOf("historic", "tourism", "amenity", "leisure", "shop")
                 .firstOrNull { tags.has(it) } ?: continue
             val point = if (entry.optString("type") == "node") entry
