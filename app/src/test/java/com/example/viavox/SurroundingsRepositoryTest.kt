@@ -43,6 +43,8 @@ class SurroundingsRepositoryTest {
         val first = repository.lookup(latitude, longitude, 200)
         assertNull(first.error)
         assertEquals(2, first.landmarks.size)
+        assertEquals("Official pharmacy label must be preserved",
+            "Farmácia da Rua", first.landmarks[1].name)
         assertEquals(1, requests.get())
         val chosen = SurroundingsPolicy.select(
             first.landmarks, latitude, longitude, 200,
