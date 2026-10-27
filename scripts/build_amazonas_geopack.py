@@ -75,6 +75,7 @@ class Gazetteer(osmium.SimpleHandler):
         self.pois = 0
         self.streets = 0
         self.ibge_streets = 0
+        self.road_geometry_count = 0
         self.streets_seen = set()
 
     def municipality(self, lat, lon):
@@ -205,6 +206,32 @@ class Gazetteer(osmium.SimpleHandler):
             return
         lat, lon = coords[len(coords)//2]
         self.process(tags, "way", obj.id, lat, lon, True)
+        if tags.get("highway") in {
+            "motorway", "trunk", "primary", "secondary", "tertiary",
+            "residential", "living_street", "unclassified", "service",
+            "motorway_link", "trunk_link", "primary_link", "secondary_link",
+            "tertiary_link", "pedestrian", "road", "track"
+        } and 2 <= len(coords) and 2 <= len(tags.get("name", "").strip()) <= 140:
+            # Store real street geometry instead of guessing from a single
+            # representative point. Split long ways with an overlapping node
+            # to maintain accurate segments across bends.
+            for start in range(0, len(coords)-1, 95):
+                points = coords[start:min(start+96, len(coords))]
+                if len(points) < 2: continue
+                code = self.municipality(*points[len(points)//2])
+                if code is None: continue
+                self.write({
+                    "type": "road_way",
+                    "city_code": code,
+                    "id": f"osmway:{obj.id}:{start}",
+                    "name": tags["name"].strip(),
+                    "lat": round(points[len(points)//2][0], 7),
+                    "lon": round(points[len(points)//2][1], 7),
+                    "points": [
+                        [round(p[0], 7), round(p[1], 7)] for p in points
+                    ]
+                })
+                self.road_geometry_count += 1
 
 
 def main():
@@ -233,12 +260,15 @@ def main():
     print(f"Amazonas pack: municipalities={len(codes)}, "
           f"POIs={collector.pois}, OSM streets={collector.streets}, "
           f"IBGE added streets={collector.ibge_streets}, "
+          f"mapped road shapes={collector.road_geometry_count}, "
           f"records={collector.count}, file={args.output.stat().st_size} bytes")
     if args.ibge_zip is not None and collector.ibge_streets < 5_000:
         raise RuntimeError(
             "Incomplete official IBGE import: only "
             + str(collector.ibge_streets) + " extra streets"
         )
+    if collector.road_geometry_count < 1000:
+        raise RuntimeError("Street geometry coverage is insufficient")
     if collector.pois < 1000 or collector.streets < 500:
         raise RuntimeError("Suspiciously empty source extraction")
     if args.output.stat().st_size > 60*1024*1024:
