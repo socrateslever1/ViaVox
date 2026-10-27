@@ -34,6 +34,13 @@ class RoadDetectionEngine(
 ) {
 
     private var activeQueryJob: Job? = null
+    private var localRoadJob: Job? = null
+    private var pendingLocalStreet: String? = null
+    private var pendingLocalStreetFix: GeoFix? = null
+    private var latestLocalConfirmedTimeMs = 0L
+    /** Optional, network-free, indexed OSM road polyline lookup. */
+    var localRoadLookup: suspend (GeoFix) -> ConfidentStreet? = { null }
+    var cityNameForCode: (Int) -> String = { "" }
     private var newestFix: GeoFix? = null
     private var lastQueryTimestamp = 0L
     private var lastQueryLat = 0.0
@@ -133,7 +140,12 @@ class RoadDetectionEngine(
 
     fun reset() {
         activeQueryJob?.cancel()
+        localRoadJob?.cancel()
         activeQueryJob = null
+        localRoadJob = null
+        pendingLocalStreet = null
+        pendingLocalStreetFix = null
+        latestLocalConfirmedTimeMs = 0L
         currentConfirmedRoad = null
         currentConfirmedVenue = null
         lastAnnouncedNeighbourhood = null
@@ -191,6 +203,24 @@ class RoadDetectionEngine(
         territoryPolygonLookup(fix)?.let { match ->
             publish(polygonTransition(match, accuracy))
         }
+        if (accuracy in 0.1f..12f && localRoadJob?.isActive != true) {
+            localRoadJob = coroutineScope.launch {
+                try {
+                    val match = localRoadLookup(fix) ?: return@launch
+                    val newest = newestFix ?: return@launch
+                    if (newest.timestampMs < fix.timestampMs ||
+                        newest.timestampMs - fix.timestampMs > 3_000L ||
+                        calculateMeters(newest.latitude,newest.longitude,
+                            fix.latitude,fix.longitude) > maxOf(15.0,
+                            fix.accuracyMeters.toDouble()*2.0+5.0)) return@launch
+                    processLocalGeometryMatch(match,fix)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    onStatusMessage("Consulta local de vias indisponível; buscando online")
+                }
+            }
+        }
 
         val metersMoved = if (lastQueryLat != 0.0 || lastQueryLon != 0.0) {
             calculateMeters(lastQueryLat, lastQueryLon, lat, lon)
@@ -229,11 +259,57 @@ class RoadDetectionEngine(
         }
     }
 
+    /**
+     * First street: one unambiguous accurate polyline fix is sufficient.
+     * Street changes: require the same confidently matched name on two
+     * distinct GPS fixes with >=5 metres displacement. No second HTTP call.
+     */
+    private fun processLocalGeometryMatch(match: ConfidentStreet, fix: GeoFix) {
+        val normalizedName = normalizeForComparison(match.name)
+        val currentName = currentConfirmedRoad?.let(::normalizeForComparison)
+        if (normalizedName == currentName) {
+            pendingLocalStreet = null
+            pendingLocalStreetFix = null
+            return
+        }
+        if (currentName != null) {
+            if (fix.speedMps < 0.85f) return
+            val previous = pendingLocalStreetFix
+            if (pendingLocalStreet != normalizedName || previous == null ||
+                fix.timestampMs <= previous.timestampMs ||
+                fix.timestampMs - previous.timestampMs > 6_000L) {
+                pendingLocalStreet = normalizedName
+                pendingLocalStreetFix = fix
+                return
+            }
+            val progressed = calculateMeters(previous.latitude,previous.longitude,
+                fix.latitude,fix.longitude)
+            if (progressed < 5.0) return
+        }
+        pendingLocalStreet = null
+        pendingLocalStreetFix = null
+        val polygon = territoryPolygonLookup(fix)
+        val place = Place(
+            road = match.name,
+            neighbourhood = polygon?.neighbourhood.orEmpty(),
+            zone = polygon?.zone.orEmpty(),
+            policeDistrict = polygon?.cicom.orEmpty(),
+            city = cityNameForCode(match.cityCode)
+        )
+        latestLocalConfirmedTimeMs = fix.timestampMs
+        lastQuerySucceeded = true
+        onPlaceUpdated(place)
+        processRoadDecision(place, fix, geometricallyVerified = true)
+    }
+
     private fun queryReverseGeocode(lat: Double, lon: Double, fix: GeoFix) {
         activeQueryJob = coroutineScope.launch {
             try {
                 val result = reverseGeocodeProvider(lat, lon)
                 result.onSuccess { rawPlace ->
+                    // Do not let an old network address overwrite a newer
+                    // GPS-confirmed road from local street geometry.
+                    if (latestLocalConfirmedTimeMs > fix.timestampMs) return@onSuccess
                     // A slow response to an old coordinate cannot reannounce
                     // a road the user has already passed.
                     val latest = newestFix
@@ -271,7 +347,9 @@ class RoadDetectionEngine(
         }
     }
 
-    internal fun processRoadDecision(place: Place, fix: GeoFix) {
+    internal fun processRoadDecision(
+        place: Place, fix: GeoFix, geometricallyVerified: Boolean = false
+    ) {
         val road = normalizeRoadName(place.road)
         val normalizedPlace = place.copy(road = road)
         val territory = areaTransition(normalizedPlace, fix)
@@ -334,6 +412,29 @@ class RoadDetectionEngine(
                 pendingNeighbourhoodCount = 0
             }
             publish(territory)
+            return
+        }
+
+        if (geometricallyVerified && fix.accuracyMeters <= 12f &&
+            fix.speedMps >= 0.85f) {
+            // The two GPS samples have already been compared against distinct
+            // OSM road polylines; do not wait for another reverse-geocoding trip.
+            currentConfirmedRoad = road
+            currentConfirmedVenue = null
+            pendingCandidateRoad = null
+            pendingCandidatePlace = null
+            pendingCandidateCount = 0
+            pendingNeighbourhood = null
+            pendingNeighbourhoodCount = 0
+            val bairroChanged = normalizedPlace.hasValidNeighbourhood() &&
+                !sameNeighbourhood(lastAnnouncedNeighbourhood,normalizedPlace.neighbourhood)
+            if (normalizedPlace.hasValidNeighbourhood())
+                lastAnnouncedNeighbourhood = normalizedPlace.neighbourhood
+            if (normalizedPlace.zone.isNotBlank())
+                lastAnnouncedZone = normalizedPlace.zone
+            onRoadAnnounceNeeded(normalizedPlace.toSpeechMessage(
+                isTransition = true, includeNeighbourhood = bairroChanged),false)
+            publish(territory,road)
             return
         }
 
