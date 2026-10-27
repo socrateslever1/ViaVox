@@ -28,6 +28,8 @@ class SpeechOrchestrator(
     private val clock: () -> Long = System::currentTimeMillis,
     private val maxQueue: Int = 12,
     private val onDrop: (SpeechEvent) -> Unit = {},
+    /** Called before a street announcement supersedes an ongoing optional Tour/POI. */
+    private val onInterrupt: () -> Unit = {},
     /** Revalidate a queued POI against the latest GPS *before* TTS starts. */
     private val canPlay: (SpeechEvent) -> Boolean = { true }
 ) {
@@ -59,6 +61,16 @@ class SpeechOrchestrator(
         val event = SpeechEvent(kind,text.trim(),key,now,force)
         // A duplicate already playing must not interrupt itself.
         if (!force && (active?.key == key || waiting.any { it.key == key })) return false
+        // An active optional Tour or POI must not delay an actual street entry
+        // by several seconds. Navigation instructions remain uninterrupted.
+        if (kind == SpeechKind.GEOGRAPHY && active?.kind in
+            setOf(SpeechKind.TOUR, SpeechKind.POI)) {
+            val interrupted = active
+            generation++
+            active = null
+            interrupted?.let(onDrop)
+            try { onInterrupt() } catch (_: Exception) {}
+        }
         // Never discard a zone or neighbourhood announcement merely because
         // a road change was resolved a moment later. Only optional Tour items
         // are disposable; fresh geographic events remain ordered by arrival.
