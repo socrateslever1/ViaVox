@@ -40,7 +40,10 @@ class GeoPackUpdater(
         val prefs=context.getSharedPreferences("viavox_geopack",Context.MODE_PRIVATE)
         val now=System.currentTimeMillis()
         val last=prefs.getLong("last_attempt",0L)
-        val installed=catalog.installedGeoPackVersion().isNotBlank()
+        // A legacy place-only snapshot is not equivalent to the new mapped
+        // road-line layer; retry on Wi-Fi rather than waiting another week.
+        val installed=catalog.installedGeoPackVersion().isNotBlank() &&
+            RoadGeometryIndex.get(context).count() >= 1000
         // Don't retry missing packages on every foreground launch.
         if(last>0 && now-last < if(installed) 7L*24*60*60*1000 else 12L*60*60*1000)
             return@withContext false
