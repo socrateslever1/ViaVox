@@ -67,8 +67,8 @@ class LocationTrackingManager(
         if (!started || platformFallback) return
         highAccuracy = high
         val request = if (high) {
-            LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 2_500L)
-                .setMinUpdateIntervalMillis(1_200L)
+            LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1_500L)
+                .setMinUpdateIntervalMillis(900L)
                 .setMinUpdateDistanceMeters(2f)
                 .setWaitForAccurateLocation(true)
                 .build()
