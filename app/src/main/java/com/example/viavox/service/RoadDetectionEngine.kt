@@ -206,7 +206,13 @@ class RoadDetectionEngine(
         if (accuracy in 0.1f..12f && localRoadJob?.isActive != true) {
             localRoadJob = coroutineScope.launch {
                 try {
-                    val match = localRoadLookup(fix) ?: return@launch
+                    val match = localRoadLookup(fix)
+                    if (match == null) {
+                        // An uncertain crossing interrupts candidate confirmation.
+                        pendingLocalStreet = null
+                        pendingLocalStreetFix = null
+                        return@launch
+                    }
                     val newest = newestFix ?: return@launch
                     if (newest.timestampMs < fix.timestampMs ||
                         newest.timestampMs - fix.timestampMs > 3_000L ||
@@ -309,7 +315,7 @@ class RoadDetectionEngine(
                 result.onSuccess { rawPlace ->
                     // Do not let an old network address overwrite a newer
                     // GPS-confirmed road from local street geometry.
-                    if (latestLocalConfirmedTimeMs > fix.timestampMs) return@onSuccess
+                    if (latestLocalConfirmedTimeMs != 0L && latestLocalConfirmedTimeMs >= fix.timestampMs) return@onSuccess
                     // A slow response to an old coordinate cannot reannounce
                     // a road the user has already passed.
                     val latest = newestFix
