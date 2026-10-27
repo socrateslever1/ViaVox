@@ -182,6 +182,7 @@ class ViaVoxTrackingService : Service() {
             play = { text, finished -> ttsManager.speakManaged(
                 SpeechTextNormalizer.normalize(text), finished
             ) },
+            onInterrupt = { ttsManager.stop() },
             canPlay = { event ->
                 if (!VoiceAnnouncementPolicy.mayPlay(isTrackingRunning, TrackingRepository.state.value.isVoiceEnabled, event.kind)) false
                 else if (!ModeSpeechPolicy.canPlay(event.kind, event.key, currentConfig)) false
