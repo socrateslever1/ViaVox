@@ -302,7 +302,7 @@ class GeoCatalogDatabase(context: Context) :
                 try {
                     while(true) {
                         val line=reader.readLine() ?: break
-                    require(line.length <= 4096) { "Registro geográfico excede limite" }
+                    require(line.length <= 24000) { "Registro geográfico excede limite" }
                     val data=JSONObject(line)
                     if(data.optString("type")=="end") {
                         require(data.optInt("records",-1)==count &&
