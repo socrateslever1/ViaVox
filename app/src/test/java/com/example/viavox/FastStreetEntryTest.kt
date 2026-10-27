@@ -54,7 +54,7 @@ class FastStreetEntryTest {
             val engine=RoadDetectionEngine(
                 coroutineScope=backgroundScope,
                 onPlaceUpdated={},
-                onRoadAnnounceNeeded={spoken.add(it)},
+                onRoadAnnounceNeeded={ message, _ -> spoken.add(message) },
                 onStatusMessage={},
                 reverseGeocodeProvider={_,_-> Result.failure(IOException("offline")) }
             )
@@ -89,7 +89,7 @@ class FastStreetEntryTest {
             val engine=RoadDetectionEngine(
                 coroutineScope=backgroundScope,
                 onPlaceUpdated={},
-                onRoadAnnounceNeeded={spoken.add(it)},
+                onRoadAnnounceNeeded={ message, _ -> spoken.add(message) },
                 onStatusMessage={},
                 reverseGeocodeProvider={_,_->Result.failure(IOException("offline"))}
             )
