@@ -57,13 +57,13 @@ class SpeechOrchestratorTest {
             play = { text, finished -> output.add(text); done = finished },
             clock = { now }
         )
-        assertTrue(queue.offer(SpeechKind.POI,"Posto à direita.","poi:gas"))
+        assertTrue(queue.offer(SpeechKind.USER_REQUEST,"Consulta solicitada.","request:manual"))
         assertTrue(queue.offer(SpeechKind.GEOGRAPHY,"Rua Benjamin Constant.","geo:benjamin"))
         assertTrue(queue.offer(SpeechKind.NAVIGATION,"Vire à direita.","nav:right"))
-        assertEquals(listOf("Posto à direita."),output)
+        assertEquals(listOf("Consulta solicitada."),output)
         assertEquals(2,queue.pendingCount)
         done?.invoke()
-        assertEquals(listOf("Posto à direita.","Vire à direita."),output)
+        assertEquals(listOf("Consulta solicitada.","Vire à direita."),output)
         done?.invoke()
         assertEquals("Rua Benjamin Constant.",output.last())
         done?.invoke()
@@ -94,7 +94,7 @@ class SpeechOrchestratorTest {
         val q = SpeechOrchestrator(
             play = { text, callback -> played.add(text);done=callback }
         )
-        q.offer(SpeechKind.POI,"Ponto antigo","poi:old")
+        q.offer(SpeechKind.NAVIGATION,"Navegação antiga","nav:old")
         q.offer(SpeechKind.GEOGRAPHY,"Rua Nova","geo:novo")
         q.cancelAll()
         done?.invoke()
