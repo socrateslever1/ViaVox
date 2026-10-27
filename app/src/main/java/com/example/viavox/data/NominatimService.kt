@@ -3,6 +3,13 @@ package com.example.viavox.data
 import com.example.viavox.model.Place
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.suspendCancellableCoroutine
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.Response
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
@@ -12,12 +19,30 @@ import java.util.concurrent.TimeUnit
 
 class NominatimService(
     private val client: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
+        .connectTimeout(4, TimeUnit.SECONDS)
+        .readTimeout(4, TimeUnit.SECONDS)
+        .callTimeout(6, TimeUnit.SECONDS)
         .build(),
     private val googlePlacesEnricher: GooglePlacesEnricher = GooglePlacesEnricher()
 ) {
     var googleApiKey: String = ""
+
+    // OkHttp synchronous execute() does not stop when a GPS coroutine is
+    // cancelled. Async callbacks release the connection immediately instead.
+    private suspend fun awaitResponse(request: Request): Response =
+        suspendCancellableCoroutine { continuation ->
+            val call = client.newCall(request)
+            continuation.invokeOnCancellation { call.cancel() }
+            call.enqueue(object : Callback {
+                override fun onFailure(call: Call, error: IOException) {
+                    if (continuation.isActive) continuation.resumeWithException(error)
+                }
+                override fun onResponse(call: Call, response: Response) {
+                    if (continuation.isActive) continuation.resume(response)
+                    else response.close()
+                }
+            })
+        }
 
     private fun clean(value: String?): String {
         return value?.trim() ?: ""
@@ -35,36 +60,36 @@ class NominatimService(
                 .header("Accept-Language", "pt-BR")
                 .build()
 
-            val response = client.newCall(request).execute()
-            if (!response.isSuccessful) {
-                return@withContext Result.failure(
-                    IOException("Serviço de endereços indisponível (${response.code})")
-                )
-            }
-
-            val body = response.body?.string().orEmpty()
-            val circ = GeneralCircumscriptionService.resolve(body, lat, lon)
-            val police = PoliceCircumscriptionService.resolve(circ.neighbourhood, circ.city, circ.zoneOrDistrict)?.label.orEmpty()
-
-            var venue = circ.venueName
-            if (venue.isBlank() && googleApiKey.isNotBlank()) {
-                val enriched = googlePlacesEnricher.enrichLocation(lat, lon, googleApiKey)
-                if (enriched != null && enriched.name.isNotBlank()) {
-                    venue = enriched.name
+            awaitResponse(request).use { response ->
+                if (!response.isSuccessful) {
+                    return@withContext Result.failure(
+                        IOException("Serviço de endereços indisponível (${response.code})")
+                    )
                 }
-            }
-
-            Result.success(
-                Place(
-                    road = circ.road,
-                    neighbourhood = circ.neighbourhood,
-                    city = circ.city,
-                    reference = circ.reference,
-                    zone = circ.zoneOrDistrict,
-                    venueName = venue,
-                    policeDistrict = police
+                val body = response.body?.string().orEmpty()
+                if (body.length > 1_000_000) {
+                    return@withContext Result.failure(IOException("Resposta excessiva do serviço de endereços"))
+                }
+                val circ = GeneralCircumscriptionService.resolve(body, lat, lon)
+                val police = PoliceCircumscriptionService.resolve(
+                    circ.neighbourhood, circ.city, circ.zoneOrDistrict
+                )?.label.orEmpty()
+                // Never block primary road narration on Google Places enrichment.
+                // Venue/POI scans run independently from street identification.
+                Result.success(
+                    Place(
+                        road = circ.road,
+                        neighbourhood = circ.neighbourhood,
+                        city = circ.city,
+                        reference = circ.reference,
+                        zone = circ.zoneOrDistrict,
+                        venueName = circ.venueName,
+                        policeDistrict = police
+                    )
                 )
-            )
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (e: Exception) {
             Result.failure(e)
         }
