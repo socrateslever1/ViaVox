@@ -29,6 +29,7 @@ import com.example.viavox.data.GeoSpeechPolicy
 import com.example.viavox.data.AmazonasMunicipalitySync
 import com.example.viavox.data.AmazonasMunicipalityDirectory
 import com.example.viavox.data.GeoPackUpdater
+import com.example.viavox.data.RoadGeometryIndex
 import com.example.viavox.data.SurroundingsLookup
 import com.example.viavox.data.ArcGisManausPlacesService
 import com.example.viavox.data.ManausArcGisLayer
@@ -146,12 +147,16 @@ class ViaVoxTrackingService : Service() {
                 .refreshIfDue() }.onFailure {
                 Log.w(TAG, "Amazonas geo pack update failed", it)
             }
+            val mappedRoads = runCatching {
+                RoadGeometryIndex.get(this@ViaVoxTrackingService).count()
+            }.getOrDefault(0)
             val refreshed = runCatching { geoCatalog.statistics() }.getOrNull()
             if (refreshed != null) {
                 val version = geoCatalog.installedGeoPackVersion()
                 TrackingRepository.updateGeoCatalogStatus(
                     "Banco local: "+refreshed.municipalities+" municípios, "+
                     refreshed.streets+" vias, "+refreshed.places+" referências"+
+                    " · "+mappedRoads+" traçados de ruas"+
                     if(version.isNotBlank()) " · atualização "+version else " · base inicial"
                 )
             }
@@ -250,6 +255,12 @@ class ViaVoxTrackingService : Service() {
                 TrackingRepository.updateStatus(status)
             }
         )
+        roadEngine.localRoadLookup = { fix ->
+            RoadGeometryIndex.get(this@ViaVoxTrackingService).match(fix)
+        }
+        roadEngine.cityNameForCode = { code ->
+            AmazonasMunicipalityDirectory.all.firstOrNull { it.first == code }?.second.orEmpty()
+        }
         roadEngine.enablePoliceCircumscription = currentConfig.enablePoliceCircumscription
         roadEngine.territoryPolygonLookup = { fix ->
             territoryMap?.resolve(fix.latitude, fix.longitude, fix.accuracyMeters)
