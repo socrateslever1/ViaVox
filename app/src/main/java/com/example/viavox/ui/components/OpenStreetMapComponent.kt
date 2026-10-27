@@ -426,36 +426,34 @@ fun OpenStreetMapComponent(
                     cameraDistance = 18f * density
                 }
                 .pointerInput(Unit) {
-                    detectTransformGestures { _, pan, zoomChange, rotationChange ->
-                        // A pure two-finger rotation is a manual gesture too:
-                        // it must stop heading/GPS follow before applying rotation.
-                        if (MapGesturePolicy.isManualTransform(
-                                pan.x, pan.y, zoomChange, rotationChange)) {
+                    detectTransformGestures { centroid, pan, zoomChange, rotationChange ->
+                        val moved = abs(pan.x) > 0.01f || abs(pan.y) > 0.01f
+                        val pinched = abs(zoomChange - 1f) > 0.0001f
+                        val twisted = abs(rotationChange) > 0.01f
+                        if (moved || pinched || twisted) {
+                            // Touch manipulation always takes over from automatic GPS
+                            // follow, including pure two-finger rotation and zoom.
                             followUser = false
-                        }
-                        if (zoomChange != 1f && zoomChange > 0f) {
-                            cameraZoom = MapGesturePolicy.zoomLevel(
-                                cameraZoom, zoomChange, MIN_MAP_ZOOM, MAX_MAP_ZOOM)
-                        }
-                        if (abs(rotationChange) > 0.2f && !followUser) {
-                            // Drawing uses native.rotate(-cameraBearing). Compose's
-                            // rotationChange has screen-space sign, so invert here.
-                            cameraBearing = MapGesturePolicy.rotateCameraBearing(
-                                cameraBearing, rotationChange)
-                        }
-                        if (pan.x != 0f || pan.y != 0f) {
-                            val newLatLon = WebMercatorMath.screenToLatLon(
-                                screenX = size.width / 2f - pan.x,
-                                screenY = size.height / 2f - pan.y,
-                                centerX = size.width / 2f,
-                                centerY = size.height / 2f,
-                                centerLat = cameraLat,
-                                centerLon = cameraLon,
-                                zoom = cameraZoom,
-                                bearingDeg = cameraBearing.toDouble()
+                            val updated = MapGestureMath.transform(
+                                old = MapGestureCamera(
+                                    cameraLat, cameraLon, cameraZoom,
+                                    cameraBearing.toDouble()
+                                ),
+                                width = size.width.toDouble(),
+                                height = size.height.toDouble(),
+                                centroidX = centroid.x.toDouble(),
+                                centroidY = centroid.y.toDouble(),
+                                panX = pan.x.toDouble(),
+                                panY = pan.y.toDouble(),
+                                zoomFactor = zoomChange.toDouble(),
+                                rotationDegrees = rotationChange.toDouble(),
+                                minimumZoom = MIN_MAP_ZOOM,
+                                maximumZoom = MAX_MAP_ZOOM
                             )
-                            cameraLat = newLatLon.first.coerceIn(-85.0, 85.0)
-                            cameraLon = newLatLon.second.coerceIn(-180.0, 180.0)
+                            cameraLat = updated.latitude
+                            cameraLon = updated.longitude
+                            cameraZoom = updated.zoom
+                            cameraBearing = updated.bearing.toFloat()
                         }
                     }
                 }
