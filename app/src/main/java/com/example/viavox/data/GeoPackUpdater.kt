@@ -77,6 +77,11 @@ class GeoPackUpdater(
                 }
             }
             if(file.length()<100) return@withContext false
+            // Road RTree is built separately, preserving all previous places and
+            // aliases even when a road-map update is unavailable.
+            file.inputStream().use {
+                RoadGeometryIndex.get(context).importFromGeopack(it)
+            }
             file.inputStream().use { catalog.importGeoPack(it) }
             Log.i("ViaVoxGeoPack","Amazonas catalogue imported and indexed")
             true
