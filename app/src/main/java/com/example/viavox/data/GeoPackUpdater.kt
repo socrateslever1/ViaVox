@@ -44,10 +44,15 @@ class GeoPackUpdater(
         // road-line layer; retry on Wi-Fi rather than waiting another week.
         val installed=catalog.installedGeoPackVersion().isNotBlank() &&
             RoadGeometryIndex.get(context).count() >= 1000
-        // Don't retry missing packages on every foreground launch.
-        if(last>0 && now-last < if(installed) 7L*24*60*60*1000 else 12L*60*60*1000)
+        // First launch of the road-geometry-enabled APK must not inherit a
+        // 7-day cooldown from the older points-only package.
+        val roadUpgradePending = !installed &&
+            !prefs.getBoolean("road_geometry_bootstrap_attempted",false)
+        if(!roadUpgradePending && last>0 &&
+            now-last < if(installed) 7L*24*60*60*1000 else 12L*60*60*1000)
             return@withContext false
-        prefs.edit().putLong("last_attempt",now).apply()
+        prefs.edit().putLong("last_attempt",now)
+            .putBoolean("road_geometry_bootstrap_attempted",true).apply()
 
         val file=File(context.cacheDir,"amazonas-geopack-downloading.gz")
         try {
