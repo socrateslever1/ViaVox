@@ -59,7 +59,7 @@ class MapGestureMathTest {
         assertEquals(18.0, swipe(factor = 2.0).zoom, 1e-10)
         assertEquals(16.0, swipe(factor = 0.5).zoom, 1e-10)
         assertEquals(19.0, swipe(factor = 100.0).zoom, 1e-10)
-        assertEquals(3.0, swipe(factor = 0.0001).zoom, 1e-10)
+        assertEquals(3.0, swipe(factor = 0.000001).zoom, 1e-10)
     }
 
     @Test fun pinchAtOffCentreStaysAnchoredToGeographicPoint() {
