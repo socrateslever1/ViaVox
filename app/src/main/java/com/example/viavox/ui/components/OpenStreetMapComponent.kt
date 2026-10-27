@@ -427,15 +427,21 @@ fun OpenStreetMapComponent(
                 }
                 .pointerInput(Unit) {
                     detectTransformGestures { _, pan, zoomChange, rotationChange ->
-                        if (abs(pan.x) > 1.5f || abs(pan.y) > 1.5f || abs(zoomChange - 1f) > 0.01f) {
+                        // A pure two-finger rotation is a manual gesture too:
+                        // it must stop heading/GPS follow before applying rotation.
+                        if (MapGesturePolicy.isManualTransform(
+                                pan.x, pan.y, zoomChange, rotationChange)) {
                             followUser = false
                         }
                         if (zoomChange != 1f && zoomChange > 0f) {
-                            val zoomDelta = ln(zoomChange.toDouble()) / ln(2.0)
-                            cameraZoom = (cameraZoom + zoomDelta).coerceIn(MIN_MAP_ZOOM, MAX_MAP_ZOOM)
+                            cameraZoom = MapGesturePolicy.zoomLevel(
+                                cameraZoom, zoomChange, MIN_MAP_ZOOM, MAX_MAP_ZOOM)
                         }
                         if (abs(rotationChange) > 0.2f && !followUser) {
-                            cameraBearing = (cameraBearing + rotationChange + 360f) % 360f
+                            // Drawing uses native.rotate(-cameraBearing). Compose's
+                            // rotationChange has screen-space sign, so invert here.
+                            cameraBearing = MapGesturePolicy.rotateCameraBearing(
+                                cameraBearing, rotationChange)
                         }
                         if (pan.x != 0f || pan.y != 0f) {
                             val newLatLon = WebMercatorMath.screenToLatLon(
