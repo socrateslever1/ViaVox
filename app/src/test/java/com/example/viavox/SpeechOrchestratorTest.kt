@@ -25,6 +25,30 @@ class SpeechOrchestratorTest {
         assertEquals(3, said.size)
     }
 
+    @Test fun geographicStreetInterruptsOptionalTourWithoutInterruptingNavigation() {
+        val said = mutableListOf<String>()
+        var interrupted = 0
+        val endings = mutableListOf<() -> Unit>()
+        val queue = SpeechOrchestrator(
+            play = { message, done -> said.add(message); endings.add(done) },
+            onInterrupt = { interrupted++ }
+        )
+        queue.offer(SpeechKind.TOUR,"Teatro próximo","tour:1")
+        queue.offer(SpeechKind.GEOGRAPHY,"Rua Pará.","geo:rua-para")
+        assertEquals(1,interrupted)
+        assertEquals(listOf("Teatro próximo","Rua Pará."),said)
+        endings[0]() // Old Tour callback must not stop a fresh road utterance.
+        assertTrue(queue.isBusy)
+        endings[1]()
+        assertFalse(queue.isBusy)
+        queue.offer(SpeechKind.NAVIGATION,"Vire à direita","nav:right")
+        queue.offer(SpeechKind.GEOGRAPHY,"Rua Nova.","geo:rua-nova")
+        assertEquals(1,interrupted) // Navigation was NOT cut.
+        assertEquals("Vire à direita",said[2])
+        endings[2]()
+        assertEquals("Rua Nova.",said.last())
+    }
+
     @Test fun neverStartsSecondUtteranceUntilPreviousActuallyFinishes() {
         var done: (() -> Unit)? = null
         var now = 1_000L
