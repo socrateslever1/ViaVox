@@ -13,7 +13,8 @@ import java.io.File
 import java.util.concurrent.TimeUnit
 
 /**
- * Weekly, unmetered-only refresh from the project's public, versioned
+ * Weekly refresh (unmetered only; first install on any network) from the
+ * project's public, versioned
  * GitHub release. The pack is generated from Geofabrik OSM extracts and
  * official municipality outlines. No user API key, no AI inference.
  */
@@ -33,8 +34,7 @@ class GeoPackUpdater(
         val network=connectivity.activeNetwork ?: return@withContext false
         val capabilities=connectivity.getNetworkCapabilities(network)
             ?: return@withContext false
-        if (!capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) ||
-            !capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED))
+        if (!capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET))
             return@withContext false
 
         val prefs=context.getSharedPreferences("viavox_geopack",Context.MODE_PRIVATE)
@@ -44,6 +44,12 @@ class GeoPackUpdater(
         // road-line layer; retry on Wi-Fi rather than waiting another week.
         val installed=catalog.installedGeoPackVersion().isNotBlank() &&
             RoadGeometryIndex.get(context).count() >= 1000
+        // Weekly refreshes wait for Wi-Fi. The very first download (a few MB)
+        // may use mobile data: without it a fresh install knows no streets
+        // or places and both street naming and the surroundings scan are empty.
+        if (installed && !capabilities.hasCapability(
+                NetworkCapabilities.NET_CAPABILITY_NOT_METERED))
+            return@withContext false
         // First launch of the road-geometry-enabled APK must not inherit a
         // 7-day cooldown from the older points-only package.
         val roadUpgradePending = !installed &&

@@ -892,6 +892,10 @@ class ViaVoxTrackingService : Service() {
             var completedSources = 0
             var failedSources = 0
             var latestCrossing: String? = null
+            // A fresh install has no regional data until the first download.
+            val localPackInstalled = runCatching {
+                geoCatalog.installedGeoPackVersion().isNotBlank()
+            }.getOrDefault(true)
 
             fun refresh(done: Boolean = false) {
                 if (generation != scanGeneration || !isTrackingRunning) return
@@ -923,6 +927,9 @@ class ViaVoxTrackingService : Service() {
                 } else if (done) {
                     val message = if (failedSources >= 1 && seen.isEmpty())
                         "Fontes online indisponíveis. Nenhuma referência local cadastrada para este alcance."
+                    else if (!localPackInstalled)
+                        "A base de locais do Amazonas ainda está sendo baixada. " +
+                            "Mantenha o aplicativo aberto com internet e tente de novo em alguns minutos."
                     else SurroundingsPolicy.scanSpeech(emptyList(),direction,heading!=null)
                     TrackingRepository.updateSurroundingsResult(message)
                     if (!spokenOnce) speakIfAllowed(message,true,SpeechKind.USER_REQUEST,

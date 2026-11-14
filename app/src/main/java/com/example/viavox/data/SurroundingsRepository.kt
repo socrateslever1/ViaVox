@@ -123,11 +123,12 @@ class SurroundingsRepository(
         val q = """
             [out:json][timeout:12];
             (
-              nwr["name"]["amenity"~"^(hospital|clinic|school|university|college|library|theatre|police|townhall|marketplace|restaurant|cafe|pharmacy)$"](around:$radius,$latText,$lonText);
-              nwr["name"]["tourism"~"^(museum|attraction|viewpoint|artwork|gallery)$"](around:$radius,$latText,$lonText);
+              nwr["name"]["amenity"~"^(hospital|clinic|doctors|dentist|school|kindergarten|university|college|library|theatre|cinema|police|fire_station|courthouse|townhall|community_centre|post_office|marketplace|restaurant|fast_food|cafe|bar|pharmacy|bank|fuel|place_of_worship|bus_station|ferry_terminal)$"](around:$radius,$latText,$lonText);
+              nwr["name"]["tourism"~"^(museum|attraction|viewpoint|artwork|gallery|hotel)$"](around:$radius,$latText,$lonText);
               nwr["name"]["historic"](around:$radius,$latText,$lonText);
-              nwr["name"]["leisure"~"^(park|garden|playground)$"](around:$radius,$latText,$lonText);
+              nwr["name"]["leisure"~"^(park|garden|playground|sports_centre|stadium)$"](around:$radius,$latText,$lonText);
               nwr["name"]["shop"](around:$radius,$latText,$lonText);
+              nwr["name"]["office"~"^(government|ngo|association)$"](around:$radius,$latText,$lonText);
             );
             out center 220;
         """.trimIndent()
@@ -198,7 +199,7 @@ class SurroundingsRepository(
             // A manual scan should retain legitimate commerce and pharmacy POIs.
             // Do not apply the stricter *automatic narration* category exclusions.
             if (GeoSpeechPolicy.speakableReference(name) == null) continue
-            val kind = listOf("historic", "tourism", "amenity", "leisure", "shop")
+            val kind = listOf("historic", "tourism", "amenity", "leisure", "shop", "office")
                 .firstOrNull { tags.has(it) } ?: continue
             val point = if (entry.optString("type") == "node") entry
                 else entry.optJSONObject("center") ?: continue
