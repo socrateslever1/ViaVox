@@ -1,0 +1,32 @@
+name: Keep Android Signing Key Cached
+
+# GitHub evicts a cache entry not accessed for 7 days. Losing the signing key
+# means every installed ViaVox must be uninstalled before it can update, so
+# this job reads the entry every two days to keep it alive.
+on:
+  schedule:
+    - cron: '17 5 */2 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  touch-signing-key:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Restore ViaVox debug signing key
+        id: key
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: viavox-android-development-signing-v1
+      - name: Fail if the signing key is gone
+        run: |
+          if [ "${{ steps.key.outputs.cache-hit }}" != "true" ] || [ ! -f "$HOME/.android/debug.keystore" ]; then
+            echo "::error::The cached Android signing key is missing."
+            exit 1
+          fi
+          keytool -list -v -keystore "$HOME/.android/debug.keystore" \
+            -storepass android -alias androiddebugkey | grep -E "SHA256:"
