@@ -41,6 +41,13 @@ class RoadDetectionEngine(
     /** Optional, network-free, indexed OSM road polyline lookup. */
     var localRoadLookup: suspend (GeoFix) -> ConfidentStreet? = { null }
     var cityNameForCode: (Int) -> String = { "" }
+    /**
+     * Normalised names of locally mapped streets under a fix, or null where
+     * the offline map has no coverage. An online geocoder often answers with
+     * the address of a nearby building on another street; such a name is
+     * dropped unless the local map agrees a street with that name is here.
+     */
+    var localRoadNamesNear: suspend (GeoFix) -> Set<String>? = { null }
     private var newestFix: GeoFix? = null
     private var lastQueryTimestamp = 0L
     private var lastQueryLat = 0.0
@@ -203,7 +210,8 @@ class RoadDetectionEngine(
         territoryPolygonLookup(fix)?.let { match ->
             publish(polygonTransition(match, accuracy))
         }
-        if (accuracy in 0.1f..12f && localRoadJob?.isActive != true) {
+        if (accuracy in 0.1f..RoadMapMatcher.MAX_TRAIL_ACCURACY &&
+            localRoadJob?.isActive != true) {
             localRoadJob = coroutineScope.launch {
                 try {
                     val match = localRoadLookup(fix)
@@ -327,7 +335,19 @@ class RoadDetectionEngine(
                         return@onSuccess
                     }
                     lastQuerySucceeded = true
-                    val normalizedRoad = normalizeRoadName(rawPlace.road)
+                    var normalizedRoad = normalizeRoadName(rawPlace.road)
+                    val mapped = try { localRoadNamesNear(fix) }
+                        catch (cancelled: CancellationException) { throw cancelled }
+                        catch (_: Exception) { null }
+                    if (mapped != null &&
+                        normalizeForComparison(normalizedRoad) !in mapped) {
+                        // The offline map knows this spot and has no such
+                        // street here: stay silent rather than say a wrong name.
+                        // Keep whatever road was already confirmed on screen.
+                        normalizedRoad = currentConfirmedRoad ?: Place.UNKNOWN_ROAD
+                    }
+                    if (latestLocalConfirmedTimeMs != 0L &&
+                        latestLocalConfirmedTimeMs >= fix.timestampMs) return@onSuccess
                     val local = territoryPolygonLookup(fix)
                     val cleanPlace = rawPlace.copy(
                         road = normalizedRoad,
@@ -421,7 +441,8 @@ class RoadDetectionEngine(
             return
         }
 
-        if (geometricallyVerified && fix.accuracyMeters <= 12f &&
+        if (geometricallyVerified &&
+            fix.accuracyMeters <= RoadMapMatcher.MAX_TRAIL_ACCURACY &&
             fix.speedMps >= 0.85f) {
             // The two GPS samples have already been compared against distinct
             // OSM road polylines; do not wait for another reverse-geocoding trip.

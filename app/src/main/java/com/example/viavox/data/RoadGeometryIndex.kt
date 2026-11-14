@@ -126,37 +126,64 @@ class RoadGeometryIndex(context: Context) :
         }
     }
 
-    /** RTree query: only tiny local subset decoded, no network wait. */
-    suspend fun match(fix:GeoFix):ConfidentStreet? = withContext(Dispatchers.IO) {
-        if (fix.accuracyMeters <= 0f || fix.accuracyMeters > 12f ||
-            !fix.latitude.isFinite() || !fix.longitude.isFinite())
-            return@withContext null
-        val radius=(fix.accuracyMeters+28.0).coerceAtMost(42.0)
+    private val recentFixes=ArrayDeque<GeoFix>()
+
+    private fun linesAround(points:List<GeoFix>, radius:Double):List<IndexedStreetLine> {
+        val midLat=points.first().latitude
         val dy=radius/111_195.0
-        val dx=radius/(111_195.0*cos(Math.toRadians(fix.latitude)).coerceAtLeast(0.15))
+        val dx=radius/(111_195.0*cos(Math.toRadians(midLat)).coerceAtLeast(0.15))
         val lines=ArrayList<IndexedStreetLine>()
         readableDatabase.rawQuery(
             """SELECT r.name,r.city_code,r.polyline FROM road_bounds b
                JOIN road_lines r ON r.rowid=b.rowid
                WHERE b.max_lat>=? AND b.min_lat<=? AND b.max_lon>=? AND b.min_lon<=?
-               LIMIT 150""",
-            arrayOf((fix.latitude-dy).toString(),(fix.latitude+dy).toString(),
-                (fix.longitude-dx).toString(),(fix.longitude+dx).toString())
+               LIMIT 400""",
+            arrayOf((points.minOf { it.latitude }-dy).toString(),
+                (points.maxOf { it.latitude }+dy).toString(),
+                (points.minOf { it.longitude }-dx).toString(),
+                (points.maxOf { it.longitude }+dx).toString())
         ).use { c ->
             while(c.moveToNext()) {
                 val arr=runCatching { JSONArray(c.getString(2)) }.getOrNull()
                     ?: continue
-                val points=(0 until arr.length()).mapNotNull { i ->
+                val decoded=(0 until arr.length()).mapNotNull { i ->
                     val pair=arr.optJSONArray(i) ?: return@mapNotNull null
                     val lat=pair.optDouble(0,Double.NaN)
                     val lon=pair.optDouble(1,Double.NaN)
                     if(lat.isFinite() && lon.isFinite()) lat to lon else null
                 }
-                if(points.size>=2) lines.add(IndexedStreetLine(c.getString(0),
-                    c.getInt(1),points))
+                if(decoded.size>=2) lines.add(IndexedStreetLine(c.getString(0),
+                    c.getInt(1),decoded))
             }
         }
-        RoadMapMatcher.choose(fix,lines)
+        return lines
+    }
+
+    /**
+     * RTree query: only a tiny local subset is decoded, no network wait.
+     * The last few fixes are kept so the matcher can follow the trajectory.
+     */
+    suspend fun match(fix:GeoFix):ConfidentStreet? = withContext(Dispatchers.IO) {
+        if (fix.accuracyMeters <= 0f ||
+            fix.accuracyMeters > RoadMapMatcher.MAX_TRAIL_ACCURACY ||
+            !fix.latitude.isFinite() || !fix.longitude.isFinite())
+            return@withContext null
+        val trail=synchronized(recentFixes) {
+            val usable=RoadMapMatcher.usableTrail(fix,recentFixes.toList())
+            if(recentFixes.lastOrNull()?.timestampMs != fix.timestampMs)
+                recentFixes.addLast(fix)
+            while(recentFixes.size>4) recentFixes.removeFirst()
+            usable
+        }
+        val radius=(fix.accuracyMeters+28.0).coerceAtMost(48.0)
+        RoadMapMatcher.choose(fix,linesAround(listOf(fix)+trail,radius),trail)
+    }
+
+    /** Names of mapped streets under this fix; null where nothing is mapped. */
+    suspend fun namesNear(fix:GeoFix):Set<String>? = withContext(Dispatchers.IO) {
+        if(!fix.latitude.isFinite() || !fix.longitude.isFinite())
+            return@withContext null
+        RoadMapMatcher.namesNear(fix,linesAround(listOf(fix),70.0))
     }
 
     companion object {

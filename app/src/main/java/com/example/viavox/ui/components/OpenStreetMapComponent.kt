@@ -156,7 +156,7 @@ fun OpenStreetMapComponent(
     }
     var styleMenuExpanded by remember { mutableStateOf(false) }
     var showArcGisReferences by remember {
-        mutableStateOf(prefs.getBoolean("map_arcgis_references", true))
+        mutableStateOf(prefs.getBoolean("map_city_references_v2", false))
     }
     var showAdminBoundaries by remember {
         mutableStateOf(prefs.getBoolean("map_admin_boundaries", false))
@@ -868,7 +868,7 @@ fun OpenStreetMapComponent(
                         },
                         onClick = {
                             showArcGisReferences = !showArcGisReferences
-                            prefs.edit().putBoolean("map_arcgis_references", showArcGisReferences).apply()
+                            prefs.edit().putBoolean("map_city_references_v2", showArcGisReferences).apply()
                             styleMenuExpanded = false
                         },
                         modifier = Modifier.testTag("arcgis_references_toggle")

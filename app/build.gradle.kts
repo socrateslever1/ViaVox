@@ -14,8 +14,11 @@ android {
         applicationId = "com.socrateslever.viavox"
         minSdk = 26
         targetSdk = 35
-        versionCode = 40
-        versionName = "0.11.4"
+        // CI passes an always-increasing code so every published APK is
+        // offered by the in-app updater; local builds keep the fixed one.
+        versionCode = providers.gradleProperty("viavoxVersionCode").orNull
+            ?.toIntOrNull() ?: 41
+        versionName = "0.12.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {

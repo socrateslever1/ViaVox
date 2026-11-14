@@ -117,6 +117,11 @@ class GeoCatalogDatabase(context: Context) :
                     db.setTransactionSuccessful()
                 } finally { db.endTransaction() }
             }
+            // Places cached from the retired municipal ArcGIS layer were
+            // frequently outdated; remove them from existing installations.
+            db.execSQL("""DELETE FROM place_bounds WHERE rowid IN
+                (SELECT rowid FROM places WHERE source='ArcGIS Manaus')""")
+            db.execSQL("DELETE FROM places WHERE source='ArcGIS Manaus'")
             seeded = true
         }
     }

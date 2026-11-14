@@ -26,12 +26,54 @@ import zipfile
 import ijson
 
 import osmium
-from shapely.geometry import Point, shape
+from shapely.geometry import LineString, Point, shape
 from shapely.strtree import STRtree
 
 POI_KEYS = ("amenity", "tourism", "historic", "leisure",
             "shop", "office", "healthcare", "railway", "public_transport")
-LIMIT = 1_200_000
+# Both Android importers refuse packs above 1.5 million records.
+LIMIT = 1_450_000
+# Official IBGE street lines are only added while the pack has headroom.
+IBGE_ROAD_BUDGET = 1_380_000
+# A face whose midpoint is this close to a named OSM road is already mapped.
+OSM_COVERED_DEGREES = 30.0 / 111_195.0
+DRIVABLE = {
+    "motorway", "trunk", "primary", "secondary", "tertiary",
+    "residential", "living_street", "unclassified", "service",
+    "motorway_link", "trunk_link", "primary_link", "secondary_link",
+    "tertiary_link", "pedestrian", "road", "track"
+}
+LOWERCASE_WORDS = {"de", "da", "do", "das", "dos", "e", "a", "o", "em",
+                   "na", "no", "para", "com"}
+KEEP_UPPER = re.compile(r"^(BR|AM|[IVXLC]+|[A-Z]{1,2}\d+[A-Z]?|\d+[A-Z]?)$")
+HIGHWAY_REF = re.compile(r"^(BR|AM)[- ]?(\d{3})$")
+
+
+def spoken_case(name):
+    """IBGE publishes names in capitals; restore readable Portuguese casing."""
+    if not name.isupper():
+        return name
+    words = []
+    for index, word in enumerate(name.split()):
+        if KEEP_UPPER.match(word):
+            words.append(word)
+        elif index and word.lower() in LOWERCASE_WORDS:
+            words.append(word.lower())
+        else:
+            words.append("-".join(part.capitalize() for part in word.split("-")))
+    return " ".join(words)
+
+
+def road_name(tags):
+    """A usable street name: the mapped name, else a state/federal road ref."""
+    name = tags.get("name", "").strip()
+    if name:
+        return name
+    for ref in tags.get("ref", "").split(";"):
+        match = HIGHWAY_REF.match(ref.strip().upper())
+        if match:
+            return f"{match.group(1)}-{match.group(2)}"
+    return ""
 
 
 def fold(value):
@@ -76,6 +118,8 @@ class Gazetteer(osmium.SimpleHandler):
         self.streets = 0
         self.ibge_streets = 0
         self.road_geometry_count = 0
+        self.ibge_road_count = 0
+        self.osm_road_lines = []
         self.streets_seen = set()
 
     def municipality(self, lat, lon):
@@ -129,6 +173,7 @@ class Gazetteer(osmium.SimpleHandler):
     def ingest_ibge_zip(self, zip_path):
         """Stream official 2022 IBGE face names by municipality."""
         valid_codes=set(self.codes)
+        osm_tree=STRtree(self.osm_road_lines) if self.osm_road_lines else None
         with zipfile.ZipFile(zip_path) as archive:
             members=[m for m in archive.infolist() if
                      m.filename.lower().endswith((".json",".geojson"))
@@ -160,22 +205,24 @@ class Gazetteer(osmium.SimpleHandler):
                             raise ValueError("Sector municipality mismatches IBGE ZIP filename")
                         parts=[str(props.get(key) or "").strip()
                                for key in ("NM_TIP_LOG","NM_TIT_LOG","NM_LOG")]
-                        name=" ".join(x for x in parts if x)
+                        name=spoken_case(" ".join(x for x in parts if x))
                         if not 2<=len(name)<=140 or fold(name) in {
                             "sem nome","nao identificado","logradouro sem nome"
-                        }:
-                            continue
-                        key=(code,fold(name))
-                        if key in self.streets_seen:
+                        } or fold(name).endswith(" sem denominacao"):
                             continue
                         geom=feature.get("geometry")
                         if not geom:
                             continue
                         try:
-                            center=shape(geom).centroid
+                            face=shape(geom)
+                            center=face.centroid
                             if center.is_empty or not center.is_valid:
                                 continue
                         except (TypeError,ValueError):
+                            continue
+                        self.ibge_face_roads(face,code,name,osm_tree)
+                        key=(code,fold(name))
+                        if key in self.streets_seen:
                             continue
                         self.streets_seen.add(key)
                         self.write({"type":"street", "city_code":code,
@@ -183,6 +230,40 @@ class Gazetteer(osmium.SimpleHandler):
                             "lon":round(center.x,7),
                             "source":"IBGE:faces:2022"})
                         self.ibge_streets+=1
+
+    def ibge_face_roads(self, face, code, name, osm_tree):
+        """Emit the official line of a street OpenStreetMap has no name for.
+
+        Without this, a street missing from (or unnamed in) OSM is invisible
+        to GPS matching and the app either stays silent or names a neighbour.
+        """
+        if self.count >= IBGE_ROAD_BUDGET:
+            return
+        parts = [face] if face.geom_type == "LineString" else (
+            list(face.geoms) if face.geom_type == "MultiLineString" else [])
+        for part in parts:
+            if part.is_empty or len(part.coords) < 2:
+                continue
+            middle = part.interpolate(0.5, normalized=True)
+            if not (-10.5 < middle.y < 3.0 and -74.0 < middle.x < -56.0):
+                continue
+            if osm_tree is not None:
+                near = osm_tree.query(middle.buffer(OSM_COVERED_DEGREES))
+                if any(self.osm_road_lines[int(i)].distance(middle)
+                       <= OSM_COVERED_DEGREES for i in near):
+                    continue
+            coords = list(part.simplify(0.00001).coords)[:96]
+            if len(coords) < 2 or self.count >= IBGE_ROAD_BUDGET:
+                continue
+            self.ibge_road_count += 1
+            self.write({
+                "type": "road_way", "city_code": code,
+                "id": f"ibge:{code}:{self.ibge_road_count}",
+                "name": name,
+                "lat": round(middle.y, 6), "lon": round(middle.x, 6),
+                "source": "IBGE:faces:2022",
+                "points": [[round(c[1], 6), round(c[0], 6)] for c in coords]
+            })
 
     def node(self, obj):
         if not obj.location.valid():
@@ -197,6 +278,11 @@ class Gazetteer(osmium.SimpleHandler):
 
     def way(self, obj):
         tags = {t.k:t.v for t in obj.tags}
+        if tags.get("highway") in DRIVABLE and not tags.get("name", "").strip():
+            # Highways mapped with only a reference are still announceable.
+            fallback = road_name(tags)
+            if fallback:
+                tags["name"] = fallback
         if not ("name" in tags and (
             "highway" in tags or any(key in tags for key in POI_KEYS))):
             return
@@ -206,12 +292,8 @@ class Gazetteer(osmium.SimpleHandler):
             return
         lat, lon = coords[len(coords)//2]
         self.process(tags, "way", obj.id, lat, lon, True)
-        if tags.get("highway") in {
-            "motorway", "trunk", "primary", "secondary", "tertiary",
-            "residential", "living_street", "unclassified", "service",
-            "motorway_link", "trunk_link", "primary_link", "secondary_link",
-            "tertiary_link", "pedestrian", "road", "track"
-        } and 2 <= len(coords) and 2 <= len(tags.get("name", "").strip()) <= 140:
+        if tags.get("highway") in DRIVABLE and 2 <= len(coords) and \
+                2 <= len(tags.get("name", "").strip()) <= 140:
             # Store real street geometry instead of guessing from a single
             # representative point. Split long ways with an overlapping node
             # to maintain accurate segments across bends.
@@ -220,6 +302,8 @@ class Gazetteer(osmium.SimpleHandler):
                 if len(points) < 2: continue
                 code = self.municipality(*points[len(points)//2])
                 if code is None: continue
+                self.osm_road_lines.append(
+                    LineString([(p[1], p[0]) for p in points]))
                 self.write({
                     "type": "road_way",
                     "city_code": code,
@@ -249,7 +333,8 @@ def main():
         writer.write(json.dumps({
             "type":"header", "schema":1,"region":"AM", "version":today,
             "sources":["OpenStreetMap / Geofabrik (ODbL)",
-                       "IBGE municipal geometries"],
+                       "IBGE municipal geometries",
+                       "IBGE Faces de Logradouros 2022"],
             "license":"ODbL-1.0 for OpenStreetMap derived database"
         },ensure_ascii=False,separators=(",",":")) + "\n")
         collector = Gazetteer(polygons,codes,writer)
@@ -261,6 +346,7 @@ def main():
           f"POIs={collector.pois}, OSM streets={collector.streets}, "
           f"IBGE added streets={collector.ibge_streets}, "
           f"mapped road shapes={collector.road_geometry_count}, "
+          f"IBGE road shapes={collector.ibge_road_count}, "
           f"records={collector.count}, file={args.output.stat().st_size} bytes")
     if args.ibge_zip is not None and collector.ibge_streets < 5_000:
         raise RuntimeError(

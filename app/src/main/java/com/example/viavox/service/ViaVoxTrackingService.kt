@@ -31,7 +31,6 @@ import com.example.viavox.data.AmazonasMunicipalityDirectory
 import com.example.viavox.data.GeoPackUpdater
 import com.example.viavox.data.RoadGeometryIndex
 import com.example.viavox.data.SurroundingsLookup
-import com.example.viavox.data.ArcGisManausPlacesService
 import com.example.viavox.data.ManausArcGisLayer
 import com.example.viavox.data.GisBounds
 import com.example.viavox.model.NearbyLandmark
@@ -77,7 +76,6 @@ class ViaVoxTrackingService : Service() {
     private var lastPrefetchAt = 0L
     private var lastPrefetchLat = Double.NaN
     private var lastPrefetchLon = Double.NaN
-    private val manausReferences = ArcGisManausPlacesService()
     private var scanGeneration = 0L
     private lateinit var geoReminders: GeoReminderStore
     private val roadJunctions = RoadJunctionRepository()
@@ -258,6 +256,9 @@ class ViaVoxTrackingService : Service() {
         )
         roadEngine.localRoadLookup = { fix ->
             RoadGeometryIndex.get(this@ViaVoxTrackingService).match(fix)
+        }
+        roadEngine.localRoadNamesNear = { fix ->
+            RoadGeometryIndex.get(this@ViaVoxTrackingService).namesNear(fix)
         }
         roadEngine.cityNameForCode = { code ->
             AmazonasMunicipalityDirectory.all.firstOrNull { it.first == code }?.second.orEmpty()
@@ -920,7 +921,7 @@ class ViaVoxTrackingService : Service() {
                             "scan-junction:" + generation)
                     }
                 } else if (done) {
-                    val message = if (failedSources >= 2 && seen.isEmpty())
+                    val message = if (failedSources >= 1 && seen.isEmpty())
                         "Fontes online indisponíveis. Nenhuma referência local cadastrada para este alcance."
                     else SurroundingsPolicy.scanSpeech(emptyList(),direction,heading!=null)
                     TrackingRepository.updateSurroundingsResult(message)
@@ -970,31 +971,6 @@ class ViaVoxTrackingService : Service() {
                             serviceScope.launch(Dispatchers.IO) {
                                 geoCatalog.upsertPlaces(found,"OpenStreetMap")
                             }
-                        }
-                    }
-                    val gis = launch {
-                        val ref = if (ManausArcGisLayer.inCoverage(
-                                initial.latitude,initial.longitude)) {
-                            val deltaLat=(radius+50)/111_195.0
-                            val deltaLon=(radius+50)/(111_195.0 *
-                                kotlin.math.cos(Math.toRadians(initial.latitude))
-                                    .coerceAtLeast(0.12))
-                            withTimeoutOrNull(6_500L) {
-                                manausReferences.loadVisible(GisBounds(
-                                    initial.longitude-deltaLon,initial.latitude-deltaLat,
-                                    initial.longitude+deltaLon,initial.latitude+deltaLat),18.0)
-                            }
-                        } else emptyList()
-                        completedSources++
-                        if (ref == null) failedSources++
-                        val points=ref.orEmpty().map { item ->
-                            NearbyLandmark("arcgis:"+item.id,item.shortLabel,
-                                item.latitude,item.longitude,item.type,
-                                approximatePoint=true)
-                        }
-                        accept(points,"ArcGIS Manaus")
-                        if (points.isNotEmpty()) serviceScope.launch(Dispatchers.IO) {
-                            geoCatalog.upsertPlaces(points,"ArcGIS Manaus")
                         }
                     }
                     if (direction == ScanDirection.FRONT && initialHeading != null &&

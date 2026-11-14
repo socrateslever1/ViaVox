@@ -1,6 +1,7 @@
 package com.example.viavox
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -12,6 +13,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.DisposableEffect
@@ -22,6 +24,8 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.viavox.data.AppUpdateManager
+import com.example.viavox.ui.components.AppUpdatePrompt
 import com.example.viavox.ui.screens.ViaVoxMainScreen
 import com.example.viavox.ui.theme.ViaVoxTheme
 import com.example.viavox.viewmodel.ViaVoxViewModel
@@ -29,12 +33,25 @@ import com.example.viavox.viewmodel.NavigationViewModel
 
 class MainActivity : ComponentActivity() {
 
+    // Incremented when the user taps the "new version" notification.
+    private val updateOpenRequest = mutableIntStateOf(0)
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        if (intent.getBooleanExtra(AppUpdateManager.EXTRA_SHOW_UPDATE, false))
+            updateOpenRequest.intValue++
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        if (savedInstanceState == null &&
+            intent?.getBooleanExtra(AppUpdateManager.EXTRA_SHOW_UPDATE, false) == true)
+            updateOpenRequest.intValue++
 
         setContent {
             ViaVoxTheme {
+                AppUpdatePrompt(updateOpenRequest.intValue)
                 val viewModel: ViaVoxViewModel = viewModel()
                 val navigation: NavigationViewModel = viewModel()
                 val navigationUi by navigation.ui.collectAsState()

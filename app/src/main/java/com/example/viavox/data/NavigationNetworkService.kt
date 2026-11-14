@@ -67,9 +67,9 @@ class NavigationNetworkService(
                 val fresh = arcGis.search(cleaned)
                 return@runCatching DestinationSearchPolicy.merge(fresh,local)
             }
-            val isManaus = userLat != null && userLon != null &&
-                ManausArcGisLayer.inCoverage(userLat,userLon)
-            val cityMatches = if (isManaus) arcGis.search(cleaned) else emptyList()
+            // The city ArcGIS layer is consulted only for explicit police-unit
+            // queries: its general places and street addresses are outdated.
+            val cityMatches = emptyList<MapPlace>()
             val cached = synchronized(cacheLock) { searchCache[searchKey] }
             if (cached != null && System.currentTimeMillis() - cached.first < 600_000L) {
                 return@runCatching DestinationSearchPolicy.merge(local + cityMatches,cached.second)
@@ -144,7 +144,7 @@ class NavigationNetworkService(
 
     /**
      * Explicit, debounced autocomplete. The public Nominatim endpoint is NEVER
-     * used for autocomplete. Local ArcGIS records and user bookmarks come first.
+     * used for autocomplete. User bookmarks and verified local records come first.
      */
     suspend fun suggest(
         query: String, userLat: Double?, userLon: Double?,
@@ -159,7 +159,7 @@ class NavigationNetworkService(
         val isCicom = DestinationSearchPolicy.isCicomQuery(text)
         val isManaus = userLat != null && userLon != null &&
             ManausArcGisLayer.inCoverage(userLat,userLon)
-        val gis = if (isCicom || isManaus) {
+        val gis = if (isCicom) {
             runCatching { arcGis.search(text) }.getOrDefault(emptyList())
         } else emptyList()
         if (isCicom) return@withContext DestinationSearchPolicy.merge(gis,local).take(6)
