@@ -14,6 +14,8 @@ Usage: python scripts/build_amazonas_geopack.py --osm norte-latest.osm.pbf \
        --municipalities AM.geojson --output amazonas-geopack.jsonl.gz
 """
 import argparse
+import csv
+import io
 import datetime as dt
 import gzip
 import json
@@ -45,7 +47,7 @@ DRIVABLE = {
 }
 LOWERCASE_WORDS = {"de", "da", "do", "das", "dos", "e", "a", "o", "em",
                    "na", "no", "para", "com"}
-KEEP_UPPER = re.compile(r"^(BR|AM|[IVXLC]+|[A-Z]{1,2}\d+[A-Z]?|\d+[A-Z]?)$")
+KEEP_UPPER = re.compile(r"^(BR|AM|UBS|UPA|CMEI|CEI|CICOM|DIP|UFAM|UEA|IFAM|SESC|SENAI|SESI|CAPS|CRAS|CREAS|[IVXLC]+|[A-Z]{1,2}\d+[A-Z]?|\d+[A-Z]?)$")
 HIGHWAY_REF = re.compile(r"^(BR|AM)[- ]?(\d{3})$")
 
 
@@ -62,6 +64,52 @@ def spoken_case(name):
         else:
             words.append("-".join(part.capitalize() for part in word.split("-")))
     return " ".join(words)
+
+
+# CNEFE "espécie" codes: 4 school, 5 health unit, 6 other purposes,
+# 8 religious establishment. Type 6 is free text, so only recognisable
+# public-interest places are kept from it.
+CNEFE_KINDS = (
+    ("hospital", "hospital"), ("pronto socorro", "hospital"), ("upa ", "clinic"),
+    ("ubs ", "clinic"), ("unidade basica", "clinic"), ("policlinica", "clinic"),
+    ("posto de saude", "clinic"), ("maternidade", "hospital"),
+    ("universidade", "university"), ("faculdade", "university"),
+    ("escola", "school"), ("colegio", "school"), ("creche", "kindergarten"),
+    ("cmei", "kindergarten"), ("instituto federal", "college"),
+    ("delegacia", "police"), ("cicom", "police"), ("batalhao", "police"),
+    ("bombeiro", "fire_station"), ("forum", "courthouse"),
+    ("tribunal", "courthouse"), ("prefeitura", "townhall"),
+    ("secretaria", "government"), ("camara municipal", "townhall"),
+    ("cartorio", "government"), ("correios", "post_office"),
+    ("terminal", "bus_station"), ("rodoviaria", "bus_station"),
+    ("porto ", "ferry_terminal"), ("aeroporto", "attraction"),
+    ("supermercado", "supermarket"), ("shopping", "mall"),
+    ("mercado municipal", "marketplace"), ("feira ", "marketplace"),
+    ("farmacia", "pharmacy"), ("drogaria", "pharmacy"),
+    ("posto de gasolina", "fuel"), ("posto de combustivel", "fuel"),
+    ("banco ", "bank"), ("caixa economica", "bank"), ("loterica", "bank"),
+    ("hotel", "hotel"), ("pousada", "hotel"), ("museu", "museum"),
+    ("teatro", "theatre"), ("biblioteca", "library"), ("praca ", "park"),
+    ("parque ", "park"), ("estadio", "stadium"), ("ginasio", "sports_centre"),
+    ("centro de convivencia", "community_centre"),
+    ("centro comunitario", "community_centre"), ("cemiterio", "attraction"),
+    ("igreja", "place_of_worship"), ("paroquia", "place_of_worship"),
+    ("catedral", "place_of_worship"), ("templo", "place_of_worship"),
+    ("mesquita", "place_of_worship"), ("capela", "place_of_worship"),
+)
+CNEFE_DEFAULT_KIND = {"4": "school", "5": "clinic", "8": "place_of_worship"}
+CNEFE_GENERIC = {"igreja", "escola", "comercio", "loja", "bar", "mercearia",
+                 "oficina", "igreja evangelica", "igreja catolica", "templo",
+                 "posto de saude", "creche", "escola municipal",
+                 "escola estadual", "mercadinho", "lanchonete", "salao"}
+
+
+def cnefe_kind(species, folded):
+    padded = folded + " "
+    for needle, kind in CNEFE_KINDS:
+        if needle in padded:
+            return kind
+    return CNEFE_DEFAULT_KIND.get(species)
 
 
 def road_name(tags):
@@ -120,6 +168,8 @@ class Gazetteer(osmium.SimpleHandler):
         self.road_geometry_count = 0
         self.ibge_road_count = 0
         self.osm_road_lines = []
+        self.cnefe_pois = 0
+        self.poi_cells = set()
         self.streets_seen = set()
 
     def municipality(self, lat, lon):
@@ -164,6 +214,7 @@ class Gazetteer(osmium.SimpleHandler):
         if is_poi:
             category = next((tag_map[key] for key in POI_KEYS
                              if tag_map.get(key)), "bus_stop")
+            self.poi_cells.add((fold(name), round(lat, 3), round(lon, 3)))
             self.write({"type":"poi", "city_code":city, "name":name,
                         "id":f"osm:{kind}:{id_value}", "kind":category[:40],
                         "lat":round(lat,7), "lon":round(lon,7),
@@ -230,6 +281,98 @@ class Gazetteer(osmium.SimpleHandler):
                             "lon":round(center.x,7),
                             "source":"IBGE:faces:2022"})
                         self.ibge_streets+=1
+
+    def ingest_cnefe_zip(self, zip_path, budget=180_000):
+        """Named establishments from the 2022 census address register.
+
+        OpenStreetMap has few named places in Amazonas; the census visited
+        every address and recorded schools, health units, churches and other
+        establishments with coordinates. Any surprise in the file format skips
+        this optional source instead of failing the whole pack.
+        """
+        valid_codes = set(self.codes)
+        with zipfile.ZipFile(zip_path) as archive:
+            members = [m for m in archive.infolist()
+                       if m.filename.lower().endswith(".csv")]
+            if not members:
+                print("CNEFE: no CSV in archive, skipped")
+                return
+            for member in members:
+                with archive.open(member) as binary:
+                    head = binary.read(4096)
+                try:
+                    head.decode("utf-8")
+                    encoding = "utf-8"
+                except UnicodeDecodeError:
+                    encoding = "latin-1"
+                first = head.decode(encoding, "replace").splitlines()[0]
+                delimiter = ";" if first.count(";") >= first.count(",") else ","
+                with archive.open(member) as binary:
+                    reader = csv.reader(io.TextIOWrapper(
+                        binary, encoding=encoding, errors="replace", newline=""),
+                        delimiter=delimiter)
+                    header = [h.strip().upper() for h in next(reader)]
+                    def column(*names):
+                        return next((header.index(n) for n in names
+                                     if n in header), None)
+                    c_city = column("COD_MUNICIPIO")
+                    c_species = column("COD_ESPECIE")
+                    c_name = column("DSC_ESTABELECIMENTO")
+                    c_lat = column("LATITUDE")
+                    c_lon = column("LONGITUDE")
+                    c_level = column("NV_GEO_COORD")
+                    c_id = column("COD_UNICO_ENDERECO")
+                    if None in (c_city, c_species, c_name, c_lat, c_lon):
+                        print("CNEFE: unexpected header, skipped:", header[:40])
+                        return
+                    width = max(c_city, c_species, c_name, c_lat, c_lon)
+                    for number, row in enumerate(reader):
+                        if len(row) <= width:
+                            continue
+                        species = row[c_species].strip()
+                        if species not in ("4", "5", "6", "8"):
+                            continue
+                        # Coordinates estimated from the street face or the
+                        # census tract are not good enough for "to your right".
+                        if c_level is not None and len(row) > c_level and \
+                                row[c_level].strip() not in ("1", "2", ""):
+                            continue
+                        name = spoken_case(" ".join(row[c_name].split()))
+                        folded = fold(name)
+                        if not 5 <= len(name) <= 75 or folded in CNEFE_GENERIC \
+                                or len(folded.split()) < 2 \
+                                or re.search(r"https?://|@|[\x00-\x1f]", name):
+                            continue
+                        kind = cnefe_kind(species, folded)
+                        if kind is None:
+                            continue
+                        try:
+                            code = int(row[c_city])
+                            lat = float(row[c_lat].replace(",", "."))
+                            lon = float(row[c_lon].replace(",", "."))
+                        except ValueError:
+                            continue
+                        if code not in valid_codes or \
+                                not (-10.5 < lat < 3.0 and -74.0 < lon < -56.0):
+                            continue
+                        cell = (folded, round(lat, 3), round(lon, 3))
+                        if cell in self.poi_cells:
+                            continue
+                        self.poi_cells.add(cell)
+                        if self.cnefe_pois >= budget or self.count >= LIMIT - 10:
+                            print("CNEFE: budget reached")
+                            return
+                        identifier = row[c_id].strip() if c_id is not None \
+                            and len(row) > c_id else str(number)
+                        self.write({"type": "poi", "city_code": code,
+                                    "name": name,
+                                    "id": f"cnefe:{identifier}"[:90],
+                                    "kind": kind,
+                                    "lat": round(lat, 6), "lon": round(lon, 6),
+                                    "approximate": False,
+                                    "source": "IBGE:CNEFE:2022"})
+                        self.cnefe_pois += 1
+                        self.pois += 1
 
     def ibge_face_roads(self, face, code, name, osm_tree):
         """Emit the official line of a street OpenStreetMap has no name for.
@@ -323,6 +466,7 @@ def main():
     parser.add_argument("--osm", required=True, type=pathlib.Path)
     parser.add_argument("--municipalities", required=True, type=pathlib.Path)
     parser.add_argument("--ibge-zip", type=pathlib.Path)
+    parser.add_argument("--cnefe-zip", type=pathlib.Path)
     parser.add_argument("--output", required=True, type=pathlib.Path)
     args = parser.parse_args()
     polygons, codes, names = municipality_shapes(args.municipalities)
@@ -334,19 +478,26 @@ def main():
             "type":"header", "schema":1,"region":"AM", "version":today,
             "sources":["OpenStreetMap / Geofabrik (ODbL)",
                        "IBGE municipal geometries",
-                       "IBGE Faces de Logradouros 2022"],
+                       "IBGE Faces de Logradouros 2022",
+                       "IBGE CNEFE 2022"],
             "license":"ODbL-1.0 for OpenStreetMap derived database"
         },ensure_ascii=False,separators=(",",":")) + "\n")
         collector = Gazetteer(polygons,codes,writer)
         collector.apply_file(str(args.osm), locations=True, idx="flex_mem")
         if args.ibge_zip is not None:
             collector.ingest_ibge_zip(args.ibge_zip)
+        if args.cnefe_zip is not None and args.cnefe_zip.is_file():
+            try:
+                collector.ingest_cnefe_zip(args.cnefe_zip)
+            except (zipfile.BadZipFile, csv.Error, OSError, StopIteration) as error:
+                print("CNEFE source unusable, continuing without it:", error)
         writer.write(json.dumps({"type":"end","records":collector.count})+"\n")
     print(f"Amazonas pack: municipalities={len(codes)}, "
           f"POIs={collector.pois}, OSM streets={collector.streets}, "
           f"IBGE added streets={collector.ibge_streets}, "
           f"mapped road shapes={collector.road_geometry_count}, "
           f"IBGE road shapes={collector.ibge_road_count}, "
+          f"CNEFE places={collector.cnefe_pois}, "
           f"records={collector.count}, file={args.output.stat().st_size} bytes")
     if args.ibge_zip is not None and collector.ibge_streets < 5_000:
         raise RuntimeError(

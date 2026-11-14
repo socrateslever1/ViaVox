@@ -40,6 +40,11 @@ jobs:
           curl --fail --location --silent --show-error --retry 3 --max-time 300 \
             'https://geoftp.ibge.gov.br/recortes_para_fins_estatisticos/malha_de_setores_censitarios/censo_2022/base_de_faces_de_logradouros_versao_2022_censo_demografico/json/AM_faces_de_logradouros_2022_json.zip' \
             -o .geodata/AM_faces_2022.zip
+          # Optional: named establishments from the 2022 census address register.
+          curl --fail --location --silent --show-error --retry 2 --max-time 600 \
+            'https://ftp.ibge.gov.br/Cadastro_Nacional_de_Enderecos_para_Fins_Estatisticos/Censo_Demografico_2022/Arquivos_CNEFE/CSV/UF/13_AM.zip' \
+            -o .geodata/AM_cnefe_2022.zip || rm -f .geodata/AM_cnefe_2022.zip
+          ls -la .geodata
           test $(stat -c%s .geodata/AM_faces_2022.zip) -gt 100000
           test $(stat -c%s .geodata/norte.osm.pbf) -gt 10000000
           test $(stat -c%s .geodata/AM.geojson) -gt 10000
@@ -49,6 +54,7 @@ jobs:
             --osm .geodata/norte.osm.pbf \
             --municipalities .geodata/AM.geojson \
             --ibge-zip .geodata/AM_faces_2022.zip \
+            --cnefe-zip .geodata/AM_cnefe_2022.zip \
             --output .geodata/amazonas-geopack.jsonl.gz
           python - <<'PY'
           import gzip,json
@@ -75,7 +81,9 @@ jobs:
           path: .geodata/amazonas-geopack.jsonl.gz
           retention-days: 14
           if-no-files-found: error
+      # Installed apps download this asset, so only main may replace it.
       - name: Publish stable Android-updater asset
+        if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
