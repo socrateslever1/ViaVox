@@ -7,6 +7,8 @@ package com.example.viavox.service
  *
  * Administrative mapping supported by historical public institutional lists;
  * 2026 PMAM material describes Centro-Sul/Centro-Oeste under a combined CPA.
+ * Cross-checked against the bundled sector map: the neighbourhoods inside
+ * every CICOM lie in the municipal zone of the CPA assigned here.
  * This is a provisional jurisdiction reference, not real-time dispatch routing.
  */
 data class MappedPoliceJurisdiction(val cicom: String, val cpa: String)
