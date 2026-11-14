@@ -69,6 +69,16 @@ npm run build
 
 ---
 
+## 📦 Instalação e atualização do APK
+
+- Download direto do APK de testes mais recente: <https://github.com/socrateslever1/ViaVox/releases/download/viavox-debug-latest/ViaVox.apk>
+- O app verifica essa mesma publicação ao abrir. Quando há uma versão mais nova, mostra uma notificação e um aviso dentro do app; ao confirmar, baixa o APK, confere o SHA-256 publicado em `version.json` e abre o instalador do Android.
+
+## 🗺️ Base de ruas
+
+- Geometria e nomes: OpenStreetMap (Geofabrik) e Faces de Logradouros do IBGE 2022, empacotados por `scripts/build_amazonas_geopack.py`.
+- O nome de rua vindo do geocodificador online só é anunciado quando a base offline confirma uma rua com esse nome no local, ou quando não há cobertura offline ali.
+
 ## 🛠️ Tecnologias Utilizadas
 
 - **Linguagem**: Kotlin 2.1.0
