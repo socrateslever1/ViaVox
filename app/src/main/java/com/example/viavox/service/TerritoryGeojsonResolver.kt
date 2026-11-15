@@ -9,7 +9,7 @@ data class TerritoryMatch(
     val neighbourhood: String? = null,
     val cicom: String? = null,
     val cpa: String? = null,
-    /** Municipality of the matched area; null means Manaus (the bundled layer). */
+    /** Municipality of the matched area (from the offline polygons), when known. */
     val city: String? = null
 ) {
     fun isEmpty() = listOf(zone, neighbourhood, cicom, cpa).all { it.isNullOrBlank() }
@@ -102,13 +102,13 @@ class TerritoryGeojsonResolver private constructor(
             interiorNeighbourhoods: String = ""
         ): TerritoryGeojsonResolver =
             TerritoryGeojsonResolver(
-                readAreas(neighbourhoods) +
+                readAreas(neighbourhoods, defaultCity = "Manaus") +
                     if (interiorNeighbourhoods.isBlank()) emptyList()
                     else readAreas(interiorNeighbourhoods),
                 readAreas(policeAreas)
             )
 
-        private fun readAreas(raw: String): List<Area> {
+        private fun readAreas(raw: String, defaultCity: String? = null): List<Area> {
             val result = mutableListOf<Area>()
             val features = JSONObject(raw).optJSONArray("features") ?: return result
             for (i in 0 until features.length()) {
@@ -135,7 +135,8 @@ class TerritoryGeojsonResolver private constructor(
                 result += Area(
                     name = name,
                     zone = props.optString("zona").trim().takeIf { it.isNotBlank() },
-                    city = props.optString("city").trim().takeIf { it.isNotBlank() },
+                    city = props.optString("city").trim().takeIf { it.isNotBlank() }
+                        ?: defaultCity,
                     rings = rings,
                     minLon = all.minOf { it.lon }, maxLon = all.maxOf { it.lon },
                     minLat = all.minOf { it.lat }, maxLat = all.maxOf { it.lat }

@@ -69,7 +69,7 @@ class RoadDetectionEngine(
     private var pendingCandidateStartLon = 0.0
 
     /** Territorial labels are tracked independently of road changes. */
-    private class EntryState {
+    private class EntryState(private val silentFirst: Boolean = false) {
         private var current: String? = null
         private var pending: String? = null
         private var pendingCount = 0
@@ -91,10 +91,12 @@ class RoadDetectionEngine(
                 else { pending = candidate; pendingCount = 1 }
                 if (pendingCount < 2) return null
             }
+            val first = current == null
             current = candidate
             pending = null
             pendingCount = 0
-            return candidate
+            // The municipality the trip starts in is not news; only a change is.
+            return if (silentFirst && first) null else candidate
         }
     }
 
@@ -102,6 +104,7 @@ class RoadDetectionEngine(
     private val spokenNeighbourhood = EntryState()
     private val spokenCicom = EntryState()
     private val spokenCpa = EntryState()
+    private val spokenCity = EntryState(silentFirst = true)
 
     private fun polygonTransition(match: TerritoryMatch, accuracy: Float): GeographicTransition =
         GeographicTransition(
@@ -110,7 +113,8 @@ class RoadDetectionEngine(
             cicom = if (enablePoliceCircumscription)
                 spokenCicom.changedTo(match.cicom, accuracy) else null,
             cpa = if (enablePoliceCircumscription)
-                spokenCpa.changedTo(match.cpa, accuracy) else null
+                spokenCpa.changedTo(match.cpa, accuracy) else null,
+            city = spokenCity.changedTo(match.city, accuracy)
         )
 
     private fun areaTransition(place: Place, fix: GeoFix): GeographicTransition {
@@ -126,7 +130,8 @@ class RoadDetectionEngine(
                 neighbourhood = polygon?.neighbourhood ?:
                     place.neighbourhood.takeIf { place.hasValidNeighbourhood() },
                 cicom = polygon?.cicom ?: jurisdiction?.cicom,
-                cpa = polygon?.cpa ?: jurisdiction?.cpa
+                cpa = polygon?.cpa ?: jurisdiction?.cpa,
+                city = polygon?.city
             ),
             fix.accuracyMeters
         )
@@ -173,6 +178,7 @@ class RoadDetectionEngine(
         spokenNeighbourhood.clear()
         spokenCicom.clear()
         spokenCpa.clear()
+        spokenCity.clear()
     }
 
     fun onLocationUpdate(location: Location) {

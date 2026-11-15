@@ -111,11 +111,11 @@ class PlaceRankingAndInteriorTest {
         assertEquals("Itacoatiara", layers.resolve(-3.1386, -58.4449, 4f)?.city)
     }
 
-    @Test fun manausKeepsItsOwnLayerAndNoExplicitCity() {
+    @Test fun manausKeepsItsOwnLayerAndZones() {
         val centre = layers.resolve(-3.1340, -60.0220, 5f)
         assertEquals("CENTRO", centre?.neighbourhood)
         assertEquals("Zona Sul", centre?.zone)
-        assertNull("null means Manaus", centre?.city)
+        assertEquals("Manaus", centre?.city)
     }
 
     @Test fun engineDoesNotLabelAnInteriorTownAsManaus() = runTest(UnconfinedTestDispatcher()) {
@@ -133,5 +133,51 @@ class PlaceRankingAndInteriorTest {
         engineFor(TerritoryMatch(neighbourhood = "CENTRO", zone = "Zona Sul"))
             .onGeoFixUpdate(GeoFix(-3.134, -60.022, accuracyMeters = 5f, timestampMs = 1_000L))
         assertEquals(listOf("Parintins", "Manaus"), seen.map { it.city })
+    }
+
+    // ---- wording
+
+    @Test fun masculineStreetTypesGetNoAndTheRestNa() {
+        assertEquals("no", com.example.viavox.model.RoadSpeech.article("Beco São Aires Ataíde"))
+        assertEquals("no", com.example.viavox.model.RoadSpeech.article("Largo de São Sebastião"))
+        assertEquals("no", com.example.viavox.model.RoadSpeech.article("Parque Dez"))
+        assertEquals("na", com.example.viavox.model.RoadSpeech.article("Avenida Djalma Batista"))
+        assertEquals("na", com.example.viavox.model.RoadSpeech.article("Rodovia AM-010"))
+        assertEquals("na", com.example.viavox.model.RoadSpeech.article("BR-174"))
+        assertEquals("na", com.example.viavox.model.RoadSpeech.article("Travessa Cláudio Mesquita"))
+    }
+
+    @Test fun maneuverTextUsesTheRightArticle() {
+        val text = com.example.viavox.data.NavigationNetworkService
+        assertEquals("Vire à direita no Beco São Aires",
+            text.maneuverText("turn", "right", "Beco São Aires"))
+        assertEquals("Vire à esquerda na Rua A", text.maneuverText("turn", "left", "Rua A"))
+        assertEquals("Siga em frente", text.maneuverText("depart", "", ""))
+    }
+
+    @Test fun enteringAnotherMunicipalityIsAnnouncedButTheStartIsNot() = runTest(UnconfinedTestDispatcher()) {
+        val spoken = mutableListOf<com.example.viavox.service.GeographicTransition>()
+        var here = TerritoryMatch(neighbourhood = "CENTRO", zone = "Zona Sul", city = "Manaus")
+        val engine = RoadDetectionEngine(
+            coroutineScope = backgroundScope,
+            onPlaceUpdated = {},
+            onRoadAnnounceNeeded = { _, _ -> },
+            onStatusMessage = {},
+            reverseGeocodeProvider = { _, _ -> Result.failure(java.io.IOException("offline")) },
+            onGeographicTransition = { spoken += it }
+        )
+        engine.territoryPolygonLookup = { here }
+        engine.onGeoFixUpdate(GeoFix(-3.134, -60.022, accuracyMeters = 5f, timestampMs = 1_000L))
+        assertTrue("starting in Manaus says nothing about the city",
+            spoken.none { it.city != null })
+        here = TerritoryMatch(neighbourhood = "Centro", city = "Iranduba")
+        engine.onGeoFixUpdate(GeoFix(-3.2800, -60.1900, accuracyMeters = 5f, timestampMs = 60_000L))
+        val crossing = spoken.last()
+        assertEquals("Iranduba", crossing.city)
+        assertEquals("Entrando em Iranduba. Bairro Centro.", crossing.sentence())
+        // Still in Iranduba: no repeat.
+        val count = spoken.size
+        engine.onGeoFixUpdate(GeoFix(-3.2801, -60.1901, accuracyMeters = 5f, timestampMs = 90_000L))
+        assertEquals(count, spoken.size)
     }
 }

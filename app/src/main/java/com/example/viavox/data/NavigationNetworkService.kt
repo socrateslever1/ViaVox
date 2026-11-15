@@ -401,7 +401,8 @@ class NavigationNetworkService(
         }
 
         fun maneuverText(type: String, modifier: String, road: String, exit: Int = 0): String {
-            val to = road.takeIf { it.isNotBlank() }?.let { " na $it" }.orEmpty()
+            val to = road.takeIf { it.isNotBlank() }
+                ?.let { " ${com.example.viavox.model.RoadSpeech.article(it)} $it" }.orEmpty()
             return when (type) {
                 "depart" -> "Siga em frente${to}"
                 "arrive" -> "Você chegou ao destino"

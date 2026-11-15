@@ -12,13 +12,16 @@ data class GeographicTransition(
     val neighbourhood: String? = null,
     val road: String? = null,
     val cicom: String? = null,
-    val cpa: String? = null
+    val cpa: String? = null,
+    /** Set only when the vehicle crosses into another municipality. */
+    val city: String? = null
 ) {
-    fun isEmpty(): Boolean = listOf(zone, neighbourhood, road, cicom, cpa)
+    fun isEmpty(): Boolean = listOf(zone, neighbourhood, road, cicom, cpa, city)
         .all { it.isNullOrBlank() }
 
     fun sentence(mode: AssistanceMode = AssistanceMode.EXPLORER): String {
         val parts = mutableListOf<String>()
+        city?.takeIf { it.isNotBlank() }?.let { parts.add("Entrando em $it") }
         zone?.takeIf { it.isNotBlank() }?.let { parts.add("Entrando na $it") }
         if (mode == AssistanceMode.TERRITORIAL) {
             cicom?.takeIf { it.isNotBlank() }?.let { parts.add("Área da $it") }
@@ -30,7 +33,7 @@ data class GeographicTransition(
     }
 
     fun dedupeKey(): String = listOf(zone.orEmpty(), cicom.orEmpty(), cpa.orEmpty(),
-        neighbourhood.orEmpty(), road.orEmpty()).joinToString("|").lowercase()
+        neighbourhood.orEmpty(), road.orEmpty(), city.orEmpty()).joinToString("|").lowercase()
 }
 
 /** Audio-only normalization; never mutate GIS strings or saved destination names. */

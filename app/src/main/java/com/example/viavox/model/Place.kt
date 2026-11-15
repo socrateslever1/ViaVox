@@ -35,7 +35,8 @@ data class Place(
             else "Você está no $venueName$bairroPart."
         }
 
-        val prefix = if (isTransition) "Agora você está na $road" else "Você está na $road"
+        val article = RoadSpeech.article(road)
+        val prefix = if (isTransition) "Agora você está $article $road" else "Você está $article $road"
         val bairroPart = if (includeNeighbourhood && hasValidNeighbourhood()) {
             ", bairro $neighbourhood"
         } else {
