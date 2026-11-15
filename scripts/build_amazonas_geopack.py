@@ -51,10 +51,74 @@ KEEP_UPPER = re.compile(r"^(BR|AM|UBS|UPA|CMEI|CEI|CICOM|DIP|UFAM|UEA|IFAM|SESC|
 HIGHWAY_REF = re.compile(r"^(BR|AM)[- ]?(\d{3})$")
 
 
+# IBGE census files carry no diacritics ("SAO JOAO", "CONSTELACAO"), which a
+# speech synthesiser mispronounces. Only unambiguous words are restored.
+ACCENTS = {w.translate(str.maketrans("áàâãéêíóôõúç", "aaaaeeiooouc")): w for w in """
+são josé joão antônio ministério evangélica evangélico sétimo católica saúde
+clínica consultório aliança missionária missionário família apostólico
+apostólica odontológico odontológica cristã missão três igarapé vitória
+esperança sebastião praça araújo graça graças farmácia espírito mário barão
+nazaré gonçalves espírita jeová leão getúlio álvaro glória básica corrêa
+solimões tabernáculo depósito união filadélfia salão área paraíso remédio
+fátima júlia colégio júlio irmã lírio escritório guimarães bíblica visão fábio
+mendonça canaã lázaro águas bênção tapajós santuário capitão comércio água
+judá laboratório tefé cláudio paróquia lourenço espaço médico missões criança
+sérgio maués última comunitário comunitária paraná rosário magalhães andré
+cartório plínio cândido virgílio carismática tomé tucumã águia amazônia
+justiça preço moisés cristóvão juruá sião ágape inácio itaúba simões tarumã
+manicoré cemitério perpétuo sabiá curió polícia fórum estádio ginásio pública
+público técnica técnico mãe pão açaí república município número américa
+áfrica belém macapá ceará piauí goiás amapá maranhão rondônia brasília
+paraíba méxico japão lábrea humaitá codajás urucará maraã japurá eirunepé
+jutaí benjamín conceição gêmeos índio índios índia fé céu luís luíz césar
+hélio márcio lúcia lúcio cecília célia cícero dário emília estêvão eugênio
+flávio flávia hércules íris lídia lívia marília natália otávio patrícia
+plácido rômulo sílvio sílvia tânia tárcio valéria vinícius zélia caetés
+tupinambás irmãos alemão capitães pães mães órgão órgãos açúcar café
+jacarandá maracujá cajá guaraná jatobá ipê buritizal pajé tucunaré tambaqui
+jaraqui pirarucú uirapurú bacurí cupuaçu açaizal piauiense paraense
+português portuguesa inglês francês japonês chinês holandês líder vovó vovô
+básico eletrônica eletrônico mecânica mecânico ótica óptica estética
+fisioterápico pediátrica pediátrico oftalmológica cardiológico diagnóstico
+diagnósticos ortopédica psicológica veterinária veterinário agrícola
+agropecuária indígena indígenas rodoviária rodoviário ferroviária aeroviário
+portuário universitário universitária secundária primária judiciário
+previdência assistência ciência ciências independência providência
+residência excelência eficiência referência emergência agência conferência
+""".split()}
+ACCENTS.update({"sao": "são", "nacoes": "nações", "missoes": "missões",
+                "divisao": "divisão", "expansao": "expansão",
+                "sessao": "sessão", "mansao": "mansão", "comissao": "comissão",
+                "ascensao": "ascensão", "paixao": "paixão"})
+
+
+def restore_accent(word):
+    lower = word.lower()
+    fixed = ACCENTS.get(lower)
+    if fixed is None and lower.isascii() and lower.isalpha() and len(lower) > 4:
+        if lower.endswith("coes"):
+            fixed = lower[:-4] + "ções"
+        elif lower.endswith("cao"):
+            fixed = lower[:-3] + "ção"
+    if fixed is None:
+        return word
+    return fixed.upper() if word.isupper() else (
+        fixed.capitalize() if word[:1].isupper() else fixed)
+
+
+def restore_accents(name):
+    """Restore diacritics in a name published as plain ASCII."""
+    if not name.isascii():
+        return name
+    return " ".join("-".join(restore_accent(part) for part in word.split("-"))
+                    for word in name.split())
+
+
 def spoken_case(name):
     """IBGE publishes names in capitals; restore readable Portuguese casing."""
     if not name.isupper():
         return name
+    name = restore_accents(name)
     words = []
     for index, word in enumerate(name.split()):
         if KEEP_UPPER.match(word):
@@ -70,6 +134,10 @@ def spoken_case(name):
 # 8 religious establishment. Type 6 is free text, so only recognisable
 # public-interest places are kept from it.
 CNEFE_KINDS = (
+    ("igreja", "place_of_worship"), ("assembleia de deus", "place_of_worship"),
+    ("paroquia", "place_of_worship"), ("catedral", "place_of_worship"),
+    ("templo", "place_of_worship"), ("capela", "place_of_worship"),
+    ("mesquita", "place_of_worship"), ("ministerio", "place_of_worship"),
     ("hospital", "hospital"), ("pronto socorro", "hospital"), ("upa ", "clinic"),
     ("ubs ", "clinic"), ("unidade basica", "clinic"), ("policlinica", "clinic"),
     ("posto de saude", "clinic"), ("maternidade", "hospital"),
@@ -93,23 +161,47 @@ CNEFE_KINDS = (
     ("parque ", "park"), ("estadio", "stadium"), ("ginasio", "sports_centre"),
     ("centro de convivencia", "community_centre"),
     ("centro comunitario", "community_centre"), ("cemiterio", "attraction"),
-    ("igreja", "place_of_worship"), ("paroquia", "place_of_worship"),
-    ("catedral", "place_of_worship"), ("templo", "place_of_worship"),
-    ("mesquita", "place_of_worship"), ("capela", "place_of_worship"),
 )
-CNEFE_DEFAULT_KIND = {"4": "school", "5": "clinic", "8": "place_of_worship"}
 CNEFE_GENERIC = {"igreja", "escola", "comercio", "loja", "bar", "mercearia",
                  "oficina", "igreja evangelica", "igreja catolica", "templo",
                  "posto de saude", "creche", "escola municipal",
-                 "escola estadual", "mercadinho", "lanchonete", "salao"}
+                 "escola estadual", "mercadinho", "lanchonete", "salao",
+                 "loja de roupa", "consultorio odontologico",
+                 "consultorio dentario", "consultorio medico",
+                 "clinica odontologica", "reforco escolar", "creche escola",
+                 "creche e escola", "posto de gasolina", "casa de oracao",
+                 "igreja pentecostal", "igreja petencostal", "igreja crista",
+                 "ponto de pregacao", "escola biblica", "escolinha de reforco"}
+# Enumerator notes, not names of places.
+CNEFE_NOISE = re.compile(
+    r"sem nome|s nome|s/n\b|sem denominacao|sem identificacao|nao identific"
+    r"|nao informad|ao lado|em frente|proxim|fundos|\banexo\b|\bvago\b"
+    r"|desativad|fechad|abandonad|em construcao|em obras|em reforma"
+    r"|\bdeposito\b|estacionamento|\bescritorio\b|\bgaragem\b|reforco"
+    r"|venda de|loja de|\bcasa\b \d|\bresidencia\b")
+CNEFE_HEALTH = re.compile(
+    r"hospital|clinica|consultorio|\bubs\b|\bupa\b|saude|odont|laborat"
+    r"|policlinica|maternidade|pronto|medic|fisio|\bsamu\b|\bcaps\b|dentar"
+    r"|oftalm|cardio|pediatr|diagnost|vacina|\bspa\b|farmac|drogaria")
+CNEFE_EDUCATION = re.compile(
+    r"escola|colegio|creche|\bcmei\b|educa|universidade|faculdade|instituto"
+    r"|ensino|\bcetam\b|\bsenai\b|\bsesi\b|\bsenac\b|\bifam\b|\buea\b"
+    r"|\bufam\b|\bcei\b")
 
 
 def cnefe_kind(species, folded):
+    """OSM-style kind for a census establishment, or None to leave it out."""
     padded = folded + " "
     for needle, kind in CNEFE_KINDS:
         if needle in padded:
             return kind
-    return CNEFE_DEFAULT_KIND.get(species)
+    if species == "8":
+        return "place_of_worship"
+    if species == "5" and CNEFE_HEALTH.search(folded):
+        return "clinic"
+    if species == "4" and CNEFE_EDUCATION.search(folded):
+        return "school"
+    return None
 
 
 def road_name(tags):
@@ -256,7 +348,9 @@ class Gazetteer(osmium.SimpleHandler):
                             raise ValueError("Sector municipality mismatches IBGE ZIP filename")
                         parts=[str(props.get(key) or "").strip()
                                for key in ("NM_TIP_LOG","NM_TIT_LOG","NM_LOG")]
-                        name=spoken_case(" ".join(x for x in parts if x))
+                        # "RUA CAJUBIA OU 28": keep the first of two names.
+                        raw_name=re.split(r"\s+OU\s+"," ".join(x for x in parts if x))[0]
+                        name=spoken_case(" ".join(raw_name.split()))
                         if not 2<=len(name)<=140 or fold(name) in {
                             "sem nome","nao identificado","logradouro sem nome"
                         } or fold(name).endswith(" sem denominacao"):
@@ -337,10 +431,19 @@ class Gazetteer(osmium.SimpleHandler):
                         if c_level is not None and len(row) > c_level and \
                                 row[c_level].strip() not in ("1", "2", ""):
                             continue
-                        name = spoken_case(" ".join(row[c_name].split()))
+                        raw = " ".join(row[c_name].split())
+                        if len(raw) >= 40 and " " in raw:
+                            # The register cuts names at 40 characters; drop
+                            # the half word and any dangling connective.
+                            pieces = raw.split()[:-1]
+                            while pieces and pieces[-1].lower() in LOWERCASE_WORDS:
+                                pieces.pop()
+                            raw = " ".join(pieces)
+                        name = spoken_case(raw.upper())
                         folded = fold(name)
                         if not 5 <= len(name) <= 75 or folded in CNEFE_GENERIC \
                                 or len(folded.split()) < 2 \
+                                or CNEFE_NOISE.search(folded) \
                                 or re.search(r"https?://|@|[\x00-\x1f]", name):
                             continue
                         kind = cnefe_kind(species, folded)
