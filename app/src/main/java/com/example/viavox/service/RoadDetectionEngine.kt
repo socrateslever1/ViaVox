@@ -106,16 +106,24 @@ class RoadDetectionEngine(
     private val spokenCpa = EntryState()
     private val spokenCity = EntryState(silentFirst = true)
 
-    private fun polygonTransition(match: TerritoryMatch, accuracy: Float): GeographicTransition =
-        GeographicTransition(
+    private fun polygonTransition(match: TerritoryMatch, accuracy: Float): GeographicTransition {
+        val city = spokenCity.changedTo(match.city, accuracy)
+        if (city != null) {
+            // A new municipality: its bairro may share a name with the one just
+            // left ("Centro" to "Centro") and must still be announced.
+            spokenZone.clear()
+            spokenNeighbourhood.clear()
+        }
+        return GeographicTransition(
             zone = spokenZone.changedTo(match.zone, accuracy),
             neighbourhood = spokenNeighbourhood.changedTo(match.neighbourhood, accuracy),
             cicom = if (enablePoliceCircumscription)
                 spokenCicom.changedTo(match.cicom, accuracy) else null,
             cpa = if (enablePoliceCircumscription)
                 spokenCpa.changedTo(match.cpa, accuracy) else null,
-            city = spokenCity.changedTo(match.city, accuracy)
+            city = city
         )
+    }
 
     private fun areaTransition(place: Place, fix: GeoFix): GeographicTransition {
         val polygon = territoryPolygonLookup(fix)

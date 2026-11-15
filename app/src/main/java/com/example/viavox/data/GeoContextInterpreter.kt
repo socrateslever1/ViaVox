@@ -92,27 +92,38 @@ object GeoContextInterpreter {
         )
 
     /**
-     * Takes the best [limit] places while capping how many of one kind may
-     * appear (one church, two shops), then fills any remaining room with the
-     * best of what was skipped, so a quiet area still gets a full answer.
+     * Picks [limit] places so a crowded area still shows its variety: first
+     * the best place of each category (the hospital, the school, the square,
+     * one shop, one church), then more by ranking while a category stays
+     * under its cap, and finally whatever is best of the rest. A quiet area
+     * with only churches therefore still gets a full answer.
      */
     fun diversify(ranked: List<LandmarkCandidate>, limit: Int): List<LandmarkCandidate> {
-        val taken = ArrayList<LandmarkCandidate>()
-        val skipped = ArrayList<LandmarkCandidate>()
+        val chosen = LinkedHashSet<LandmarkCandidate>()
         val counts = HashMap<PlaceCategory, Int>()
         for (candidate in ranked) {
-            if (taken.size >= limit) break
+            if (chosen.size >= limit) break
+            val category = categoryOf(candidate)
+            if (category !in counts) {
+                counts[category] = 1
+                chosen += candidate
+            }
+        }
+        for (candidate in ranked) {
+            if (chosen.size >= limit) break
+            if (candidate in chosen) continue
             val category = categoryOf(candidate)
             val used = counts[category] ?: 0
             if (used < category.maxPerResult) {
                 counts[category] = used + 1
-                taken += candidate
-            } else skipped += candidate
+                chosen += candidate
+            }
         }
-        val room = limit - taken.size
-        if (room > 0) taken += skipped.take(room)
+        for (candidate in ranked) {
+            if (chosen.size >= limit) break
+            chosen += candidate
+        }
         // Keep the incoming ranking order (it already accounts for direction).
-        val chosen = taken.toHashSet()
         return ranked.filter { it in chosen }
     }
 

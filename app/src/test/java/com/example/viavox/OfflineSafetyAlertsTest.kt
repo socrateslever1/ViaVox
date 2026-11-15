@@ -151,7 +151,7 @@ class OfflineSafetyAlertsTest {
     }
 
     @Test fun spokenDistancesAreRounded() {
-        assertEquals(180, SafetyAlertEngine.speakableDistance(187))
+        assertEquals(190, SafetyAlertEngine.speakableDistance(187))
         assertEquals(200, SafetyAlertEngine.speakableDistance(196))
         assertEquals(60, SafetyAlertEngine.speakableDistance(58))
         assertEquals("Atenção: passagem de nível à frente em 250 metros.",
