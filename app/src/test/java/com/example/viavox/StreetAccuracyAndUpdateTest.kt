@@ -81,7 +81,7 @@ class StreetAccuracyAndUpdateTest {
             engine.localRoadNamesNear={
                 setOf(RoadDetectionEngine.normalizeForComparison("Rua Certa")) }
             engine.onGeoFixUpdate(GeoFix(-3.13,-60.02,
-                accuracyMeters=30f,timestampMs=1_000L))
+                accuracyMeters=8f,timestampMs=1_000L))
             assertNull(engine.getCurrentConfirmedRoad())
             assertTrue(spoken.isEmpty())
         }

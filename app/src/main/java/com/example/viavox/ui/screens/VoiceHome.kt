@@ -121,6 +121,10 @@ fun VoiceHome(
                         maxLines = 1
                     )
                 }
+                if (state.isActive) {
+                    Spacer(Modifier.height(7.dp))
+                    com.example.viavox.ui.components.BackgroundReadinessCard()
+                }
             }
         }
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {

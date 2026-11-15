@@ -8,6 +8,10 @@ object BackgroundSessionPolicy {
     fun keepAlive(navigation: Boolean, recording: Boolean, backgroundVoice: Boolean): Boolean =
         navigation || recording || backgroundVoice
 
+    /** A session the user started with "Ativar localização" returns after a kill. */
+    fun mayRestoreExplicitSession(sessionActive: Boolean, manuallyPaused: Boolean): Boolean =
+        sessionActive && !manuallyPaused
+
     fun mayRestore(
         hasSavedNavigation: Boolean,
         hasUnfinishedRecording: Boolean,

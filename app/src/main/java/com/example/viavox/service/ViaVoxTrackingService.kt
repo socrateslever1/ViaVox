@@ -342,14 +342,18 @@ class ViaVoxTrackingService : Service() {
             // after a restart for an ordinary map-only foreground session.
             val prefs = getSharedPreferences("viavox_prefs",Context.MODE_PRIVATE)
             val tripPrefs = getSharedPreferences("viavox_trip_session",Context.MODE_PRIVATE)
+            val manuallyPaused = prefs.getBoolean("tracking_manually_paused",false)
             val mayRestore = BackgroundSessionPolicy.mayRestore(
                 hasSavedNavigation = java.io.File(
                     filesDir,"viavox_active_navigation.json"
                 ).exists(),
                 hasUnfinishedRecording = tripPrefs.getLong("active_trip_id",0L) > 0L,
                 backgroundVoice = currentConfig.backgroundVoiceEnabled,
-                manuallyPaused = prefs.getBoolean("tracking_manually_paused",false)
-            )
+                manuallyPaused = manuallyPaused
+            ) || (currentConfig.backgroundVoiceEnabled &&
+                BackgroundSessionPolicy.mayRestoreExplicitSession(
+                    sessionActive = prefs.getBoolean("tracking_session_active",false),
+                    manuallyPaused = manuallyPaused))
             if (!mayRestore) {
                 stopSelf()
                 return START_NOT_STICKY
@@ -447,6 +451,8 @@ class ViaVoxTrackingService : Service() {
                 action == ACTION_NAV_START,
             recording = TripRecordingRepository.state.value.recording ||
                 action == ACTION_RECORD_START,
+            // An explicit "Ativar localização" session counts: it must survive
+            // the system reclaiming the process while the screen is off.
             backgroundVoice = currentConfig.backgroundVoiceEnabled
         )
         return if (isTrackingRunning && persistent) START_STICKY else START_NOT_STICKY
@@ -492,8 +498,14 @@ class ViaVoxTrackingService : Service() {
             return
         }
 
-        // Fused Location delivers callbacks without holding a persistent CPU wake lock.
         isTrackingRunning = true
+        // The user started this session explicitly: remember it so Android can
+        // bring it back after killing the process, until "Encerrar" is pressed.
+        getSharedPreferences("viavox_prefs", Context.MODE_PRIVATE).edit()
+            .putBoolean("tracking_session_active", true).apply()
+        // With the screen off the CPU may sleep between fixes and delay street
+        // announcements; a partial wake lock (never the screen) prevents it.
+        ensureWakeLock()
         TrackingRepository.updateActive(true)
         ViaVoxWidgetProvider.refresh(this, TrackingRepository.state.value)
         TrackingRepository.updateStatus(getString(R.string.status_waiting_gps))
@@ -512,6 +524,9 @@ class ViaVoxTrackingService : Service() {
     private fun stopForegroundTracking() {
         Log.d(TAG, "Stopping foreground tracking")
         isTrackingRunning = false
+        getSharedPreferences("viavox_prefs", Context.MODE_PRIVATE).edit()
+            .putBoolean("tracking_session_active", false).apply()
+        releaseWakeLock()
         locationTracker.stopTracking()
         deviceHeading.stop()
         scanGeneration++
@@ -580,10 +595,26 @@ class ViaVoxTrackingService : Service() {
     /** Previous fix, for deriving speed when the provider reports none. */
     private var previousSpeedFix: GpsSpeed.Fix? = null
 
+    private var trackingWakeLock: android.os.PowerManager.WakeLock? = null
+
+    private fun ensureWakeLock() {
+        val lock = trackingWakeLock ?: (getSystemService(Context.POWER_SERVICE)
+            as? android.os.PowerManager)
+            ?.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "ViaVox:tracking")
+            ?.also { it.setReferenceCounted(false); trackingWakeLock = it } ?: return
+        // Bounded, and renewed on every fix, so it can never outlive the trip.
+        if (!lock.isHeld) runCatching { lock.acquire(WAKE_LOCK_MS) }
+    }
+
+    private fun releaseWakeLock() {
+        runCatching { trackingWakeLock?.takeIf { it.isHeld }?.release() }
+    }
+
     private fun onLocationUpdateReceived(location: Location) {
         val lat = location.latitude
         val lon = location.longitude
         val accuracy = if (location.hasAccuracy()) location.accuracy.toInt() else null
+        if (isTrackingRunning) ensureWakeLock()
         val currentFix = GpsSpeed.Fix(
             lat, lon,
             if (location.time > 0L) location.time else System.currentTimeMillis(),
@@ -1302,6 +1333,7 @@ class ViaVoxTrackingService : Service() {
         super.onDestroy()
         Log.d(TAG, "Destroying ViaVoxTrackingService")
         isTrackingRunning = false
+        releaseWakeLock()
         locationTracker.stopTracking()
         speechQueue.cancelAll()
         ttsManager.shutdown()
@@ -1322,6 +1354,7 @@ class ViaVoxTrackingService : Service() {
 
     companion object {
         private const val TAG = "ViaVoxTrackingService"
+        private const val WAKE_LOCK_MS = 6L * 60 * 60 * 1000
         const val NOTIFICATION_ID = 1001
         const val CHANNEL_ID = "viavox_tracking_channel"
         const val GEO_REMINDER_CHANNEL_ID = "viavox_geographic_reminders"

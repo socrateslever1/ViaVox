@@ -274,7 +274,8 @@ fun ViaVoxMainScreen(
             val activeSpeedLimit = customSpeedLimit ?: autoSpeedLimit.kmh
 
             AnimatedVisibility(
-                visible = navigationUi.navigating,
+                // Not only during a route: whenever tracking is on and there is a fix.
+                visible = navigationUi.navigating || (state.isActive && state.hasLocationFix),
                 modifier = Modifier
                     .align(Alignment.BottomStart)
                     .padding(start = 14.dp, bottom = 96.dp),

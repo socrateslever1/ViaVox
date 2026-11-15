@@ -353,7 +353,10 @@ class RoadDetectionEngine(
                     val mapped = try { localRoadNamesNear(fix) }
                         catch (cancelled: CancellationException) { throw cancelled }
                         catch (_: Exception) { null }
-                    if (mapped != null &&
+                    // Only an accurate fix with real local candidates can contradict
+                    // the geocoder; otherwise staying silent is worse than a guess.
+                    if (mapped != null && mapped.isNotEmpty() &&
+                        fix.accuracyMeters <= ROAD_VETO_MAX_ACCURACY_METERS &&
                         normalizeForComparison(normalizedRoad) !in mapped) {
                         // The offline map knows this spot and has no such
                         // street here: stay silent rather than say a wrong name.
@@ -584,6 +587,8 @@ class RoadDetectionEngine(
 
     companion object {
         const val MAX_ACCEPTABLE_ACCURACY_METERS = 45f
+        /** The offline map may veto a geocoder street only for fixes this good. */
+        const val ROAD_VETO_MAX_ACCURACY_METERS = 15f
 
         fun calculateMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
             val dLat = (lat2 - lat1) * 111000.0

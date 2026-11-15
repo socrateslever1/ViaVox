@@ -415,6 +415,7 @@ fun SettingsDialog(
                         color = muted, fontSize = 12.sp, lineHeight = 17.sp,
                         modifier = Modifier.padding(vertical = 7.dp)
                     )
+                    BackgroundReadinessCard(Modifier.padding(bottom = 8.dp))
                     CategoryToggle(
                         "Tentar restaurar sessão interrompida pelo Android",
                         config.backgroundVoiceEnabled

@@ -30,6 +30,8 @@ class LocationTrackingManager(
     private var highAccuracy = true
     private var platformFallback = false
     private var stationarySinceMs: Long? = null
+    private var previousFix: com.example.viavox.model.GpsSpeed.Fix? = null
+    private var lowPowerAnchor: com.example.viavox.model.GpsSpeed.Fix? = null
 
     private val callback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
@@ -48,6 +50,8 @@ class LocationTrackingManager(
         highAccuracy = true
         platformFallback = false
         stationarySinceMs = null
+        previousFix = null
+        lowPowerAnchor = null
         qualityGate.reset()
         configureFusedLocation(true)
 
@@ -122,27 +126,57 @@ class LocationTrackingManager(
     private fun onNewLocation(location: Location) {
         if (!started) return
         val now = System.currentTimeMillis()
+        val accuracy = if (location.hasAccuracy()) location.accuracy else 100f
+        val fix = com.example.viavox.model.GpsSpeed.Fix(
+            location.latitude, location.longitude,
+            if (location.time > 0L) location.time else now, accuracy
+        )
+        // A fix without a reported speed is NOT a stopped vehicle: derive the
+        // speed from the previous fix, otherwise the manager sat in low power
+        // forever while driving on a provider that reports none.
+        val speedMps = com.example.viavox.model.GpsSpeed.kmh(
+            hasSpeed = location.hasSpeed(),
+            speedMps = if (location.hasSpeed()) location.speed else 0f,
+            speedAccuracyMps = if (location.hasSpeedAccuracy())
+                location.speedAccuracyMetersPerSecond else null,
+            current = fix, previous = previousFix
+        ) / 3.6f
+        previousFix = fix
         val candidate = LocationSample(
             latitude = location.latitude,
             longitude = location.longitude,
-            accuracyMeters = if (location.hasAccuracy()) location.accuracy else 100f,
-            speedMps = if (location.hasSpeed()) location.speed else 0f,
+            accuracyMeters = accuracy,
+            speedMps = speedMps,
             timestampMs = location.time
         )
         // Power mode follows accepted low-error samples, not GPS jitter.
         // Even when a stationary fix is deliberately suppressed by the quality gate,
         // its passage of time should still permit a low-power transition.
         val valid = qualityGate.accept(candidate, now)
-        val moving = valid && location.hasSpeed() && location.speed >= 1.5f
+        val moving = valid && LocationPowerPolicy.isMoving(speedMps)
         if (moving) {
             stationarySinceMs = null
-            if (!highAccuracy && !platformFallback) configureFusedLocation(true)
+            if (!highAccuracy && !platformFallback) {
+                lowPowerAnchor = null
+                configureFusedLocation(true)
+            }
         } else if (!platformFallback && highAccuracy &&
             candidate.accuracyMeters <= 65f && now - candidate.timestampMs <= 15_000L &&
-            (location.hasSpeed().not() || location.speed < 1.5f)
+            !LocationPowerPolicy.isMoving(speedMps)
         ) {
             val since = stationarySinceMs ?: now.also { stationarySinceMs = it }
-            if (now - since >= 25_000L) configureFusedLocation(false)
+            if (now - since >= 25_000L) {
+                lowPowerAnchor = fix
+                configureFusedLocation(false)
+            }
+        } else if (!platformFallback && !highAccuracy && accuracy <= 65f &&
+            LocationPowerPolicy.leftLowPowerPlace(lowPowerAnchor, fix)
+        ) {
+            // Low power may deliver no speed at all: leaving the place is the
+            // reliable sign that the trip started.
+            stationarySinceMs = null
+            lowPowerAnchor = null
+            configureFusedLocation(true)
         }
 
         if (valid) onLocationUpdated(location)
@@ -159,6 +193,8 @@ class LocationTrackingManager(
         }
         qualityGate.reset()
         stationarySinceMs = null
+        previousFix = null
+        lowPowerAnchor = null
         platformFallback = false
     }
 
