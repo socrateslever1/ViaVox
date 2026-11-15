@@ -204,6 +204,30 @@ def cnefe_kind(species, folded):
     return None
 
 
+BUMP_VALUES = {"bump", "hump", "table", "cushion"}
+ALERT_LIMIT = 90_000
+
+
+def alert_kind(tags):
+    """Road-safety point type from OSM tags, or None.
+
+    Speed cameras are mapped as highway=speed_camera and, in newer data, as
+    enforcement=maxspeed on the device. A lombada is traffic_calming.
+    """
+    if tags.get("highway") == "speed_camera" or tags.get("enforcement") in (
+            "maxspeed", "average_speed"):
+        return "speed_camera"
+    if tags.get("enforcement") == "traffic_signals":
+        return "red_light_camera"
+    if tags.get("barrier") == "toll_booth":
+        return "toll_booth"
+    if tags.get("railway") == "level_crossing":
+        return "level_crossing"
+    if tags.get("traffic_calming") in BUMP_VALUES:
+        return "speed_bump"
+    return None
+
+
 def road_name(tags):
     """A usable street name: the mapped name, else a state/federal road ref."""
     name = tags.get("name", "").strip()
@@ -262,6 +286,8 @@ class Gazetteer(osmium.SimpleHandler):
         self.osm_road_lines = []
         self.cnefe_pois = 0
         self.poi_cells = set()
+        self.alerts = {}
+        self.alert_ids = set()
         self.streets_seen = set()
 
     def municipality(self, lat, lon):
@@ -511,10 +537,34 @@ class Gazetteer(osmium.SimpleHandler):
                 "points": [[round(c[1], 6), round(c[0], 6)] for c in coords]
             })
 
+    def maybe_alert(self, tags, osm_type, osm_id, lat, lon):
+        """Write a road-safety point (camera, lombada, crossing, toll)."""
+        kind = alert_kind(tags)
+        if kind is None or sum(self.alerts.values()) >= ALERT_LIMIT:
+            return
+        ident = f"osm:{osm_type}:{osm_id}"
+        if ident in self.alert_ids:
+            return
+        city = self.municipality(lat, lon)
+        if city is None:
+            return
+        record = {"type": "alert", "kind": kind, "id": ident, "city_code": city,
+                  "lat": round(lat, 6), "lon": round(lon, 6)}
+        digits = "".join(c for c in tags.get("maxspeed", "") if c.isdigit())
+        if digits and 5 <= int(digits) <= 200:
+            record["maxspeed"] = int(digits)
+        name = " ".join(tags.get("name", "").split())
+        if name and not re.search(r"https?://|[\x00-\x1f]", name):
+            record["name"] = name[:80]
+        self.alert_ids.add(ident)
+        self.alerts[kind] = self.alerts.get(kind, 0) + 1
+        self.write(record)
+
     def node(self, obj):
-        if not obj.location.valid():
+        if not obj.location.valid() or len(obj.tags) == 0:
             return
         tags = {t.k:t.v for t in obj.tags}
+        self.maybe_alert(tags, "node", obj.id, obj.location.lat, obj.location.lon)
         if "name" not in tags:
             return
         if not any(k in tags for k in POI_KEYS) and tags.get("highway") != "bus_stop":
@@ -524,6 +574,13 @@ class Gazetteer(osmium.SimpleHandler):
 
     def way(self, obj):
         tags = {t.k:t.v for t in obj.tags}
+        if alert_kind(tags) == "speed_bump":
+            # A raised table mapped as a way: use its middle point.
+            middle = [(n.location.lat, n.location.lon)
+                      for n in obj.nodes if n.location.valid()]
+            if middle:
+                lat, lon = middle[len(middle)//2]
+                self.maybe_alert(tags, "way", obj.id, lat, lon)
         if tags.get("highway") in DRIVABLE and not tags.get("name", "").strip():
             # Highways mapped with only a reference are still announceable.
             fallback = road_name(tags)
@@ -601,6 +658,7 @@ def main():
           f"mapped road shapes={collector.road_geometry_count}, "
           f"IBGE road shapes={collector.ibge_road_count}, "
           f"CNEFE places={collector.cnefe_pois}, "
+          f"road-safety points={sum(collector.alerts.values())} {collector.alerts}, "
           f"records={collector.count}, file={args.output.stat().st_size} bytes")
     if args.ibge_zip is not None and collector.ibge_streets < 5_000:
         raise RuntimeError(

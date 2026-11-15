@@ -118,7 +118,7 @@ class RoadDetectionEngine(
         val jurisdiction = if (enablePoliceCircumscription)
             PoliceJurisdictionSpeechResolver.resolve(
                 polygon?.cicom ?: place.policeDistrict,
-                if (polygon != null) "Manaus" else place.city
+                if (polygon != null) polygon.city ?: "Manaus" else place.city
             ) else null
         return polygonTransition(
             TerritoryMatch(
@@ -354,7 +354,7 @@ class RoadDetectionEngine(
                         neighbourhood = local?.neighbourhood ?: rawPlace.neighbourhood,
                         zone = local?.zone ?: rawPlace.zone,
                         policeDistrict = local?.cicom ?: rawPlace.policeDistrict,
-                        city = if (local != null) "Manaus" else rawPlace.city
+                        city = if (local != null) local.city ?: "Manaus" else rawPlace.city
                     )
 
                     onPlaceUpdated(cleanPlace)

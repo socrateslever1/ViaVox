@@ -8,7 +8,9 @@ data class TerritoryMatch(
     val zone: String? = null,
     val neighbourhood: String? = null,
     val cicom: String? = null,
-    val cpa: String? = null
+    val cpa: String? = null,
+    /** Municipality of the matched area; null means Manaus (the bundled layer). */
+    val city: String? = null
 ) {
     fun isEmpty() = listOf(zone, neighbourhood, cicom, cpa).all { it.isNullOrBlank() }
 }
@@ -27,6 +29,7 @@ class TerritoryGeojsonResolver private constructor(
     data class Area(
         val name: String,
         val zone: String?,
+        val city: String? = null,
         val rings: List<List<Point>>,
         val minLon: Double,
         val maxLon: Double,
@@ -82,15 +85,26 @@ class TerritoryGeojsonResolver private constructor(
             zone = bairro?.zone,
             neighbourhood = bairro?.name,
             cicom = police?.cicom,
-            cpa = police?.cpa
+            cpa = police?.cpa,
+            city = bairro?.city
         )
         return match.takeUnless { it.isEmpty() }
     }
 
     companion object {
-        fun parse(neighbourhoods: String, policeAreas: String): TerritoryGeojsonResolver =
+        /**
+         * [interiorNeighbourhoods] is the optional layer for the other
+         * municipalities. It is appended after Manaus so a point inside both
+         * (never expected) resolves to the curated Manaus polygon.
+         */
+        fun parse(
+            neighbourhoods: String, policeAreas: String,
+            interiorNeighbourhoods: String = ""
+        ): TerritoryGeojsonResolver =
             TerritoryGeojsonResolver(
-                readAreas(neighbourhoods),
+                readAreas(neighbourhoods) +
+                    if (interiorNeighbourhoods.isBlank()) emptyList()
+                    else readAreas(interiorNeighbourhoods),
                 readAreas(policeAreas)
             )
 
@@ -121,6 +135,7 @@ class TerritoryGeojsonResolver private constructor(
                 result += Area(
                     name = name,
                     zone = props.optString("zona").trim().takeIf { it.isNotBlank() },
+                    city = props.optString("city").trim().takeIf { it.isNotBlank() },
                     rings = rings,
                     minLon = all.minOf { it.lon }, maxLon = all.maxOf { it.lon },
                     minLat = all.minOf { it.lat }, maxLat = all.maxOf { it.lat }

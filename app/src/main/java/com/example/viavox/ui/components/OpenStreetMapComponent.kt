@@ -224,7 +224,8 @@ fun OpenStreetMapComponent(
     LaunchedEffect(showAdminBoundaries) {
         if (showAdminBoundaries && adminPolygons.isEmpty()) {
             adminPolygons = withContext(Dispatchers.IO) {
-                loadAdminBoundaries(context)
+                loadAdminBoundaries(context) +
+                    loadAdminBoundaries(context, "bairros_interior_am.geojson")
             }
         }
     }
@@ -506,6 +507,10 @@ fun OpenStreetMapComponent(
                                         hitSafety.location.ifBlank { "Fiscalização semafórica" }
                                     SafetyAlertEngine.SafetyFeature.Type.TOLL_BOOTH ->
                                         hitSafety.location.ifBlank { "Pedágio" }
+                                    SafetyAlertEngine.SafetyFeature.Type.SPEED_BUMP ->
+                                        hitSafety.location.ifBlank { "Lombada" }
+                                    SafetyAlertEngine.SafetyFeature.Type.LEVEL_CROSSING ->
+                                        hitSafety.location.ifBlank { "Passagem de nível" }
                                 }
                                 referenceCallback(
                                     MapPlace(
@@ -581,16 +586,32 @@ fun OpenStreetMapComponent(
                 scope = scope
             )
 
-            // 2. Draw Neighborhood Boundaries (bairros_manaus.geojson) if enabled
-            if (showAdminBoundaries && adminPolygons.isNotEmpty()) {
+            // Viewport shared by the polygon layers: off-screen areas are never
+            // projected, and far-away vertices are thinned when zoomed out.
+            val degreesPerPixel = 360.0 / (TILE_SIZE * Math.pow(2.0, cameraZoom.toDouble()))
+            val halfSpan = maxOf(size.width, size.height) * degreesPerPixel * 0.9
+            val stride = when {
+                cameraZoom < 12.0 -> 6
+                cameraZoom < 13.5 -> 3
+                else -> 1
+            }
+
+            // 2. Draw Neighborhood Boundaries (Manaus and the interior) if enabled
+            if (showAdminBoundaries && adminPolygons.isNotEmpty() && cameraZoom >= 9.5) {
                 adminPolygons.forEach { poly ->
-                    if (poly.points.size >= 3) {
+                    if (poly.points.size >= 3 &&
+                        poly.mayBeVisible(cameraLat, cameraLon, halfSpan)) {
                         val path = androidx.compose.ui.graphics.Path()
-                        poly.points.forEachIndexed { idx, (lat, lon) ->
+                        val lastIndex = poly.points.size - 1
+                        var started = false
+                        for (idx in 0..lastIndex) {
+                            if (idx % stride != 0 && idx != lastIndex) continue
+                            val (lat, lon) = poly.points[idx]
                             val pt = WebMercatorMath.latLonToScreen(
                                 lat, lon, cx, cy, cameraLat, cameraLon, cameraZoom, cameraBearing.toDouble()
                             )
-                            if (idx == 0) path.moveTo(pt.x, pt.y) else path.lineTo(pt.x, pt.y)
+                            if (!started) { path.moveTo(pt.x, pt.y); started = true }
+                            else path.lineTo(pt.x, pt.y)
                         }
                         path.close()
                         drawPath(path, color = poly.color.copy(alpha = 0.13f))
@@ -601,13 +622,6 @@ fun OpenStreetMapComponent(
 
             // 2b. CICOM sectors: culled to the viewport and thinned when zoomed out
             if (showCicomAreas && cicomPolygons.isNotEmpty() && cameraZoom >= 10.5) {
-                val degreesPerPixel = 360.0 / (TILE_SIZE * Math.pow(2.0, cameraZoom.toDouble()))
-                val halfSpan = maxOf(size.width, size.height) * degreesPerPixel * 0.9
-                val stride = when {
-                    cameraZoom < 12.0 -> 6
-                    cameraZoom < 13.5 -> 3
-                    else -> 1
-                }
                 cicomPolygons.forEach { poly ->
                     if (!poly.mayBeVisible(cameraLat, cameraLon, halfSpan)) return@forEach
                     val path = androidx.compose.ui.graphics.Path()
@@ -751,6 +765,8 @@ fun OpenStreetMapComponent(
                         SafetyAlertEngine.SafetyFeature.Type.SPEED_HUMP_CAMERA -> Color(0xFFEB7800)
                         SafetyAlertEngine.SafetyFeature.Type.RED_LIGHT_CAMERA -> Color(0xFFB41446)
                         SafetyAlertEngine.SafetyFeature.Type.TOLL_BOOTH -> Color(0xFFFF9800)
+                        SafetyAlertEngine.SafetyFeature.Type.SPEED_BUMP -> Color(0xFFF2B600)
+                        SafetyAlertEngine.SafetyFeature.Type.LEVEL_CROSSING -> Color(0xFF6D4C41)
                     }
                     val badgeText = when (feature.type) {
                         SafetyAlertEngine.SafetyFeature.Type.SPEED_CAMERA ->
@@ -759,6 +775,8 @@ fun OpenStreetMapComponent(
                             feature.speedLimitKmh?.toString() ?: "LOM"
                         SafetyAlertEngine.SafetyFeature.Type.RED_LIGHT_CAMERA -> "SEM"
                         SafetyAlertEngine.SafetyFeature.Type.TOLL_BOOTH -> "PED"
+                        SafetyAlertEngine.SafetyFeature.Type.SPEED_BUMP -> "LB"
+                        SafetyAlertEngine.SafetyFeature.Type.LEVEL_CROSSING -> "PN"
                     }
                     drawCircle(color = Color.White, radius = 30f, center = pt)
                     drawCircle(color = badgeColor, radius = 25f, center = pt)

@@ -31,6 +31,7 @@ import com.example.viavox.data.AmazonasMunicipalitySync
 import com.example.viavox.data.AmazonasMunicipalityDirectory
 import com.example.viavox.data.GeoPackUpdater
 import com.example.viavox.data.RoadGeometryIndex
+import com.example.viavox.data.SafetyAlertIndex
 import com.example.viavox.data.SurroundingsLookup
 import com.example.viavox.data.ManausArcGisLayer
 import com.example.viavox.data.GisBounds
@@ -213,6 +214,9 @@ class ViaVoxTrackingService : Service() {
             }
         ).also {
             it.loadOfficialAlertsFromAssets(this)
+            it.localAlertLookup = { lat, lon ->
+                SafetyAlertIndex.get(this@ViaVoxTrackingService).around(lat, lon, 2_500)
+            }
         }
 
         roadEngine = RoadDetectionEngine(
@@ -277,7 +281,13 @@ class ViaVoxTrackingService : Service() {
                         .bufferedReader().use { it.readText() }
                     val cicoms = assets.open("cicoms_manaus.geojson")
                         .bufferedReader().use { it.readText() }
-                    TerritoryGeojsonResolver.parse(neighbourhoods, cicoms)
+                    // Optional layer for the other 43 municipalities; a missing
+                    // or unreadable file must never disable the Manaus layers.
+                    val interior = runCatching {
+                        assets.open("bairros_interior_am.geojson")
+                            .bufferedReader().use { it.readText() }
+                    }.getOrDefault("")
+                    TerritoryGeojsonResolver.parse(neighbourhoods, cicoms, interior)
                 } catch (e: Exception) {
                     Log.w(TAG, "Offline territory polygons unavailable", e)
                     null

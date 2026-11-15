@@ -106,6 +106,10 @@ class GeoPackUpdater(
                 RoadGeometryIndex.get(context).importFromGeopack(it)
             }
             file.inputStream().use { catalog.importGeoPack(it) }
+            // Road-safety points: a failure here must not undo the places.
+            runCatching {
+                file.inputStream().use { SafetyAlertIndex.get(context).importFromGeopack(it) }
+            }.onFailure { Log.w("ViaVoxGeoPack","Safety alerts not imported",it) }
             prefs.edit().putInt("pack_generation",PACK_GENERATION).apply()
             Log.i("ViaVoxGeoPack","Amazonas catalogue imported and indexed")
             true
@@ -127,7 +131,8 @@ class GeoPackUpdater(
             "geopack-am-latest/amazonas-geopack.jsonl.gz"
         private const val MAX_COMPRESSED_BYTES=60L*1024*1024
         // Raise when the published pack gains content installed apps should
-        // fetch immediately. 2 = IBGE street lines and census places.
-        private const val PACK_GENERATION=2
+        // fetch immediately. 2 = IBGE street lines and census places,
+        // 3 = offline road-safety points.
+        private const val PACK_GENERATION=3
     }
 }

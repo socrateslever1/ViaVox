@@ -47,13 +47,33 @@ class SafetyAlertEngine(
             SPEED_CAMERA,
             SPEED_HUMP_CAMERA,
             RED_LIGHT_CAMERA,
-            TOLL_BOOTH;
+            TOLL_BOOTH,
+            /** Physical lombada (traffic calming), not an electronic one. */
+            SPEED_BUMP,
+            LEVEL_CROSSING;
 
-            val isCamera: Boolean get() = this != TOLL_BOOTH
+            val isCamera: Boolean get() =
+                this == SPEED_CAMERA || this == SPEED_HUMP_CAMERA || this == RED_LIGHT_CAMERA
+
+            /** Points of different groups never count as duplicates of each other. */
+            val group: Int get() = when (this) {
+                SPEED_CAMERA, SPEED_HUMP_CAMERA, RED_LIGHT_CAMERA -> 0
+                TOLL_BOOTH -> 1
+                SPEED_BUMP -> 2
+                LEVEL_CROSSING -> 3
+            }
         }
     }
 
+    /**
+     * Offline safety points around a position (from the weekly data pack).
+     * Returns null when no pack is installed, so the engine keeps using the
+     * online query; an empty list means the area has none.
+     */
+    var localAlertLookup: suspend (Double, Double) -> List<SafetyFeature>? = { _, _ -> null }
+
     private val officialFeatures = mutableListOf<SafetyFeature>()
+    private val localFeatures = mutableListOf<SafetyFeature>()
     private val osmFeatures = mutableListOf<SafetyFeature>()
     private val cachedMergedFeatures = mutableListOf<SafetyFeature>()
     private val alertedFeatureIds = mutableSetOf<String>()
@@ -67,6 +87,20 @@ class SafetyAlertEngine(
         const val WARNING_MAX_METERS = 480.0
         const val WARNING_MIN_SPEED_KMH = 15f
         const val WARNING_CONE_DEGREES = 55f
+        /** A passed point is announced again once the vehicle is this far away. */
+        const val REARM_DISTANCE_METERS = 900.0
+
+        /** Speech window per type: a lombada needs a late, short warning. */
+        fun warningWindow(type: SafetyFeature.Type): ClosedFloatingPointRange<Double> =
+            when (type) {
+                SafetyFeature.Type.SPEED_BUMP -> 40.0..220.0
+                SafetyFeature.Type.LEVEL_CROSSING -> WARNING_MIN_METERS..350.0
+                else -> WARNING_MIN_METERS..WARNING_MAX_METERS
+            }
+
+        /** "em 180 metros" rather than "em 187 metros". */
+        fun speakableDistance(meters: Int): Int =
+            if (meters >= 100) ((meters + 5) / 10) * 10 else ((meters + 2) / 5) * 5
 
         fun parseOfficialAlerts(jsonString: String): List<SafetyFeature> {
             val result = mutableListOf<SafetyFeature>()
@@ -190,7 +224,7 @@ class SafetyAlertEngine(
             val merged = official.toMutableList()
             for (alert in osm) {
                 val isDuplicate = merged.any { existing ->
-                    (existing.type.isCamera == alert.type.isCamera) &&
+                    (existing.type.group == alert.type.group) &&
                         NavigationMath.meters(existing.latitude, existing.longitude, alert.latitude, alert.longitude) < DUPLICATE_DISTANCE_METERS
                 }
                 if (!isDuplicate) {
@@ -207,6 +241,8 @@ class SafetyAlertEngine(
                 SafetyFeature.Type.SPEED_HUMP_CAMERA -> "Atenção: lombada eletrônica à frente em $distanceMeters metros$limitPart."
                 SafetyFeature.Type.RED_LIGHT_CAMERA -> "Atenção: fiscalização semafórica à frente em $distanceMeters metros$limitPart."
                 SafetyFeature.Type.TOLL_BOOTH -> "Atenção: praça de pedágio à frente em $distanceMeters metros."
+                SafetyFeature.Type.SPEED_BUMP -> "Atenção: lombada à frente em $distanceMeters metros."
+                SafetyFeature.Type.LEVEL_CROSSING -> "Atenção: passagem de nível à frente em $distanceMeters metros."
             }
         }
     }
@@ -228,6 +264,14 @@ class SafetyAlertEngine(
         }
     }
 
+    fun setLocalAlerts(alerts: List<SafetyFeature>) {
+        synchronized(localFeatures) {
+            localFeatures.clear()
+            localFeatures.addAll(alerts)
+            rebuildMergedFeatures()
+        }
+    }
+
     fun setOsmAlerts(alerts: List<SafetyFeature>) {
         synchronized(osmFeatures) {
             osmFeatures.clear()
@@ -237,7 +281,8 @@ class SafetyAlertEngine(
     }
 
     private fun rebuildMergedFeatures() {
-        val merged = mergeAlerts(officialFeatures, osmFeatures)
+        // Official first, then the offline pack, then the live online query.
+        val merged = mergeAlerts(mergeAlerts(officialFeatures, localFeatures), osmFeatures)
         synchronized(cachedMergedFeatures) {
             cachedMergedFeatures.clear()
             cachedMergedFeatures.addAll(merged)
@@ -262,22 +307,34 @@ class SafetyAlertEngine(
         } else Double.POSITIVE_INFINITY
 
         if (movedMeters > 400.0 || now - lastQueryTime >= 180_000L) {
-            querySafetyFeatures(userLat, userLon)
+            // The offline pack answers instantly. The online query (up to
+            // 8 s) runs only where no pack is installed, so a slow network
+            // can never delay a warning.
+            val offline = runCatching { localAlertLookup(userLat, userLon) }.getOrNull()
+            if (offline != null) setLocalAlerts(offline) else querySafetyFeatures(userLat, userLon)
             lastQueryLat = userLat
             lastQueryLon = userLon
             lastQueryTime = now
         }
 
-        // 2. Check for upcoming alerts in the path of travel
-        val upcoming = synchronized(cachedMergedFeatures) {
-            cachedMergedFeatures.filter { feat ->
-                val dist = NavigationMath.meters(userLat, userLon, feat.latitude, feat.longitude)
-                dist in WARNING_MIN_METERS..WARNING_MAX_METERS
-            }
+        val features = getFeatures()
+
+        // 2. Re-arm points the vehicle has left far behind, so passing the
+        // same camera again later in a long session is announced again.
+        if (alertedFeatureIds.isNotEmpty()) {
+            val far = features.filter { feat ->
+                feat.id in alertedFeatureIds &&
+                    NavigationMath.meters(userLat, userLon, feat.latitude, feat.longitude) >
+                        REARM_DISTANCE_METERS
+            }.map { it.id }
+            alertedFeatureIds.removeAll(far.toSet())
         }
 
-        for (feat in upcoming) {
+        // 3. Check for upcoming alerts in the path of travel
+        for (feat in features) {
             if (alertedFeatureIds.contains(feat.id)) continue
+            val dist = NavigationMath.meters(userLat, userLon, feat.latitude, feat.longitude)
+            if (dist !in warningWindow(feat.type)) continue
 
             // Directional check: is the alert in front of the vehicle?
             val dLat = feat.latitude - userLat
@@ -290,13 +347,11 @@ class SafetyAlertEngine(
             // Vehicle moving in direction of feature (within cone)
             if (speedKmh >= WARNING_MIN_SPEED_KMH && angleDiff <= WARNING_CONE_DEGREES) {
                 alertedFeatureIds.add(feat.id)
-                val dist = NavigationMath.meters(userLat, userLon, feat.latitude, feat.longitude).toInt()
-                val msg = buildAlertMessage(feat, dist)
-                onAlert(msg)
+                onAlert(buildAlertMessage(feat, speakableDistance(dist.toInt())))
             }
         }
 
-        getFeatures()
+        return@withContext features
     }
 
     private fun querySafetyFeatures(lat: Double, lon: Double) {
