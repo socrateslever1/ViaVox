@@ -12,7 +12,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import com.example.viavox.ui.components.FloatingSpeedometer
-import com.example.viavox.ui.components.resolveRoadSpeedLimit
+import com.example.viavox.ui.components.resolveRoadSpeedLimitInfo
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -266,10 +266,12 @@ fun ViaVoxMainScreen(
             }
 
             var customSpeedLimit by remember { mutableStateOf<Int?>(null) }
-            val autoSpeedLimit = remember(state.place?.road, state.safetyFeatures, state.latitude, state.longitude) {
-                resolveRoadSpeedLimit(state.place?.road, state.safetyFeatures, state.latitude, state.longitude)
+            val travelBearing = state.bearing.takeIf { state.hasBearing && state.speedKmh >= 5f }
+            val autoSpeedLimit = remember(state.place?.road, state.safetyFeatures, state.latitude, state.longitude, travelBearing) {
+                resolveRoadSpeedLimitInfo(state.place?.road, state.safetyFeatures,
+                    state.latitude, state.longitude, travelBearing)
             }
-            val activeSpeedLimit = customSpeedLimit ?: autoSpeedLimit
+            val activeSpeedLimit = customSpeedLimit ?: autoSpeedLimit.kmh
 
             AnimatedVisibility(
                 visible = navigationUi.navigating,
@@ -282,6 +284,7 @@ fun ViaVoxMainScreen(
                 FloatingSpeedometer(
                     speedKmh = state.speedKmh,
                     speedLimitKmh = activeSpeedLimit,
+                    speedLimitEstimated = customSpeedLimit == null && autoSpeedLimit.estimated,
                     onSpeedLimitChanged = { customSpeedLimit = it }
                 )
             }

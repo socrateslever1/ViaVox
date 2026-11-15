@@ -58,10 +58,12 @@ fun FloatingSpeedometer(
     speedKmh: Float,
     speedLimitKmh: Int?,
     onSpeedLimitChanged: ((Int?) -> Unit)? = null,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /** True when the limit is a guess from the street name, not a sign or radar. */
+    speedLimitEstimated: Boolean = false
 ) {
     val currentSpeed = (if (speedKmh < 0.8f) 0f else speedKmh).roundToInt()
-    val isOverSpeed = speedLimitKmh != null && currentSpeed > speedLimitKmh
+    val isOverSpeed = isOverSpeedLimit(currentSpeed, speedLimitKmh, speedLimitEstimated)
     var menuExpanded by remember { mutableStateOf(false) }
 
     // Pulsing animation when exceeding speed limit
@@ -133,11 +135,22 @@ fun FloatingSpeedometer(
 
                     // Speed limit sign (Placa R-19 standard)
                     if (speedLimitKmh != null) {
-                        SpeedLimitSignBadge(
-                            limit = speedLimitKmh,
-                            isExceeded = isOverSpeed,
-                            modifier = Modifier.testTag("speedometer_speed_limit")
-                        )
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            SpeedLimitSignBadge(
+                                limit = speedLimitKmh,
+                                isExceeded = isOverSpeed,
+                                estimated = speedLimitEstimated,
+                                modifier = Modifier.testTag("speedometer_speed_limit")
+                            )
+                            if (speedLimitEstimated) {
+                                Text(
+                                    text = "estimado",
+                                    fontSize = 8.sp,
+                                    color = Color(0xFFFFD27A),
+                                    modifier = Modifier.testTag("speedometer_limit_estimated")
+                                )
+                            }
+                        }
                     }
                 }
 
@@ -221,7 +234,8 @@ fun FloatingSpeedometer(
 fun SpeedLimitSignBadge(
     limit: Int,
     isExceeded: Boolean = false,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    estimated: Boolean = false
 ) {
     Box(
         modifier = modifier
@@ -229,7 +243,8 @@ fun SpeedLimitSignBadge(
             .clip(CircleShape)
             .background(Color.White)
             .border(
-                BorderStroke(3.5.dp, Color(0xFFE53935)),
+                // Amber instead of the red of a real sign: this one is a guess.
+                BorderStroke(3.5.dp, if (estimated) Color(0xFFFFB300) else Color(0xFFE53935)),
                 shape = CircleShape
             ),
         contentAlignment = Alignment.Center
@@ -244,39 +259,74 @@ fun SpeedLimitSignBadge(
     }
 }
 
+/** A road speed limit and whether it is only a guess from the street name. */
+data class RoadSpeedLimit(val kmh: Int, val estimated: Boolean)
+
+/** An estimated limit gets a margin, so a guess never raises a false red alarm. */
+const val ESTIMATED_LIMIT_MARGIN_KMH = 10
+
+fun isOverSpeedLimit(speedKmh: Int, limitKmh: Int?, estimated: Boolean): Boolean =
+    limitKmh != null && speedKmh > limitKmh + (if (estimated) ESTIMATED_LIMIT_MARGIN_KMH else 0)
+
+private const val CAMERA_LIMIT_AHEAD_METERS = 400.0
+private const val CAMERA_LIMIT_NEAR_METERS = 150.0
+private const val CAMERA_LIMIT_CONE_DEGREES = 70.0
+
 /**
  * Resolves the speed limit for the current location.
  * Priority:
- * 1. Nearest safety camera/radar or speed hump ahead or nearby (within 1000m) with an explicit speed limit.
- * 2. Road classification heuristics based on street name (BR/AM highway = 80, Avenue = 60, local street = 40).
- * 3. Default urban limit (60 km/h).
+ * 1. A speed camera or electronic lombada with an explicit limit that belongs
+ *    to the road being driven: within 400 m AHEAD, or within 150 m (just
+ *    passed). Other point types (physical lombadas, level crossings, tolls)
+ *    never set the limit, and a camera on a parallel street 800 m away no
+ *    longer does either. [bearing] is the direction of travel when known.
+ * 2. Road classification heuristics from the street name, flagged as estimated.
  */
-fun resolveRoadSpeedLimit(
+fun resolveRoadSpeedLimitInfo(
     road: String?,
     safetyFeatures: List<SafetyAlertEngine.SafetyFeature>,
     userLat: Double,
-    userLon: Double
-): Int {
-    // 1. Check nearby safety camera / speed hump within 1000m
-    val nearestCameraWithLimit = safetyFeatures
-        .filter { it.speedLimitKmh != null && it.speedLimitKmh > 0 }
-        .minByOrNull { feat ->
-            NavigationMath.meters(userLat, userLon, feat.latitude, feat.longitude)
+    userLon: Double,
+    bearing: Float? = null
+): RoadSpeedLimit {
+    val camera = safetyFeatures.asSequence()
+        .filter { it.type.isCamera && it.speedLimitKmh != null && it.speedLimitKmh in 20..130 }
+        .map { feat ->
+            feat to NavigationMath.meters(userLat, userLon, feat.latitude, feat.longitude)
         }
-
-    if (nearestCameraWithLimit != null) {
-        val dist = NavigationMath.meters(userLat, userLon, nearestCameraWithLimit.latitude, nearestCameraWithLimit.longitude)
-        if (dist <= 1000.0) {
-            return nearestCameraWithLimit.speedLimitKmh!!
+        .filter { (feat, distance) ->
+            distance <= CAMERA_LIMIT_NEAR_METERS ||
+                (distance <= CAMERA_LIMIT_AHEAD_METERS &&
+                    (bearing == null || isAhead(feat, userLat, userLon, bearing)))
         }
-    }
+        .minByOrNull { it.second }
+    if (camera != null) return RoadSpeedLimit(camera.first.speedLimitKmh!!, estimated = false)
 
-    // 2. Road heuristics based on Brazilian road taxonomy
     val cleanRoad = road?.trim().orEmpty().lowercase()
-    return when {
+    val guess = when {
         cleanRoad.startsWith("br-") || cleanRoad.startsWith("am-") || cleanRoad.contains("rodovia") || cleanRoad.contains("via expressa") -> 80
         cleanRoad.startsWith("av.") || cleanRoad.startsWith("avenida") || cleanRoad.contains("boulevard") -> 60
         cleanRoad.startsWith("rua") || cleanRoad.startsWith("r.") || cleanRoad.startsWith("travessa") || cleanRoad.startsWith("tv.") || cleanRoad.startsWith("alameda") || cleanRoad.startsWith("beco") -> 40
         else -> 60
     }
+    return RoadSpeedLimit(guess, estimated = true)
 }
+
+private fun isAhead(
+    feat: SafetyAlertEngine.SafetyFeature, userLat: Double, userLon: Double, bearing: Float
+): Boolean {
+    val dLat = feat.latitude - userLat
+    val dLon = (feat.longitude - userLon) * kotlin.math.cos(Math.toRadians(userLat))
+    val toFeature = (Math.toDegrees(kotlin.math.atan2(dLon, dLat)) + 360.0) % 360.0
+    val diff = kotlin.math.abs(((toFeature - bearing + 540.0) % 360.0) - 180.0)
+    return diff <= CAMERA_LIMIT_CONE_DEGREES
+}
+
+/** Kept for callers that only need the number. */
+fun resolveRoadSpeedLimit(
+    road: String?,
+    safetyFeatures: List<SafetyAlertEngine.SafetyFeature>,
+    userLat: Double,
+    userLon: Double,
+    bearing: Float? = null
+): Int = resolveRoadSpeedLimitInfo(road, safetyFeatures, userLat, userLon, bearing).kmh

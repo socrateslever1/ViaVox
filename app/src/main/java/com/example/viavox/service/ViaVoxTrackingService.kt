@@ -20,6 +20,7 @@ import com.example.viavox.MainActivity
 import com.example.viavox.R
 import com.example.viavox.data.NavigationNetworkService
 import com.example.viavox.model.NavigationRoute
+import com.example.viavox.model.GpsSpeed
 import com.example.viavox.model.VehicleMode
 import com.example.viavox.data.NominatimService
 import com.example.viavox.data.PoiDiscoveryService
@@ -576,11 +577,26 @@ class ViaVoxTrackingService : Service() {
             AssistanceMode.from(currentConfig.assistanceMode) == AssistanceMode.ACCESSIBILITY &&
             !currentConfig.tourEnabled
 
+    /** Previous fix, for deriving speed when the provider reports none. */
+    private var previousSpeedFix: GpsSpeed.Fix? = null
+
     private fun onLocationUpdateReceived(location: Location) {
         val lat = location.latitude
         val lon = location.longitude
         val accuracy = if (location.hasAccuracy()) location.accuracy.toInt() else null
-        val speedKmh = if (location.hasSpeed()) location.speed * 3.6f else 0f
+        val currentFix = GpsSpeed.Fix(
+            lat, lon,
+            if (location.time > 0L) location.time else System.currentTimeMillis(),
+            if (location.hasAccuracy()) location.accuracy else 100f
+        )
+        val speedKmh = GpsSpeed.kmh(
+            hasSpeed = location.hasSpeed(),
+            speedMps = if (location.hasSpeed()) location.speed else 0f,
+            speedAccuracyMps = if (location.hasSpeedAccuracy())
+                location.speedAccuracyMetersPerSecond else null,
+            current = currentFix, previous = previousSpeedFix
+        )
+        previousSpeedFix = currentFix
         val bearing = if (location.hasBearing()) location.bearing else 0f
         val hasBearing = location.hasBearing()
 
