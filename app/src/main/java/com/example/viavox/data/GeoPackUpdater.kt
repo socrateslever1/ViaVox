@@ -47,15 +47,24 @@ class GeoPackUpdater(
         // Weekly refreshes wait for Wi-Fi. The very first download (a few MB)
         // may use mobile data: without it a fresh install knows no streets
         // or places and both street naming and the surroundings scan are empty.
-        if (installed && !capabilities.hasCapability(
+        // A new app release may need newer pack contents (for example the
+        // census places): fetch once right after the update, on any network.
+        val contentUpgradePending =
+            prefs.getInt("pack_generation",0) < PACK_GENERATION
+        if (installed && !contentUpgradePending && !capabilities.hasCapability(
                 NetworkCapabilities.NET_CAPABILITY_NOT_METERED))
             return@withContext false
         // First launch of the road-geometry-enabled APK must not inherit a
         // 7-day cooldown from the older points-only package.
         val roadUpgradePending = !installed &&
             !prefs.getBoolean("road_geometry_bootstrap_attempted",false)
-        if(!roadUpgradePending && last>0 &&
-            now-last < if(installed) 7L*24*60*60*1000 else 12L*60*60*1000)
+        // A pending content upgrade retries hourly instead of weekly.
+        val cooldown = when {
+            !installed -> 12L*60*60*1000
+            contentUpgradePending -> 60L*60*1000
+            else -> 7L*24*60*60*1000
+        }
+        if(!roadUpgradePending && last>0 && now-last < cooldown)
             return@withContext false
         prefs.edit().putLong("last_attempt",now)
             .putBoolean("road_geometry_bootstrap_attempted",true).apply()
@@ -97,6 +106,7 @@ class GeoPackUpdater(
                 RoadGeometryIndex.get(context).importFromGeopack(it)
             }
             file.inputStream().use { catalog.importGeoPack(it) }
+            prefs.edit().putInt("pack_generation",PACK_GENERATION).apply()
             Log.i("ViaVoxGeoPack","Amazonas catalogue imported and indexed")
             true
         } catch (cancelled:CancellationException) {
@@ -116,5 +126,8 @@ class GeoPackUpdater(
             "https://github.com/socrateslever1/ViaVox/releases/download/" +
             "geopack-am-latest/amazonas-geopack.jsonl.gz"
         private const val MAX_COMPRESSED_BYTES=60L*1024*1024
+        // Raise when the published pack gains content installed apps should
+        // fetch immediately. 2 = IBGE street lines and census places.
+        private const val PACK_GENERATION=2
     }
 }

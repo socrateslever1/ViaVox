@@ -9,6 +9,10 @@ package com.example.viavox.service
  * 2026 PMAM material describes Centro-Sul/Centro-Oeste under a combined CPA.
  * Cross-checked against the bundled sector map: the neighbourhoods inside
  * every CICOM lie in the municipal zone of the CPA assigned here.
+ * Checked against the PMAM portal unit records (Nov 2026): CPA Sul lists
+ * the 1st, 2nd, 3rd, 7th and 24th CICOM; the 5th is under CPA Oeste; the 21st
+ * sits in Sao Jorge; the 22nd is described as Centro-Sul. The portal does not
+ * list the CICOMs of the other area commands.
  * This is a provisional jurisdiction reference, not real-time dispatch routing.
  */
 data class MappedPoliceJurisdiction(val cicom: String, val cpa: String)
