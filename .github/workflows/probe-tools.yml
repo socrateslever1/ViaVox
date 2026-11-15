@@ -1,0 +1,100 @@
+name: Probe external tools (read-only)
+
+# Prints facts about third-party tools (licences, artifact sizes, available
+# voices) so adoption decisions rest on what is actually published. It only
+# reads public data and uploads nothing. Runs when this file changes.
+on:
+  push:
+    branches: [ccr-28b73783-qbhfmn]
+    paths: ['.github/workflows/probe-tools.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: MapLibre Android SDK
+        continue-on-error: true
+        run: |
+          set +e
+          BASE=https://repo1.maven.org/maven2/org/maplibre/gl/android-sdk
+          V=$(curl -fsS $BASE/maven-metadata.xml | sed -n 's:.*<version>\(.*\)</version>.*:\1:p' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+          echo "MapLibre newest stable: $V"
+          mkdir -p /tmp/ml && cd /tmp/ml
+          curl -fsSL -o sdk.aar "$BASE/$V/android-sdk-$V.aar"
+          ls -l sdk.aar
+          curl -fsS "$BASE/$V/android-sdk-$V.pom" | grep -iE -A3 "<license>|<name>" | head -12
+          unzip -q -o sdk.aar 'jni/*' classes.jar AndroidManifest.xml
+          echo "--- native libraries"; ls -l jni/*/
+          for so in jni/arm64-v8a/*.so; do
+            echo "== $so  pmtiles strings: $(strings -n 6 "$so" | grep -ic pmtiles)"
+            strings -n 6 "$so" | grep -i pmtiles | head -5
+          done
+          echo "--- classes the app would use"
+          unzip -l classes.jar | awk '{print $4}' | grep -E "org/maplibre/android/(MapLibre|maps/(MapView|MapLibreMap|Style|OnMapReadyCallback)|camera/CameraUpdateFactory|style/sources/GeoJsonSource|style/layers/(LineLayer|FillLayer|SymbolLayer|CircleLayer)|location/LocationComponent)\.class"
+          echo "--- minSdk"; unzip -p sdk.aar AndroidManifest.xml | grep -io 'minSdkVersion[^/]*' | head -2
+
+      - name: sherpa-onnx releases and Portuguese voices
+        continue-on-error: true
+        run: |
+          set +e
+          R=k2-fsa/sherpa-onnx
+          echo "--- licence: $(gh api repos/$R/license -q .license.spdx_id)"
+          TAG=$(gh api repos/$R/releases/latest -q .tag_name)
+          echo "latest release: $TAG"
+          gh api repos/$R/releases/latest --paginate -q '.assets[] | select(.name|test("android|aar|jniLibs";"i")) | [.name,.size] | @tsv'
+          ID=$(gh api repos/$R/releases/tags/tts-models -q .id)
+          echo "--- tts-models release id $ID; Portuguese assets:"
+          gh api --paginate repos/$R/releases/$ID/assets -q '.[] | [.name,.size] | @tsv' | grep -iE 'pt[_-]|portug|brazil'
+          echo "--- total tts model assets: $(gh api --paginate repos/$R/releases/$ID/assets -q '.[].name' | wc -l)"
+          echo "--- Kotlin API files for TTS"
+          gh api "repos/$R/contents/sherpa-onnx/kotlin-api?ref=$TAG" -q '.[].name' | head -30
+
+      - name: Piper voices in Portuguese (Hugging Face)
+        continue-on-error: true
+        run: |
+          python3 - <<'PY'
+          import json, urllib.request
+          def get(url):
+              with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "probe"}), timeout=60) as r:
+                  return r.read().decode("utf-8", "replace")
+          base = "https://huggingface.co"
+          tree = json.loads(get(f"{base}/api/models/rhasspy/piper-voices/tree/main/pt/pt_BR?recursive=true"))
+          for entry in tree:
+              if entry["type"] == "file":
+                  print(entry["path"], entry.get("size"))
+          cards = [e["path"] for e in tree if e["type"] == "file" and e["path"].endswith("MODEL_CARD")]
+          for path in cards:
+              print("\n===== " + path)
+              print(get(f"{base}/rhasspy/piper-voices/raw/main/{path}")[:1200])
+          PY
+
+      - name: Licences GitHub could not classify
+        continue-on-error: true
+        run: |
+          set +e
+          for r in stadiamaps/ferrostar valhalla/valhalla protomaps/PMTiles organicmaps/organicmaps abrensch/brouter onthegomap/planetiler; do
+            echo; echo "=================== $r  spdx=$(gh api repos/$r/license -q .license.spdx_id)  file=$(gh api repos/$r/license -q .path)"
+            gh api repos/$r/license -q .content | base64 -d | grep -v '^\s*$' | head -14
+          done
+
+      - name: Planetiler and BRouter data for Manaus
+        continue-on-error: true
+        run: |
+          set +e
+          echo "--- Planetiler"
+          gh api repos/onthegomap/planetiler/releases/latest -q '.tag_name, (.assets[] | select(.name|test("planetiler.jar$")) | [.name,.size] | @tsv)'
+          echo "--- BRouter latest release"
+          gh api repos/abrensch/brouter/releases/latest -q '.tag_name, (.assets[] | [.name,.size] | @tsv)'
+          echo "--- BRouter routing data covering Manaus (-60.0,-3.1) and the Amazonas bounds"
+          for tile in W65_S5 W70_S5 W65_N0 W70_N0 W65_S10 W70_S10 W60_S5; do
+            printf '%s ' "$tile"; curl -fsSI "https://brouter.de/brouter/segments4/$tile.rd5" | grep -iE "^HTTP|content-length" | tr -d '\r' | tr '\n' ' '; echo
+          done
+          echo "--- BRouter profiles"
+          curl -fsS https://brouter.de/brouter/profiles2/ | grep -oE 'href="[^"]+\.brf"' | head -20
