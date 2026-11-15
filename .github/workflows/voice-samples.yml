@@ -35,7 +35,7 @@ jobs:
           ls -d vits-piper-*
           echo "--- layout of one voice (top level)"
           ls -l vits-piper-pt_BR-faber-medium-int8 | grep -v "^d"
-          for d in vits-piper-*; do echo "== $d"; cat "$d/MODEL_CARD" 2>/dev/null | grep -iE "license|dataset|url" ; done
+          for d in vits-piper-*; do echo "== $d"; cat "$d/MODEL_CARD" 2>/dev/null | grep -iE "license|dataset|url" || echo "  (no licence line in MODEL_CARD)"; done
 
       - name: Synthesise
         run: |
