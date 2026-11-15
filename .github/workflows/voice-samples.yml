@@ -20,8 +20,11 @@ jobs:
     steps:
       - name: Install sherpa-onnx
         run: |
-          python3 -m pip install --disable-pip-version-check sherpa-onnx
-          python3 -m pip show sherpa-onnx | head -3
+          # 2.0.x dropped the bundled espeak front end that Piper voices need
+          # ("no frontend available"), so the last 1.x series is tried instead.
+          python3 -m pip install --disable-pip-version-check "sherpa-onnx<2.0"
+          python3 -m pip show sherpa-onnx | sed -n 1,2p
+          python3 -m pip index versions sherpa-onnx 2>/dev/null | head -2 || true
 
       - name: Download voices
         run: |
