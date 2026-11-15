@@ -10,7 +10,10 @@ data class ManeuverProgress(
     val metersToStep: Double,
     val distanceOffRouteMeters: Double,
     val traveledMeters: Double,
-    val metersRemaining: Double
+    val metersRemaining: Double,
+    /** The maneuver right after the next one, for "then turn..." guidance. */
+    val followingInstruction: String = "",
+    val metersBetweenNextAndFollowing: Double = Double.POSITIVE_INFINITY
 )
 
 /**
@@ -65,7 +68,12 @@ class RouteProgressEngine(private val route: NavigationRoute) {
         val maneuver = next?.let { route.steps[it] }
         val distance = next?.let { (maneuverDistances[it] - traveled).coerceAtLeast(0.0) }
             ?: (cumulative.last() - traveled).coerceAtLeast(0.0)
+        val following = next?.let { it + 1 }?.takeIf { it in route.steps.indices }
         return ManeuverProgress(
+            followingInstruction = following?.let { route.steps[it].instruction }.orEmpty(),
+            metersBetweenNextAndFollowing = if (next != null && following != null)
+                (maneuverDistances[following] - maneuverDistances[next]).coerceAtLeast(0.0)
+                else Double.POSITIVE_INFINITY,
             nextStepIndex = next ?: -1,
             instruction = maneuver?.instruction ?: "Continue",
             metersToStep = distance,

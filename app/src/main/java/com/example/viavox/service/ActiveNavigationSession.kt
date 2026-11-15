@@ -34,7 +34,8 @@ data class NavigationTick(
 /** Pure progress, voice triggers and deviation detection; does not own UI. */
 class NavigationSessionEngine(
     startingRoute: NavigationRoute,
-    private val rerouteCooldownMs: Long = 45_000L
+    private val rerouteCooldownMs: Long = 25_000L,
+    private val walking: Boolean = false
 ) {
     var route: NavigationRoute = startingRoute
         private set
@@ -64,13 +65,14 @@ class NavigationSessionEngine(
         val remaining = NavigationMath.meters(
             latitude,longitude,route.destination.latitude,route.destination.longitude
         )
-        if (remaining <= 35.0 && speedKmh < 35f) {
+        if (remaining <= (if (walking) 18.0 else 35.0) && speedKmh < 35f) {
             completed = true
+            val arrival = "Você chegou ao destino" + destinationSide()
             return NavigationTick(ActiveNavigationState(
                 navigating = false,route = route,
-                instruction = "Você chegou ao destino",
+                instruction = arrival,
                 metersToStep = 0.0,metersRemaining = 0.0,status = "Chegada"
-            ),listOf("Você chegou ao destino."),arrived = true)
+            ),listOf("$arrival."),arrived = true)
         }
 
         val fix = progress.update(latitude,longitude,speedKmh,timestampMs) ?: return null
@@ -79,17 +81,34 @@ class NavigationSessionEngine(
         val meters = fix.metersToStep
         val voices = mutableListOf<String>()
         val clean = instruction.replaceFirstChar { it.lowercase() }
-        if (index > 0 && meters in 120.0..320.0 &&
-            index > lastAdvanceIndex && speedKmh > 8f) {
+        val speedMps = speedKmh / 3.6
+        // The warning distance grows with speed: about 25 seconds ahead in a
+        // vehicle, a few dozen steps ahead on foot.
+        val advanceFrom = if (walking) 25.0 else 120.0
+        val advanceTo = if (walking) 70.0 else (speedMps * 25.0).coerceIn(320.0, 900.0)
+        val advanceMinSpeed = if (walking) 1.0f else 8f
+        if (index > 0 && meters in advanceFrom..advanceTo &&
+            index > lastAdvanceIndex && speedKmh > advanceMinSpeed) {
             lastAdvanceIndex = index
             voices += "Em ${NavigationMath.formatDistance(meters)}, $clean."
         }
-        if (index > 0 && meters in 1.0..55.0 &&
-            index > lastTurnIndex && speedKmh > 1.5f) {
+        val turnNow = if (walking) 15.0 else (speedMps * 4.0).coerceIn(55.0, 110.0)
+        if (index > 0 && meters in 1.0..turnNow &&
+            index > lastTurnIndex && speedKmh > (if (walking) 0.5f else 1.5f)) {
             lastTurnIndex = index
-            voices += "$instruction."
+            // Two maneuvers close together are announced as one sentence, so
+            // the second is not heard only when it is already being missed.
+            val chained = fix.followingInstruction.takeIf {
+                it.isNotBlank() && !it.startsWith("Você chegou") &&
+                    fix.metersBetweenNextAndFollowing <= (if (walking) 30.0 else 150.0)
+            }
+            voices += if (chained != null) {
+                lastAdvanceIndex = maxOf(lastAdvanceIndex, index + 1)
+                "$instruction. Em seguida, ${chained.replaceFirstChar { it.lowercase() }}."
+            } else "$instruction."
         }
-        offRouteFixes = if (fix.distanceOffRouteMeters > accuracyMeters*2.0 + 65.0)
+        val offRouteLimit = accuracyMeters * 1.5 + (if (walking) 30.0 else 45.0)
+        offRouteFixes = if (fix.distanceOffRouteMeters > offRouteLimit)
             offRouteFixes + 1 else 0
         val reroute = offRouteFixes >= 3 &&
             (lastRerouteAt == 0L || timestampMs - lastRerouteAt >= rerouteCooldownMs)
@@ -106,5 +125,30 @@ class NavigationSessionEngine(
             ),
             speech = voices,requestReroute = reroute
         )
+    }
+
+    /**
+     * Which side of the final stretch the real destination is on. The route
+     * ends on the road; the place itself is usually a few metres to one side.
+     */
+    private fun destinationSide(): String {
+        val points = route.coordinates
+        if (points.size < 2) return ""
+        val end = points.last()
+        val before = points.dropLast(1).lastOrNull {
+            NavigationMath.meters(it.first,it.second,end.first,end.second) >= 8.0
+        } ?: return ""
+        val lonScale = kotlin.math.cos(Math.toRadians(end.first))
+        val alongX = (end.second - before.second) * lonScale
+        val alongY = end.first - before.first
+        val offX = (route.destination.longitude - end.second) * lonScale
+        val offY = route.destination.latitude - end.first
+        val offset = NavigationMath.meters(end.first,end.second,
+            route.destination.latitude,route.destination.longitude)
+        if (offset < 6.0 || offset > 120.0) return ""
+        val cross = alongX * offY - alongY * offX
+        val along = kotlin.math.hypot(alongX,alongY) * kotlin.math.hypot(offX,offY)
+        if (along <= 0.0 || kotlin.math.abs(cross) / along < 0.5) return ""
+        return if (cross < 0) ", à direita" else ", à esquerda"
     }
 }

@@ -58,10 +58,10 @@ class VehicleAndCompassTest {
         assertEquals(0.5,rotated,0.0001)
     }
 
-    @Test fun noFakeWalkingDirectionsFromCarBackend() {
+    @Test fun walkingUsesItsOwnPedestrianProfile() {
         assertTrue(SupportedRoutingProfile.isSupported(VehicleMode.CAR))
         assertTrue(SupportedRoutingProfile.isSupported(VehicleMode.MOTORCYCLE))
-        assertFalse(SupportedRoutingProfile.isSupported(VehicleMode.WALKING))
-        assertTrue(SupportedRoutingProfile.disclosure(VehicleMode.WALKING).contains("não disponível"))
+        assertTrue(SupportedRoutingProfile.isSupported(VehicleMode.WALKING))
+        assertTrue(SupportedRoutingProfile.disclosure(VehicleMode.WALKING).contains("pedestre"))
     }
 }

@@ -161,6 +161,9 @@ fun OpenStreetMapComponent(
     var showAdminBoundaries by remember {
         mutableStateOf(prefs.getBoolean("map_admin_boundaries", false))
     }
+    var showCicomAreas by remember {
+        mutableStateOf(prefs.getBoolean("map_cicom_areas", false))
+    }
     var headingUp by remember {
         mutableStateOf(prefs.getBoolean("map_heading_up", true))
     }
@@ -223,6 +226,25 @@ fun OpenStreetMapComponent(
             adminPolygons = withContext(Dispatchers.IO) {
                 loadAdminBoundaries(context)
             }
+        }
+    }
+
+    // CICOM sectors (cicoms_manaus.geojson), parsed only when switched on
+    var cicomPolygons by remember { mutableStateOf<List<AdminBoundaryPolygon>>(emptyList()) }
+    LaunchedEffect(showCicomAreas) {
+        if (showCicomAreas && cicomPolygons.isEmpty()) {
+            cicomPolygons = withContext(Dispatchers.IO) {
+                loadAdminBoundaries(context, "cicoms_manaus.geojson", ::cicomMapLabel)
+            }
+        }
+    }
+    val areaLabelPaint = remember {
+        Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            textAlign = Paint.Align.CENTER
+            textSize = 30f
+            isFakeBoldText = true
+            setShadowLayer(5f, 0f, 0f, android.graphics.Color.BLACK)
+            color = android.graphics.Color.WHITE
         }
     }
 
@@ -577,6 +599,47 @@ fun OpenStreetMapComponent(
                 }
             }
 
+            // 2b. CICOM sectors: culled to the viewport and thinned when zoomed out
+            if (showCicomAreas && cicomPolygons.isNotEmpty() && cameraZoom >= 10.5) {
+                val degreesPerPixel = 360.0 / (TILE_SIZE * Math.pow(2.0, cameraZoom.toDouble()))
+                val halfSpan = maxOf(size.width, size.height) * degreesPerPixel * 0.9
+                val stride = when {
+                    cameraZoom < 12.0 -> 6
+                    cameraZoom < 13.5 -> 3
+                    else -> 1
+                }
+                cicomPolygons.forEach { poly ->
+                    if (!poly.mayBeVisible(cameraLat, cameraLon, halfSpan)) return@forEach
+                    val path = androidx.compose.ui.graphics.Path()
+                    val last = poly.points.size - 1
+                    var started = false
+                    for (idx in 0..last) {
+                        if (idx % stride != 0 && idx != last) continue
+                        val (lat, lon) = poly.points[idx]
+                        val pt = WebMercatorMath.latLonToScreen(
+                            lat, lon, cx, cy, cameraLat, cameraLon, cameraZoom, cameraBearing.toDouble()
+                        )
+                        if (!started) { path.moveTo(pt.x, pt.y); started = true }
+                        else path.lineTo(pt.x, pt.y)
+                    }
+                    path.close()
+                    drawPath(path, color = poly.color.copy(alpha = 0.10f))
+                    drawPath(path, color = poly.color.copy(alpha = 0.75f), style = Stroke(width = 2.5f))
+                    if (cameraZoom >= 13.0 && poly.label.isNotBlank()) {
+                        val center = WebMercatorMath.latLonToScreen(
+                            (poly.minLat + poly.maxLat) / 2.0, (poly.minLon + poly.maxLon) / 2.0,
+                            cx, cy, cameraLat, cameraLon, cameraZoom, cameraBearing.toDouble()
+                        )
+                        if (center.x in 0f..size.width && center.y in 0f..size.height) {
+                            drawIntoCanvas { canvas ->
+                                canvas.nativeCanvas.drawText(
+                                    poly.label, center.x, center.y, areaLabelPaint)
+                            }
+                        }
+                    }
+                }
+            }
+
             // 3. Draw Recorded / Live Trip Track
             val recordedPoints = if (liveTrack.isNotEmpty()) liveTrack else savedTrack
             if (recordedPoints.size >= 2) {
@@ -886,6 +949,20 @@ fun OpenStreetMapComponent(
                             styleMenuExpanded = false
                         },
                         modifier = Modifier.testTag("map_admin_boundaries_toggle")
+                    )
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                if (showCicomAreas) "✓ Áreas de CICOM"
+                                else "Áreas de CICOM"
+                            )
+                        },
+                        onClick = {
+                            showCicomAreas = !showCicomAreas
+                            prefs.edit().putBoolean("map_cicom_areas", showCicomAreas).apply()
+                            styleMenuExpanded = false
+                        },
+                        modifier = Modifier.testTag("map_cicom_areas_toggle")
                     )
                     HorizontalDivider()
                     DropdownMenuItem(
@@ -1308,12 +1385,33 @@ private class OsmTileRepository(
 
 private data class AdminBoundaryPolygon(
     val color: Color,
-    val points: List<Pair<Double, Double>>
-)
+    val points: List<Pair<Double, Double>>,
+    val label: String = ""
+) {
+    val minLat = points.minOf { it.first }
+    val maxLat = points.maxOf { it.first }
+    val minLon = points.minOf { it.second }
+    val maxLon = points.maxOf { it.second }
 
-private fun loadAdminBoundaries(context: Context): List<AdminBoundaryPolygon> {
+    /** Cheap test so off-screen areas are never projected or drawn. */
+    fun mayBeVisible(lat: Double, lon: Double, halfSpanDegrees: Double): Boolean =
+        maxLat >= lat - halfSpanDegrees && minLat <= lat + halfSpanDegrees &&
+            maxLon >= lon - halfSpanDegrees && minLon <= lon + halfSpanDegrees
+}
+
+/** "26ª CICOM (26º DIP) - Setor 26.2" is shown on the map as "CICOM 26.2". */
+private fun cicomMapLabel(name: String): String {
+    Regex("""Setor\s+(\d+\.\d+)""").find(name)?.let { return "CICOM " + it.groupValues[1] }
+    return Regex("""(\d{1,2})ª\s*CICOM""").find(name)?.let { "CICOM " + it.groupValues[1] }.orEmpty()
+}
+
+private fun loadAdminBoundaries(
+    context: Context,
+    asset: String = "bairros_manaus.geojson",
+    labelOf: (String) -> String = { "" }
+): List<AdminBoundaryPolygon> {
     return try {
-        val raw = context.assets.open("bairros_manaus.geojson").bufferedReader().use { it.readText() }
+        val raw = context.assets.open(asset).bufferedReader().use { it.readText() }
         val root = JSONObject(raw)
         val features = root.optJSONArray("features") ?: return emptyList()
         val result = mutableListOf<AdminBoundaryPolygon>()
@@ -1321,6 +1419,7 @@ private fun loadAdminBoundaries(context: Context): List<AdminBoundaryPolygon> {
             val feat = features.optJSONObject(i) ?: continue
             val props = feat.optJSONObject("properties")
             val colorHex = props?.optString("color", "#20DDC3").orEmpty()
+            val label = labelOf(props?.optString("name").orEmpty())
             val parsedColor = runCatching {
                 Color(android.graphics.Color.parseColor(colorHex))
             }.getOrDefault(Color(0xFF20DDC3))
@@ -1334,7 +1433,7 @@ private fun loadAdminBoundaries(context: Context): List<AdminBoundaryPolygon> {
                     val pair = ring.optJSONArray(j) ?: continue
                     pts.add(pair.optDouble(1) to pair.optDouble(0))
                 }
-                if (pts.size >= 3) result.add(AdminBoundaryPolygon(parsedColor, pts))
+                if (pts.size >= 3) result.add(AdminBoundaryPolygon(parsedColor, pts, label))
             } else if (type == "MultiPolygon") {
                 for (p in 0 until coords.length()) {
                     val poly = coords.optJSONArray(p) ?: continue
@@ -1344,7 +1443,7 @@ private fun loadAdminBoundaries(context: Context): List<AdminBoundaryPolygon> {
                         val pair = ring.optJSONArray(j) ?: continue
                         pts.add(pair.optDouble(1) to pair.optDouble(0))
                     }
-                    if (pts.size >= 3) result.add(AdminBoundaryPolygon(parsedColor, pts))
+                    if (pts.size >= 3) result.add(AdminBoundaryPolygon(parsedColor, pts, label))
                 }
             }
         }

@@ -301,15 +301,8 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
 
     private fun calculateRoute(destination: MapPlace) {
         val tracking = TrackingRepository.state.value
-        if (com.example.viavox.model.VehicleMode.from(tracking.config.vehicleType) ==
-            com.example.viavox.model.VehicleMode.WALKING
-        ) {
-            _ui.update { it.copy(
-                calculating = false,route = null,
-                error = "Modo A pé: a bússola e o indicador funcionam. Rotas para pedestres ainda não têm servidor compatível."
-            ) }
-            return
-        }
+        val walking = com.example.viavox.model.VehicleMode.from(
+            tracking.config.vehicleType) == com.example.viavox.model.VehicleMode.WALKING
         if (!tracking.hasLocationFix || (tracking.accuracyMeters ?: 100) > 80) {
             _ui.update { it.copy(error = "Aguarde uma posição GPS precisa para calcular a rota.") }
             return
@@ -317,7 +310,8 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
         routeJob?.cancel()
         _ui.update { it.copy(calculating = true,error = null) }
         routeJob = viewModelScope.launch {
-            val result = network.route(tracking.latitude,tracking.longitude,destination)
+            val result = network.route(
+                tracking.latitude,tracking.longitude,destination,walking)
             result.fold(
                 onSuccess = { route ->
                     _ui.update { it.copy(route = route, calculating = false, error = null) }
@@ -331,12 +325,6 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun startNavigation() {
-        if (com.example.viavox.model.VehicleMode.from(
-                TrackingRepository.state.value.config.vehicleType
-            ) == com.example.viavox.model.VehicleMode.WALKING) {
-            _ui.update { it.copy(error = "Navegação a pé exige um roteador para pedestres; o servidor atual é rodoviário.") }
-            return
-        }
         val route = _ui.value.route ?: return
         if (!TrackingRepository.state.value.hasLocationPermission) {
             _ui.update { it.copy(error = "Autorize o GPS antes de iniciar a navegação.") }

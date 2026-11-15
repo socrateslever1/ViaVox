@@ -25,6 +25,9 @@ class NavigationNetworkService(
     private val photonBase: String = "https://photon.komoot.io",
     private val osrmBase: String = "https://router.project-osrm.org",
     private val nominatimBase: String = "https://nominatim.openstreetmap.org",
+    // Community OSRM mirrors: a second car server and a pedestrian profile.
+    private val osrmFallbackBase: String = "https://routing.openstreetmap.de/routed-car",
+    private val footBase: String = "https://routing.openstreetmap.de/routed-foot",
     private val arcGis: ArcGisManausPlacesService = ArcGisManausPlacesService(http)
 ) {
     // Public Nominatim usage is limited to one request per second. Only perform
@@ -239,35 +242,57 @@ class NavigationNetworkService(
         }
     }
 
-    suspend fun route(startLat: Double, startLon: Double, destination: MapPlace): Result<NavigationRoute> =
-        routeAlternatives(startLat,startLon,destination).mapCatching { routes ->
+    suspend fun route(
+        startLat: Double, startLon: Double, destination: MapPlace,
+        walking: Boolean = false
+    ): Result<NavigationRoute> =
+        routeAlternatives(startLat,startLon,destination,walking).mapCatching { routes ->
             routes.firstOrNull() ?: error("No route returned by routing service.")
         }
 
+    /**
+     * Car routes come from the OSRM demo server with a community mirror as
+     * fallback; walking routes use a pedestrian profile, never the car graph.
+     */
     suspend fun routeAlternatives(
         startLat: Double,
         startLon: Double,
-        destination: MapPlace
+        destination: MapPlace,
+        walking: Boolean = false
     ): Result<List<NavigationRoute>> =
         withContext(Dispatchers.IO) {
             runCatching {
                 require(startLat in -90.0..90.0 && startLon in -180.0..180.0)
                 val coords = "${startLon},${startLat};${destination.longitude},${destination.latitude}"
-                val endpoint = osrmBase.trimEnd('/').toHttpUrl().newBuilder()
-                    .addPathSegments("route/v1/driving")
-                    .addPathSegment(coords)
-                    .addQueryParameter("overview", "full")
-                    .addQueryParameter("geometries", "geojson")
-                    .addQueryParameter("steps", "true")
-                    .addQueryParameter("alternatives", "true")
-                    .build()
-                http.newCall(
-                    Request.Builder().url(endpoint)
-                        .header("User-Agent", "ViaVox-Android/0.6 (routing)").build()
-                ).execute().use { response ->
-                    require(response.isSuccessful) { "Serviço de rotas indisponível (${response.code})." }
-                    parseOsrmAlternatives(response.body?.string().orEmpty(), destination)
+                val servers = if (walking) listOf(footBase to "route/v1/foot")
+                    else listOf(osrmBase to "route/v1/driving",
+                        osrmFallbackBase to "route/v1/driving")
+                var failure: Exception? = null
+                for ((server, profile) in servers) {
+                    if (server.isBlank()) continue
+                    try {
+                        val endpoint = server.trimEnd('/').toHttpUrl().newBuilder()
+                            .addPathSegments(profile)
+                            .addPathSegment(coords)
+                            .addQueryParameter("overview", "full")
+                            .addQueryParameter("geometries", "geojson")
+                            .addQueryParameter("steps", "true")
+                            .addQueryParameter("alternatives", "true")
+                            .build()
+                        return@runCatching http.newCall(
+                            Request.Builder().url(endpoint)
+                                .header("User-Agent", "ViaVox-Android/0.6 (routing)").build()
+                        ).execute().use { response ->
+                            require(response.isSuccessful) {
+                                "Serviço de rotas indisponível (${response.code})."
+                            }
+                            parseOsrmAlternatives(response.body?.string().orEmpty(), destination)
+                        }
+                    } catch (error: Exception) {
+                        failure = error
+                    }
                 }
+                throw failure ?: IllegalStateException("Serviço de rotas indisponível.")
             }
         }
 
@@ -396,7 +421,11 @@ class NavigationNetworkService(
                 } else {
                     "Entre na rotatória${to}"
                 }
-                "merge", "on ramp", "off ramp" -> "Acesse a via${to}"
+                "off ramp" -> when (modifier) {
+                    "left", "slight left" -> "Pegue a saída à esquerda${to}"
+                    else -> "Pegue a saída à direita${to}"
+                }
+                "merge", "on ramp" -> "Acesse a via${to}"
                 "continue", "new name" -> "Continue${to}"
                 else -> ""
             }

@@ -20,6 +20,7 @@ import com.example.viavox.MainActivity
 import com.example.viavox.R
 import com.example.viavox.data.NavigationNetworkService
 import com.example.viavox.model.NavigationRoute
+import com.example.viavox.model.VehicleMode
 import com.example.viavox.data.NominatimService
 import com.example.viavox.data.PoiDiscoveryService
 import com.example.viavox.data.SurroundingsRepository
@@ -660,7 +661,8 @@ class ViaVoxTrackingService : Service() {
     private fun installNavigation(route: NavigationRoute) {
         if (route.coordinates.size < 2) return
         rerouteJob?.cancel()
-        navigationEngine = NavigationSessionEngine(route)
+        navigationEngine = NavigationSessionEngine(route,
+            walking = VehicleMode.from(currentConfig.vehicleType) == VehicleMode.WALKING)
         ActiveNavigationRepository.publish(ActiveNavigationState(
             navigating = true,route = route,
             instruction = "Siga pela rota indicada",
@@ -715,7 +717,8 @@ class ViaVoxTrackingService : Service() {
             ))
             rerouteJob = serviceScope.launch {
                 val result = navigationNetwork.route(
-                    location.latitude,location.longitude,previous.destination
+                    location.latitude,location.longitude,previous.destination,
+                    VehicleMode.from(currentConfig.vehicleType) == VehicleMode.WALKING
                 )
                 if (epoch != navigationEpoch || navigationEngine !== engine) return@launch
                 result.onSuccess { next ->

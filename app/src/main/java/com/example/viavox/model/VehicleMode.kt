@@ -17,10 +17,10 @@ enum class VehicleMode(val storedValue: String, val displayName: String) {
  * directions. OSRM's public 'driving' backend is car-only.
  */
 object SupportedRoutingProfile {
-    fun isSupported(mode: VehicleMode): Boolean = mode != VehicleMode.WALKING
+    fun isSupported(mode: VehicleMode): Boolean = true
     fun disclosure(mode: VehicleMode): String = when (mode) {
         VehicleMode.CAR -> "Trajeto de carro"
         VehicleMode.MOTORCYCLE -> "Trajeto rodoviário (perfil de carro); não considera restrições específicas para motos"
-        VehicleMode.WALKING -> "Navegação a pé ainda não disponível; posição e bússola funcionam sem rota"
+        VehicleMode.WALKING -> "Trajeto a pé (perfil de pedestre); confira calçadas e travessias no local"
     }
 }

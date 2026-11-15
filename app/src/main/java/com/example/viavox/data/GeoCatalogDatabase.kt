@@ -374,6 +374,7 @@ class GeoCatalogDatabase(context: Context) :
                 }
                     require(completed) { "Fim do pacote geográfico ausente" }
                     db.setTransactionSuccessful()
+                    streetIndex=null
                 } finally { if(db.inTransaction()) db.endTransaction() }
             }
         }
@@ -406,7 +407,39 @@ class GeoCatalogDatabase(context: Context) :
                 subtitle="Referência mapeada · "+c.getString(3)
             ))
         }
+        // Streets fill what is left: a street is a valid destination even
+        // with no internet, using the offline OSM and IBGE street list.
+        val room=limit.coerceIn(1,20)-results.size
+        if (room>0) results.addAll(searchStreets(needle,room))
         results
+    }
+
+    private class IndexedStreet(val key:String,val name:String,val lat:Double,
+                                val lon:Double,val cityCode:Int)
+    @Volatile private var streetIndex:List<IndexedStreet>?=null
+
+    /** Accent-insensitive street lookup over an in-memory copy of the table. */
+    private fun searchStreets(needle:String, limit:Int):
+        List<com.example.viavox.model.MapPlace> {
+        val index=streetIndex ?: ArrayList<IndexedStreet>().also { list ->
+            readableDatabase.rawQuery(
+                "SELECT name,lat,lon,city_code FROM streets WHERE lat IS NOT NULL",null
+            ).use { c ->
+                while(c.moveToNext()) list.add(IndexedStreet(fold(c.getString(0)),
+                    c.getString(0),c.getDouble(1),c.getDouble(2),c.getInt(3)))
+            }
+            streetIndex=list
+        }
+        val cities=AmazonasMunicipalityDirectory.all.toMap()
+        return index.asSequence().filter { it.key.contains(needle) }
+            .sortedWith(compareBy<IndexedStreet> { if (it.cityCode==1302603) 0 else 1 }
+                .thenBy { if (it.key.endsWith(needle) || it.key.startsWith(needle)) 0 else 1 }
+                .thenBy { it.key.length })
+            .take(limit)
+            .map { com.example.viavox.model.MapPlace(
+                name=it.name,latitude=it.lat,longitude=it.lon,
+                subtitle="Via · "+(cities[it.cityCode] ?: "Amazonas")+" · ponto aproximado"
+            ) }.toList()
     }
 
     suspend fun searchByName(query:String, limit:Int=20):List<String> =
