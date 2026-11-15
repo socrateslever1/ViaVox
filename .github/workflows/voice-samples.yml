@@ -1,0 +1,133 @@
+name: Voice samples (on-device TTS trial)
+
+# Synthesises ViaVox-style sentences with the Brazilian Portuguese voices that
+# sherpa-onnx can run on a phone, and uploads them as audio so the voice can
+# be chosen by ear. Also proves the engine runs end to end with these models.
+# Nothing here ships in the app. Runs when this file changes.
+on:
+  push:
+    branches: [ccr-28b73783-qbhfmn]
+    paths: ['.github/workflows/voice-samples.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  samples:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Install sherpa-onnx
+        run: |
+          python3 -m pip install --disable-pip-version-check sherpa-onnx
+          python3 -m pip show sherpa-onnx | head -3
+
+      - name: Download voices
+        run: |
+          mkdir -p voices && cd voices
+          for v in pt_BR-faber-medium pt_BR-cadu-medium pt_BR-jeff-medium pt_BR-edresson-low pt_BR-dii-high pt_BR-miro-high; do
+            curl -fsSL --retry 3 -o "$v.tar.bz2" \
+              "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-$v-int8.tar.bz2" \
+              || echo "download failed: $v"
+            tar xjf "$v.tar.bz2" 2>/dev/null
+          done
+          ls -d vits-piper-*
+          echo "--- layout of one voice (top level)"
+          ls -l vits-piper-pt_BR-faber-medium-int8 | grep -v "^d"
+          for d in vits-piper-*; do echo "== $d"; cat "$d/MODEL_CARD" 2>/dev/null | grep -iE "license|dataset|url" ; done
+
+      - name: Synthesise
+        run: |
+          python3 - <<'PY'
+          import array, glob, os, time, traceback, wave
+          import sherpa_onnx
+
+          SENTENCES = [
+              "Você está na Avenida Djalma Batista, bairro Chapada, Zona Centro-Sul.",
+              "Em trezentos metros, vire à direita na Rua Ramos Ferreira. Em seguida, vire à esquerda na Avenida Getúlio Vargas.",
+              "À sua direita, Hospital Universitário Getúlio Vargas, a aproximadamente oitenta metros.",
+              "Em 300 metros, na rotatória, pegue a 2ª saída.",
+              "Você chegou ao destino, à esquerda.",
+              "Atenção, radar de velocidade a quinhentos metros. Limite de sessenta quilômetros por hora.",
+          ]
+          os.makedirs("out", exist_ok=True)
+          summary = []
+          for folder in sorted(glob.glob("voices/vits-piper-*")):
+              if not os.path.isdir(folder):
+                  continue
+              name = os.path.basename(folder).replace("vits-piper-", "").replace("-int8", "")
+              try:
+                  onnx = glob.glob(f"{folder}/*.onnx")[0]
+                  files = sorted(os.listdir(folder))
+                  print(f"\n=== {name}: files {files}")
+                  vits_args = dict(model=onnx, tokens=f"{folder}/tokens.txt")
+                  data_dir = f"{folder}/espeak-ng-data"
+                  accepted = None
+                  for key in ("data_dir", None):
+                      try:
+                          args = dict(vits_args)
+                          if key:
+                              args[key] = data_dir
+                          vits = sherpa_onnx.OfflineTtsVitsModelConfig(**args)
+                          accepted = key
+                          break
+                      except TypeError as error:
+                          print("  config rejected", key, error)
+                  print("  data_dir accepted:", accepted)
+                  config = sherpa_onnx.OfflineTtsConfig(
+                      model=sherpa_onnx.OfflineTtsModelConfig(
+                          vits=vits, num_threads=2, debug=False, provider="cpu"),
+                      max_num_sentences=1)
+                  tts = sherpa_onnx.OfflineTts(config)
+                  total_audio = total_time = 0.0
+                  for index, text in enumerate(SENTENCES, 1):
+                      started = time.time()
+                      audio = tts.generate(text, sid=0, speed=1.0)
+                      took = time.time() - started
+                      seconds = len(audio.samples) / audio.sample_rate
+                      total_audio += seconds
+                      total_time += took
+                      pcm = array.array("h", [max(-32768, min(32767, int(s * 32767))) for s in audio.samples])
+                      path = f"out/{name}_{index}.wav"
+                      with wave.open(path, "wb") as handle:
+                          handle.setnchannels(1)
+                          handle.setsampwidth(2)
+                          handle.setframerate(audio.sample_rate)
+                          handle.writeframes(pcm.tobytes())
+                      print(f"  {index}: {seconds:5.2f}s audio in {took:5.2f}s  ({audio.sample_rate} Hz)  {text[:50]}")
+                  summary.append((name, total_audio, total_time))
+              except Exception:
+                  print(f"!! {name} failed")
+                  traceback.print_exc()
+          print("\n=== real-time factor (generation time / audio length; lower is faster, below 1 is real time)")
+          for name, audio_seconds, took in summary:
+              print(f"{name:28s} {took / audio_seconds:5.2f}   ({audio_seconds:5.1f}s of audio)")
+          if not summary:
+              raise SystemExit("no voice could be synthesised")
+          PY
+
+      - name: Make phone-friendly audio and a listening guide
+        if: always()
+        run: |
+          cd out 2>/dev/null || exit 0
+          if command -v ffmpeg >/dev/null; then
+            for f in *.wav; do ffmpeg -loglevel error -y -i "$f" -b:a 56k "${f%.wav}.mp3" && rm "$f"; done
+          fi
+          cat > LEIA-ME.txt <<'EOF'
+          Cada voz le as mesmas 6 frases (arquivos NOME_1 a NOME_6):
+            1 rua e bairro   2 duas manobras seguidas   3 ponto de referencia
+            4 numeros em digitos (300, 2a)   5 chegada   6 alerta de radar
+          Vozes: faber, cadu, jeff (licenca CC0); edresson (CC BY 4.0);
+          dii e miro: licenca nao verificada, so para ouvir.
+          EOF
+          ls -l
+
+      - name: Upload samples
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ViaVox-voice-samples
+          path: out/
+          retention-days: 14
+          if-no-files-found: warn
