@@ -26,6 +26,7 @@ import com.example.viavox.data.PoiDiscoveryService
 import com.example.viavox.data.SurroundingsRepository
 import com.example.viavox.data.OfflineNearbyLandmarks
 import com.example.viavox.data.GeoCatalogDatabase
+import com.example.viavox.data.GeoContextInterpreter
 import com.example.viavox.data.GeoSpeechPolicy
 import com.example.viavox.data.AmazonasMunicipalitySync
 import com.example.viavox.data.AmazonasMunicipalityDirectory
@@ -1131,13 +1132,8 @@ class ViaVoxTrackingService : Service() {
                     (heading == null || it.angle == null ||
                         kotlin.math.abs(it.angle) <= 105.0)
             }.minByOrNull {
-                val penalty = when (it.landmark.kind) {
-                    "historic", "tourism" -> 0.0
-                    "leisure" -> 12.0
-                    "amenity" -> 20.0
-                    else -> 32.0
-                }
-                it.distanceMeters + penalty
+                it.distanceMeters + GeoContextInterpreter.tourPenalty(
+                    it.landmark.kind, it.landmark.subkind, it.landmark.name)
             } ?: return@launch
             if (recent - lastTourSpokenAt < 90_000L) return@launch
             val side = SurroundingsPolicy.directionText(candidate, heading != null)

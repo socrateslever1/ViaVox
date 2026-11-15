@@ -209,7 +209,8 @@ class SurroundingsRepository(
             if (id <= 0 || !latitude.isFinite() || !longitude.isFinite()) continue
             val candidate = NearbyLandmark(
                 "${entry.optString("type")}:$id", name, latitude, longitude, kind,
-                approximatePoint = entry.optString("type") != "node"
+                approximatePoint = entry.optString("type") != "node",
+                subkind = tags.optString(kind).take(40)
             )
             if (candidates.none {
                 it.name.equals(candidate.name, ignoreCase = true) &&

@@ -153,7 +153,9 @@ class GeoCatalogDatabase(context: Context) :
                 put("search_key",fold(name))
                 put("lat",poi.latitude)
                 put("lon",poi.longitude)
-                put("kind",poi.kind.take(40))
+                // The tag value ("hospital") is what ranking needs; the key
+                // alone ("amenity") says nothing.
+                put("kind",poi.subkind.ifBlank { poi.kind }.take(40))
                 put("approximate",if (poi.approximatePoint) 1 else 0)
                 put("source",source.take(90))
                 put("updated_at",now)

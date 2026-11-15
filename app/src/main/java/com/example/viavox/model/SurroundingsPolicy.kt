@@ -26,7 +26,9 @@ data class NearbyLandmark(
     val longitude: Double,
     val kind: String,
     // Polygon center is NOT an entrance or precise position.
-    val approximatePoint: Boolean = false
+    val approximatePoint: Boolean = false,
+    /** The OSM tag value ("hospital", "pharmacy"); [kind] may hold only the tag key. */
+    val subkind: String = ""
 ) {
     fun distanceTo(lat: Double, lon: Double): Double =
         PointOfInterest(id, name, PoiCategory.PUBLIC, latitude, longitude).distanceTo(lat, lon)
@@ -77,12 +79,13 @@ object SurroundingsPolicy {
             .filter { direction == ScanDirection.AROUND || (it.angle != null && abs(it.angle) <= 65.0) }
             .distinctBy { it.landmark.name.lowercase().trim() }
             .let { candidates ->
-                com.example.viavox.data.GeoContextInterpreter.rank(
-                    candidates.toList(), direction == ScanDirection.FRONT
-                ).asSequence()
+                com.example.viavox.data.GeoContextInterpreter.diversify(
+                    com.example.viavox.data.GeoContextInterpreter.rank(
+                        candidates.toList(), direction == ScanDirection.FRONT
+                    ),
+                    limit.coerceIn(1, 8)
+                )
             }
-            .take(limit.coerceIn(1, 8))
-            .toList()
     }
 
     fun directionText(candidate: LandmarkCandidate, preciseHeading: Boolean): String {
