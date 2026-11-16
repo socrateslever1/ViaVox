@@ -232,4 +232,11 @@ class SafetyAlertEngineTest {
         assertTrue(alertReceived!!.contains("radar à frente"))
         assertTrue(alertReceived!!.contains("limite 60 por hora"))
     }
+
+    @Test
+    fun dynamicWarningMaxMeters_scalesWithSpeedAndClamps() {
+        assertEquals(200.0, SafetyAlertEngine.dynamicWarningMaxMeters(20f), 0.1)
+        assertEquals(275.0, SafetyAlertEngine.dynamicWarningMaxMeters(50f), 0.1)
+        assertEquals(480.0, SafetyAlertEngine.dynamicWarningMaxMeters(100f), 0.1)
+    }
 }

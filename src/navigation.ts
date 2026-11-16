@@ -404,3 +404,81 @@ function distanceToSegmentMeters(
   const t = Math.max(0, Math.min(1, projection));
   return Math.hypot(ax + t * dx, ay + t * dy);
 }
+
+export type VehicleProfile = 'car' | 'motorcycle' | 'walking';
+
+export function buildOsrmRouteUrls(
+  start: { lat: number; lon: number },
+  target: { latitude: number; longitude: number },
+  vehicle: VehicleProfile
+): string[] {
+  const coords = `${start.lon},${start.lat};${target.longitude},${target.latitude}`;
+  const query = 'overview=full&geometries=geojson&steps=true&alternatives=true';
+  if (vehicle === 'walking') {
+    return [`https://routing.openstreetmap.de/routed-foot/route/v1/foot/${coords}?${query}`];
+  }
+  return [
+    `https://router.project-osrm.org/route/v1/driving/${coords}?${query}`,
+    `https://routing.openstreetmap.de/routed-car/route/v1/driving/${coords}?${query}`
+  ];
+}
+
+export interface WebLocationSample {
+  lat: number;
+  lon: number;
+  accuracyMeters: number;
+  timestampMs: number;
+  headingDegrees: number | null;
+}
+
+export function computeBearingDegrees(
+  from: { lat: number; lon: number },
+  to: { lat: number; lon: number }
+): number {
+  const cosLat = Math.cos((from.lat * Math.PI) / 180);
+  const dLat = to.lat - from.lat;
+  const dLon = (to.lon - from.lon) * cosLat;
+  return ((Math.atan2(dLon, dLat) * 180) / Math.PI + 360) % 360;
+}
+
+export function acceptWebLocationFix(
+  previous: WebLocationSample | null,
+  candidate: WebLocationSample
+): { accepted: boolean; headingDegrees: number | null } {
+  if (
+    !Number.isFinite(candidate.lat) || !Number.isFinite(candidate.lon) ||
+    candidate.lat < -90 || candidate.lat > 90 ||
+    candidate.lon < -180 || candidate.lon > 180 ||
+    !Number.isFinite(candidate.accuracyMeters) ||
+    candidate.accuracyMeters <= 0 || candidate.accuracyMeters > 90
+  ) {
+    return { accepted: false, headingDegrees: null };
+  }
+
+  if (!previous) {
+    return { accepted: true, headingDegrees: candidate.headingDegrees };
+  }
+
+  if (candidate.timestampMs <= previous.timestampMs) {
+    return { accepted: false, headingDegrees: null };
+  }
+
+  const dist = distanceMeters(
+    { latitude: previous.lat, longitude: previous.lon },
+    { latitude: candidate.lat, longitude: candidate.lon }
+  );
+  const elapsedSeconds = (candidate.timestampMs - previous.timestampMs) / 1000;
+  const tolerance = Math.max(previous.accuracyMeters, candidate.accuracyMeters) * 1.5;
+
+  if (dist > 65 * elapsedSeconds + tolerance) {
+    return { accepted: false, headingDegrees: null };
+  }
+
+  const resolvedHeading = candidate.headingDegrees !== null
+    ? candidate.headingDegrees
+    : dist >= 6
+      ? computeBearingDegrees(previous, candidate)
+      : previous.headingDegrees;
+
+  return { accepted: true, headingDegrees: resolvedHeading };
+}

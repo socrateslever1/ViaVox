@@ -53,10 +53,11 @@ class SafetyAlertEngine(
         }
     }
 
+    private val featureLock = Any()
     private val officialFeatures = mutableListOf<SafetyFeature>()
     private val osmFeatures = mutableListOf<SafetyFeature>()
     private val cachedMergedFeatures = mutableListOf<SafetyFeature>()
-    private val alertedFeatureIds = mutableSetOf<String>()
+    private val alertedFeatureTimes = mutableMapOf<String, Long>()
     private var lastQueryLat = Double.NaN
     private var lastQueryLon = Double.NaN
     private var lastQueryTime = 0L
@@ -64,9 +65,17 @@ class SafetyAlertEngine(
     companion object {
         const val DUPLICATE_DISTANCE_METERS = 45.0
         const val WARNING_MIN_METERS = 80.0
+        const val WARNING_MIN_DYNAMIC_MAX_METERS = 200.0
         const val WARNING_MAX_METERS = 480.0
         const val WARNING_MIN_SPEED_KMH = 15f
         const val WARNING_CONE_DEGREES = 55f
+        const val ALERT_COOLDOWN_MS = 600_000L
+
+        /** Scale lookahead distance with speed (~200 m in slow traffic up to 480 m on fast avenues). */
+        fun dynamicWarningMaxMeters(speedKmh: Float): Double {
+            if (!speedKmh.isFinite() || speedKmh <= 0f) return WARNING_MIN_DYNAMIC_MAX_METERS
+            return (speedKmh * 5.5).coerceIn(WARNING_MIN_DYNAMIC_MAX_METERS, WARNING_MAX_METERS)
+        }
 
         fun parseOfficialAlerts(jsonString: String): List<SafetyFeature> {
             val result = mutableListOf<SafetyFeature>()
@@ -221,30 +230,28 @@ class SafetyAlertEngine(
     }
 
     fun setOfficialAlerts(alerts: List<SafetyFeature>) {
-        synchronized(officialFeatures) {
+        synchronized(featureLock) {
             officialFeatures.clear()
             officialFeatures.addAll(alerts)
-            rebuildMergedFeatures()
+            rebuildMergedFeaturesLocked()
         }
     }
 
     fun setOsmAlerts(alerts: List<SafetyFeature>) {
-        synchronized(osmFeatures) {
+        synchronized(featureLock) {
             osmFeatures.clear()
             osmFeatures.addAll(alerts)
-            rebuildMergedFeatures()
+            rebuildMergedFeaturesLocked()
         }
     }
 
-    private fun rebuildMergedFeatures() {
+    private fun rebuildMergedFeaturesLocked() {
         val merged = mergeAlerts(officialFeatures, osmFeatures)
-        synchronized(cachedMergedFeatures) {
-            cachedMergedFeatures.clear()
-            cachedMergedFeatures.addAll(merged)
-        }
+        cachedMergedFeatures.clear()
+        cachedMergedFeatures.addAll(merged)
     }
 
-    fun getFeatures(): List<SafetyFeature> = synchronized(cachedMergedFeatures) { cachedMergedFeatures.toList() }
+    fun getFeatures(): List<SafetyFeature> = synchronized(featureLock) { cachedMergedFeatures.toList() }
 
     suspend fun evaluate(
         userLat: Double,
@@ -262,26 +269,30 @@ class SafetyAlertEngine(
         } else Double.POSITIVE_INFINITY
 
         if (movedMeters > 400.0 || now - lastQueryTime >= 180_000L) {
-            querySafetyFeatures(userLat, userLon)
-            lastQueryLat = userLat
-            lastQueryLon = userLon
-            lastQueryTime = now
-        }
-
-        // 2. Check for upcoming alerts in the path of travel
-        val upcoming = synchronized(cachedMergedFeatures) {
-            cachedMergedFeatures.filter { feat ->
-                val dist = NavigationMath.meters(userLat, userLon, feat.latitude, feat.longitude)
-                dist in WARNING_MIN_METERS..WARNING_MAX_METERS
+            if (querySafetyFeatures(userLat, userLon)) {
+                lastQueryLat = userLat
+                lastQueryLon = userLon
+                lastQueryTime = now
             }
         }
 
+        // 2. Check for upcoming alerts in the path of travel (scaled by vehicle speed)
+        val maxWarningMeters = dynamicWarningMaxMeters(speedKmh)
+        val upcoming = synchronized(featureLock) {
+            cachedMergedFeatures.filter { feat ->
+                val dist = NavigationMath.meters(userLat, userLon, feat.latitude, feat.longitude)
+                dist in WARNING_MIN_METERS..maxWarningMeters
+            }
+        }
+
+        val cosLat = kotlin.math.cos(Math.toRadians(userLat))
         for (feat in upcoming) {
-            if (alertedFeatureIds.contains(feat.id)) continue
+            val lastAlertedAt = synchronized(featureLock) { alertedFeatureTimes[feat.id] }
+            if (lastAlertedAt != null && now - lastAlertedAt < ALERT_COOLDOWN_MS) continue
 
             // Directional check: is the alert in front of the vehicle?
             val dLat = feat.latitude - userLat
-            val dLon = feat.longitude - userLon
+            val dLon = (feat.longitude - userLon) * cosLat
             val angleToFeature = Math.toDegrees(Math.atan2(dLon, dLat)).toFloat()
             val normalizedAngle = ((angleToFeature % 360f) + 360f) % 360f
             val normalizedBearing = ((bearing % 360f) + 360f) % 360f
@@ -289,7 +300,7 @@ class SafetyAlertEngine(
 
             // Vehicle moving in direction of feature (within cone)
             if (speedKmh >= WARNING_MIN_SPEED_KMH && angleDiff <= WARNING_CONE_DEGREES) {
-                alertedFeatureIds.add(feat.id)
+                synchronized(featureLock) { alertedFeatureTimes[feat.id] = now }
                 val dist = NavigationMath.meters(userLat, userLon, feat.latitude, feat.longitude).toInt()
                 val msg = buildAlertMessage(feat, dist)
                 onAlert(msg)
@@ -299,7 +310,7 @@ class SafetyAlertEngine(
         getFeatures()
     }
 
-    private fun querySafetyFeatures(lat: Double, lon: Double) {
+    private fun querySafetyFeatures(lat: Double, lon: Double): Boolean {
         val query = String.format(
             Locale.US,
             """
@@ -319,15 +330,17 @@ class SafetyAlertEngine(
             .post(query.trim().toRequestBody("application/x-www-form-urlencoded; charset=utf-8".toMediaType()))
             .build()
 
-        try {
+        return try {
             client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return
+                if (!response.isSuccessful) return false
                 val body = response.body?.string().orEmpty()
                 val osmParsed = parseOsmAlerts(body)
                 setOsmAlerts(osmParsed)
+                true
             }
         } catch (_: Exception) {
             // Network fallback: offline safety preserves current cache
+            false
         }
     }
 }

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  acceptWebLocationFix,
+  buildOsrmRouteUrls,
   createNavigationSession,
   findRouteProgress,
   isArrival,
@@ -229,5 +231,39 @@ describe('navigation session', () => {
 
     const repeated = updateNavigationSession(arrived.session, destination, 8, 201_000);
     expect(repeated.announcement).toBeNull();
+  });
+
+  it('selects foot profile for walking and driving with fallback for vehicles', () => {
+    const start = { lat: -3.1, lon: -60.02 };
+    const target = { latitude: -3.11, longitude: -60.03 };
+
+    expect(buildOsrmRouteUrls(start, target, 'walking')).toEqual([
+      'https://routing.openstreetmap.de/routed-foot/route/v1/foot/-60.02,-3.1;-60.03,-3.11?overview=full&geometries=geojson&steps=true&alternatives=true'
+    ]);
+
+    const carUrls = buildOsrmRouteUrls(start, target, 'car');
+    expect(carUrls).toHaveLength(2);
+    expect(carUrls[0]).toContain('router.project-osrm.org/route/v1/driving/');
+    expect(carUrls[1]).toContain('routing.openstreetmap.de/routed-car/route/v1/driving/');
+  });
+
+  it('rejects inaccurate or teleporting GPS fixes and derives fallback bearing', () => {
+    const first = { lat: -3.1, lon: -60.02, accuracyMeters: 12, timestampMs: 10_000, headingDegrees: null };
+    expect(acceptWebLocationFix(null, first)).toEqual({ accepted: true, headingDegrees: null });
+
+    // 100m accuracy should be rejected
+    expect(acceptWebLocationFix(first, { ...first, accuracyMeters: 100, timestampMs: 12_000 }).accepted).toBe(false);
+
+    // Impossible 5km jump in 1s should be rejected
+    expect(acceptWebLocationFix(first, {
+      lat: -3.15, lon: -60.02, accuracyMeters: 10, timestampMs: 11_000, headingDegrees: null
+    }).accepted).toBe(false);
+
+    // Valid ~111m North movement in 5s derives ~0 deg bearing when sensor heading is null
+    const validMove = acceptWebLocationFix(first, {
+      lat: -3.099, lon: -60.02, accuracyMeters: 10, timestampMs: 15_000, headingDegrees: null
+    });
+    expect(validMove.accepted).toBe(true);
+    expect(validMove.headingDegrees).toBeCloseTo(0, 1);
   });
 });

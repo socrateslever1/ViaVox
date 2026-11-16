@@ -6,6 +6,8 @@ import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import './style.css';
 import {
+  acceptWebLocationFix,
+  buildOsrmRouteUrls,
   createNavigationSession,
   parseOsrmRoutes,
   parsePhotonResponse,
@@ -16,9 +18,12 @@ import {
   updateNavigationSession,
   type NavigationSession,
   type NavigationRoute,
-  type SearchPlace
+  type SearchPlace,
+  type VehicleProfile,
+  type WebLocationSample
 } from './navigation';
 import {
+  dynamicAlertMaxMeters,
   mergeRoadAlerts,
   parseOfficialRoadAlerts,
   parseOsmRoadAlerts,
@@ -159,6 +164,7 @@ function metersBetween(lat1: number, lon1: number, lat2: number, lon2: number): 
 function MapCanvas({
   position,
   heading,
+  speedKmh = 0,
   followUser,
   vehicleType,
   route,
@@ -174,8 +180,9 @@ function MapCanvas({
 }: {
   position: Coordinates | null;
   heading: number | null;
+  speedKmh?: number;
   followUser: boolean;
-  vehicleType: 'car' | 'motorcycle';
+  vehicleType: VehicleProfile;
   route: NavRoute | null;
   destination: Coordinates | null;
   safetyCameras: RoadAlert[];
@@ -508,15 +515,16 @@ function MapCanvas({
     }
 
     if (followUser) {
+      const baseZoom = speedKmh >= 75 ? 15.4 : speedKmh >= 45 ? 16.0 : speedKmh >= 8 ? 16.6 : 17.2;
       map.current.easeTo({
         center: point,
-        zoom: route ? 17.0 : 16.5,
+        zoom: route ? baseZoom + 0.2 : baseZoom,
         pitch: 48,
         bearing: heading ?? map.current.getBearing(),
         duration: 550
       });
     }
-  }, [position, heading, followUser, vehicleType, route]);
+  }, [position, heading, speedKmh, followUser, vehicleType, route]);
 
   return <div ref={container} className="map-surface" aria-label="Mapa ViaVox" />;
 }
@@ -532,9 +540,10 @@ export function App() {
   const [speedKmh, setSpeedKmh] = useState(0);
 
   // Settings & Config
-  const [vehicleType, setVehicleType] = useState<'car' | 'motorcycle'>(() =>
-    (localStorage.getItem('viavox.vehicle') as any) || 'car'
-  );
+  const [vehicleType, setVehicleType] = useState<VehicleProfile>(() => {
+    const saved = localStorage.getItem('viavox.vehicle');
+    return saved === 'motorcycle' || saved === 'walking' ? saved : 'car';
+  });
   const [mapStyleKey, setMapStyleKey] = useState<keyof typeof MAP_STYLES>(() =>
     (localStorage.getItem('viavox.map_style') as any) || 'bright'
   );
@@ -578,7 +587,7 @@ export function App() {
   const [safetyCameras, setSafetyCameras] = useState<RoadAlert[]>([]);
   const officialSafetyAlerts = useRef<OfficialRoadAlert[]>([]);
   const osmSafetyAlerts = useRef<RoadAlert[]>([]);
-  const alertedCameraIds = useRef<Set<string>>(new Set());
+  const alertedCameraTimes = useRef<Map<string, number>>(new Map());
   const lastSafetyQueryTime = useRef(0);
   const lastSafetyQueryPoint = useRef<Coordinates | null>(null);
 
@@ -613,6 +622,11 @@ export function App() {
   const session = useRef(0);
   const navigationSessionRef = useRef(navigationSession);
   const selectedDestinationRef = useRef<SearchPlace | null>(null);
+  const lastAcceptedFixRef = useRef<WebLocationSample | null>(null);
+  const safetyCamerasRef = useRef(safetyCameras);
+  const enableSafetyRef = useRef(enableSafety);
+  const voiceRef = useRef(voice);
+  const voiceRateRef = useRef(voiceRate);
   const searchAbort = useRef<AbortController | null>(null);
   const routeAbort = useRef<AbortController | null>(null);
   const searchRequestId = useRef(0);
@@ -621,6 +635,22 @@ export function App() {
   useEffect(() => {
     navigationSessionRef.current = navigationSession;
   }, [navigationSession]);
+
+  useEffect(() => {
+    safetyCamerasRef.current = safetyCameras;
+  }, [safetyCameras]);
+
+  useEffect(() => {
+    enableSafetyRef.current = enableSafety;
+  }, [enableSafety]);
+
+  useEffect(() => {
+    voiceRef.current = voice;
+  }, [voice]);
+
+  useEffect(() => {
+    voiceRateRef.current = voiceRate;
+  }, [voiceRate]);
 
   // Persist settings
   useEffect(() => {
@@ -662,22 +692,22 @@ export function App() {
 
   // Voice narration helper
   function speakLocal(text: string) {
-    if (!voice || !('speechSynthesis' in window)) return;
+    if (!voiceRef.current || !('speechSynthesis' in window)) return;
     window.speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
     u.lang = 'pt-BR';
-    u.rate = voiceRate;
+    u.rate = voiceRateRef.current;
     window.speechSynthesis.speak(u);
   }
 
   function say(text: string) {
-    if (!voice || !text.trim()) return;
+    if (!voiceRef.current || !text.trim()) return;
     speakLocal(text);
   }
 
   // --- Query Speed Cameras & Tolls (Overpass API) ---
   async function querySafetyFeatures(lat: number, lon: number) {
-    if (!enableSafety) return;
+    if (!enableSafetyRef.current) return;
     const now = Date.now();
     if (
       lastSafetyQueryPoint.current &&
@@ -686,8 +716,6 @@ export function App() {
     ) {
       return;
     }
-    lastSafetyQueryTime.current = now;
-    lastSafetyQueryPoint.current = { lat, lon };
 
     try {
       const q = `[out:json][timeout:5];(node["highway"="speed_camera"](around:2500,${lat},${lon});node["barrier"="toll_booth"](around:3500,${lat},${lon}););out body qt;`;
@@ -698,6 +726,8 @@ export function App() {
       });
       if (!res.ok) return;
       const osm = parseOsmRoadAlerts(await res.json());
+      lastSafetyQueryTime.current = now;
+      lastSafetyQueryPoint.current = { lat, lon };
       osmSafetyAlerts.current = osm;
       setSafetyCameras(mergeRoadAlerts(officialSafetyAlerts.current, osm));
     } catch {
@@ -707,22 +737,27 @@ export function App() {
 
   // Check upcoming cameras on path
   function checkSafetyAlerts(userLat: number, userLon: number, userBearing: number | null, userSpeedKmh: number) {
-    if (!enableSafety || userSpeedKmh < 15 || safetyCameras.length === 0) return;
+    const cameras = safetyCamerasRef.current;
+    if (!enableSafetyRef.current || userSpeedKmh < 15 || cameras.length === 0) return;
 
-    safetyCameras.forEach(cam => {
-      if (alertedCameraIds.current.has(cam.id)) return;
+    const now = Date.now();
+    const maxWarningMeters = dynamicAlertMaxMeters(userSpeedKmh);
+    const cosLat = Math.cos((userLat * Math.PI) / 180);
+    cameras.forEach(cam => {
+      const lastAlerted = alertedCameraTimes.current.get(cam.id);
+      if (lastAlerted !== undefined && now - lastAlerted < 600000) return;
       const dist = metersBetween(userLat, userLon, cam.lat, cam.lon);
-      if (dist >= 80 && dist <= 450) {
+      if (dist >= 80 && dist <= maxWarningMeters) {
         // Bearing check if heading available
         if (userBearing !== null) {
           const dLat = cam.lat - userLat;
-          const dLon = cam.lon - userLon;
+          const dLon = (cam.lon - userLon) * cosLat;
           const angle = ((Math.atan2(dLon, dLat) * 180) / Math.PI + 360) % 360;
           const diff = Math.abs((((angle - userBearing + 540) % 360) - 180));
           if (diff > 60) return; // Not in driving direction
         }
 
-        alertedCameraIds.current.add(cam.id);
+        alertedCameraTimes.current.set(cam.id, now);
         const distRound = Math.round(dist);
         if (cam.type === 'toll_booth') {
           void say(`Atenção: praça de pedágio à frente em ${distRound} metros.`);
@@ -770,12 +805,22 @@ export function App() {
     setNavigationError('');
     setStatus('Calculando melhor rota…');
     try {
-      const url = `https://router.project-osrm.org/route/v1/driving/${start.lon},${start.lat};${target.longitude},${target.latitude}?overview=full&geometries=geojson&steps=true&alternatives=true`;
-      const res = await fetch(url, { signal: controller.signal });
-      if (!res.ok) throw new Error('Falha ao traçar rota.');
-      const data = await res.json();
+      const urls = buildOsrmRouteUrls(start, target, vehicleType);
+      let data: any = null;
+      let lastRouteError: Error | null = null;
+      for (const url of urls) {
+        try {
+          const res = await fetch(url, { signal: controller.signal });
+          if (!res.ok) throw new Error('Falha ao traçar rota.');
+          data = await res.json();
+          if (data?.routes?.length) break;
+        } catch (routeErr: any) {
+          if (controller.signal.aborted) throw routeErr;
+          lastRouteError = routeErr;
+        }
+      }
+      if (!data?.routes?.length) throw lastRouteError || new Error('Nenhuma rota encontrada.');
       if (!shouldApplyRequestResult(requestId, routeRequestId.current, controller.signal.aborted)) return;
-      if (!data.routes || data.routes.length === 0) throw new Error('Nenhuma rota encontrada.');
 
       const routes = parseOsrmRoutes(data, target);
       const domainRoute = routes[0];
@@ -1050,6 +1095,7 @@ export function App() {
     session.current++;
     lastLookup.current = 0;
     lastPoint.current = null;
+    lastAcceptedFixRef.current = null;
     confirmedRoad.current = '';
     confirmedNeighbourhood.current = '';
     confirmedVenue.current = '';
@@ -1076,16 +1122,36 @@ export function App() {
     watch.current = navigator.geolocation.watchPosition(
       p => {
         const { latitude: lat, longitude: lon, accuracy: acc, speed, heading: h } = p.coords;
-        setPosition({ lat, lon });
-        setHeading(typeof h === 'number' && Number.isFinite(h) ? h : null);
+        const sensorHeading = typeof h === 'number' && Number.isFinite(h) ? h : null;
+        const fixCheck = acceptWebLocationFix(lastAcceptedFixRef.current, {
+          lat,
+          lon,
+          accuracyMeters: acc,
+          timestampMs: p.timestamp || Date.now(),
+          headingDegrees: sensorHeading
+        });
         setAccuracy(Math.round(acc));
+        if (!fixCheck.accepted) {
+          setStatus(`Sinal GPS impreciso ou instável (±${Math.round(acc)} m)`);
+          return;
+        }
+        lastAcceptedFixRef.current = {
+          lat,
+          lon,
+          accuracyMeters: acc,
+          timestampMs: p.timestamp || Date.now(),
+          headingDegrees: fixCheck.headingDegrees
+        };
+
+        setPosition({ lat, lon });
+        setHeading(fixCheck.headingDegrees);
         const currentSpeedKmh = speed ? Math.round(speed * 3.6) : 0;
         setSpeedKmh(currentSpeedKmh);
         setActive(true);
 
         // Safety cameras check
         void querySafetyFeatures(lat, lon);
-        checkSafetyAlerts(lat, lon, typeof h === 'number' && Number.isFinite(h) ? h : null, currentSpeedKmh);
+        checkSafetyAlerts(lat, lon, fixCheck.headingDegrees, currentSpeedKmh);
 
         if (acc > 65) {
           setStatus(`Sinal GPS impreciso (±${Math.round(acc)} m)`);
@@ -1153,6 +1219,7 @@ export function App() {
         <MapCanvas
           position={position}
           heading={heading}
+          speedKmh={speedKmh}
           followUser={followUser}
           vehicleType={vehicleType}
           route={activeRoute}
@@ -1235,14 +1302,14 @@ export function App() {
             🥞 <span>Camadas</span>
           </button>
 
-          {/* Quick Vehicle Switcher (Carro / Moto) */}
+          {/* Quick Vehicle Switcher (Carro / Moto / A pé) */}
           <button
-            className={`pill-btn ${vehicleType === 'motorcycle' ? 'active' : ''}`}
-            onClick={() => setVehicleType(v => (v === 'car' ? 'motorcycle' : 'car'))}
-            title="Alternar entre Carro e Moto"
+            className={`pill-btn ${vehicleType !== 'car' ? 'active' : ''}`}
+            onClick={() => setVehicleType(v => (v === 'car' ? 'motorcycle' : v === 'motorcycle' ? 'walking' : 'car'))}
+            title="Alternar entre Carro, Moto e A pé"
           >
-            {vehicleType === 'motorcycle' ? '🏍️' : '🚗'}
-            <span>{vehicleType === 'motorcycle' ? 'Moto' : 'Carro'}</span>
+            {vehicleType === 'motorcycle' ? '🏍️' : vehicleType === 'walking' ? '🚶' : '🚗'}
+            <span>{vehicleType === 'motorcycle' ? 'Moto' : vehicleType === 'walking' ? 'A pé' : 'Carro'}</span>
           </button>
 
           {/* Settings Button */}
@@ -1586,6 +1653,12 @@ export function App() {
                 onClick={() => setVehicleType('motorcycle')}
               >
                 🏍️ Moto
+              </button>
+              <button
+                className={`vehicle-choice-btn ${vehicleType === 'walking' ? 'selected' : ''}`}
+                onClick={() => setVehicleType('walking')}
+              >
+                🚶 A pé
               </button>
             </div>
 

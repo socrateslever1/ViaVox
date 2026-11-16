@@ -30,6 +30,7 @@ class LocationTrackingManager(
     private var highAccuracy = true
     private var platformFallback = false
     private var stationarySinceMs: Long? = null
+    private var lastMovementAnchor: Location? = null
 
     private val callback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
@@ -133,13 +134,23 @@ class LocationTrackingManager(
         // Even when a stationary fix is deliberately suppressed by the quality gate,
         // its passage of time should still permit a low-power transition.
         val valid = qualityGate.accept(candidate, now)
-        val moving = valid && location.hasSpeed() && location.speed >= 1.5f
+        val anchor = lastMovementAnchor
+        val displacedMeters = if (valid && anchor != null) location.distanceTo(anchor) else 0f
+        // Wake high-accuracy GPS for walking speeds (>= 0.9 m/s) or real displacement (>= 12 m)
+        // even when a low-power Wi-Fi/cell fix omits speed.
+        val moving = valid && (
+            (location.hasSpeed() && location.speed >= 0.9f) ||
+                displacedMeters >= 12f
+            )
         if (moving) {
             stationarySinceMs = null
+            lastMovementAnchor = location
             if (!highAccuracy && !platformFallback) configureFusedLocation(true)
+        } else if (valid && anchor == null) {
+            lastMovementAnchor = location
         } else if (!platformFallback && highAccuracy &&
             candidate.accuracyMeters <= 65f && now - candidate.timestampMs <= 15_000L &&
-            (location.hasSpeed().not() || location.speed < 1.5f)
+            (location.hasSpeed().not() || location.speed < 0.9f)
         ) {
             val since = stationarySinceMs ?: now.also { stationarySinceMs = it }
             if (now - since >= 25_000L) configureFusedLocation(false)
@@ -159,6 +170,7 @@ class LocationTrackingManager(
         }
         qualityGate.reset()
         stationarySinceMs = null
+        lastMovementAnchor = null
         platformFallback = false
     }
 

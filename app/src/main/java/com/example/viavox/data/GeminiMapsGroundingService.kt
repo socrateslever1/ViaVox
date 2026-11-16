@@ -27,7 +27,7 @@ data class MapsGroundingResult(
 )
 
 /**
- * Queries Gemini (gemini-3.8-flash) with the Google Maps Grounding tool ("googleMaps")
+ * Queries Gemini (gemini-2.5-flash) with the Google Maps Grounding tool ("googleMaps")
  * to retrieve up-to-date, accurate location, business, and street information anchored
  * to the user's current GPS coordinates.
  */
@@ -39,7 +39,7 @@ class GeminiMapsGroundingService(
         .build()
 ) {
     companion object {
-        const val MODEL_NAME = "gemini-3.8-flash"
+        const val MODEL_NAME = "gemini-2.5-flash"
         private const val BASE_URL =
             "https://generativelanguage.googleapis.com/v1beta/models/$MODEL_NAME:generateContent"
 

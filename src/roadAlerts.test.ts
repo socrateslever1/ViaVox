@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mergeRoadAlerts, parseOfficialRoadAlerts, parseOsmRoadAlerts } from './roadAlerts';
+import { dynamicAlertMaxMeters, mergeRoadAlerts, parseOfficialRoadAlerts, parseOsmRoadAlerts } from './roadAlerts';
 
 const feature = { type: 'Feature', geometry: { type: 'Point', coordinates: [-60.02, -3.1] }, properties: { id: 'immu:1', type: 'speed_camera', location: 'Av. Teste', sourceName: 'IMMU', sourceUrl: 'https://immu.manaus.am.gov.br/index.php?r=site/inforadar', sourceDate: '2026-06-28', reviewedAt: '2026-10-20' } };
 
@@ -56,5 +56,11 @@ describe('OSM road alerts', () => {
       expect.objectContaining({ id: 'osm:10', type: 'speed_camera', maxspeedKmh: 60 }),
       expect.objectContaining({ id: 'osm:11', type: 'toll_booth' })
     ]);
+  });
+
+  it('scales alert lookahead distance with vehicle speed', () => {
+    expect(dynamicAlertMaxMeters(20)).toBe(200);
+    expect(dynamicAlertMaxMeters(50)).toBe(275);
+    expect(dynamicAlertMaxMeters(100)).toBe(480);
   });
 });

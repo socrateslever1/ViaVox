@@ -13,6 +13,7 @@ import android.content.pm.ServiceInfo
 import android.location.Location
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -111,6 +112,27 @@ class ViaVoxTrackingService : Service() {
 
     private var currentConfig = ViaVoxConfig()
     private var isTrackingRunning = false
+    private var wakeLock: PowerManager.WakeLock? = null
+
+    private fun acquireWakeLock() {
+        runCatching {
+            val existing = wakeLock
+            if (existing?.isHeld == true) return
+            val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return
+            val lock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "ViaVox::TrackingWakeLock").apply {
+                setReferenceCounted(false)
+                acquire(4 * 60 * 60 * 1000L) // 4h safety cap
+            }
+            wakeLock = lock
+        }.onFailure { Log.w(TAG, "Unable to acquire partial wake lock", it) }
+    }
+
+    private fun releaseWakeLock() {
+        runCatching {
+            wakeLock?.let { if (it.isHeld) it.release() }
+        }.onFailure { Log.w(TAG, "Unable to release partial wake lock", it) }
+        wakeLock = null
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -480,7 +502,7 @@ class ViaVoxTrackingService : Service() {
             return
         }
 
-        // Fused Location delivers callbacks without holding a persistent CPU wake lock.
+        acquireWakeLock()
         isTrackingRunning = true
         TrackingRepository.updateActive(true)
         ViaVoxWidgetProvider.refresh(this, TrackingRepository.state.value)
@@ -500,6 +522,7 @@ class ViaVoxTrackingService : Service() {
     private fun stopForegroundTracking() {
         Log.d(TAG, "Stopping foreground tracking")
         isTrackingRunning = false
+        releaseWakeLock()
         locationTracker.stopTracking()
         deviceHeading.stop()
         scanGeneration++
@@ -604,13 +627,29 @@ class ViaVoxTrackingService : Service() {
         val now = System.currentTimeMillis()
         val intervalMs = if (speedKmh >= 5f) 5_000L else 12_000L
         val accuracyMeters = if (location.hasAccuracy()) location.accuracy else 100f
+
+        // Safety camera & toll monitoring ahead on the road runs independently of strict 40m POI gating.
+        if (accuracyMeters <= 60f && currentConfig.enableSafetyAlerts &&
+            (safetyJob == null || safetyJob?.isActive == false)
+        ) {
+            safetyJob = serviceScope.launch {
+                val features = safetyAlertEngine.evaluate(
+                    userLat = lat,
+                    userLon = lon,
+                    bearing = bearing,
+                    speedKmh = speedKmh,
+                    enabled = currentConfig.enableSafetyAlerts
+                )
+                TrackingRepository.updateSafetyFeatures(features)
+            }
+        }
+
         if (accuracyMeters > 40f) {
             if (strictPoiEnabled()) {
                 TrackingRepository.updatePoiStatus("Aguardando GPS mais preciso para reconhecer referências")
             }
             return
         }
-        // POI throttling must NEVER prevent an independent safety evaluation.
         if (strictPoiEnabled() &&
             now - lastPoiCheckTimestamp >= intervalMs && poiJob?.isActive != true
         ) {
@@ -640,20 +679,6 @@ class ViaVoxTrackingService : Service() {
                     else "Procurando referências próximas na direção do percurso"
                 )
             }
-            }
-        }
-
-        // 3. Safety camera & toll monitoring ahead on the road
-        if (currentConfig.enableSafetyAlerts && (safetyJob == null || safetyJob?.isActive == false)) {
-            safetyJob = serviceScope.launch {
-                val features = safetyAlertEngine.evaluate(
-                    userLat = lat,
-                    userLon = lon,
-                    bearing = bearing,
-                    speedKmh = speedKmh,
-                    enabled = currentConfig.enableSafetyAlerts
-                )
-                TrackingRepository.updateSafetyFeatures(features)
             }
         }
     }
@@ -1280,6 +1305,7 @@ class ViaVoxTrackingService : Service() {
         super.onDestroy()
         Log.d(TAG, "Destroying ViaVoxTrackingService")
         isTrackingRunning = false
+        releaseWakeLock()
         locationTracker.stopTracking()
         speechQueue.cancelAll()
         ttsManager.shutdown()

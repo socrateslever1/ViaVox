@@ -177,3 +177,9 @@ export function mergeRoadAlerts(official: OfficialRoadAlert[], osm: RoadAlert[])
   }
   return merged;
 }
+
+/** Scale radar/toll lookahead distance with vehicle speed (200 m to 480 m). */
+export function dynamicAlertMaxMeters(speedKmh: number): number {
+  if (!Number.isFinite(speedKmh) || speedKmh <= 0) return 200;
+  return Math.min(480, Math.max(200, speedKmh * 5.5));
+}
