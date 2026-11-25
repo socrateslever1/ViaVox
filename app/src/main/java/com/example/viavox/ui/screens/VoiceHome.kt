@@ -1,6 +1,25 @@
 package com.example.viavox.ui.screens
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.border
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.semantics.Role
+import kotlin.math.PI
+import kotlin.math.sin
 import androidx.compose.foundation.Image
 import androidx.compose.ui.res.painterResource
 import com.example.viavox.R
@@ -124,22 +143,18 @@ fun VoiceHome(
             }
         }
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-            Box(
-                modifier = Modifier.size(170.dp)
-                    .background(mint.copy(alpha = 0.13f), CircleShape)
-                    .padding(14.dp)
-                    .background(Brush.linearGradient(listOf(Color(0xFF43ECD5), Color(0xFF0F988F))), CircleShape)
-                    .clickable(enabled = state.isActive, onClick = onRepeat)
-                    .testTag("voice_home_primary"),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Default.GraphicEq, contentDescription = "Onde estou? Ouvir localização atual", tint = midnight, modifier = Modifier.size(70.dp))
-            }
+            LocationVoiceButton(
+                active = state.isActive,
+                hasFix = state.hasLocationFix,
+                speaking = state.isSpeaking,
+                onClick = onRepeat
+            )
             Spacer(Modifier.height(10.dp))
             Text("ONDE ESTOU?", color = Color.White, fontWeight = FontWeight.Black, fontSize = 21.sp)
             Text(
                 if (!state.isActive) "Ative a localização para consultar"
                 else if (!state.hasLocationFix) "Obtendo localização..."
+                else if (state.isSpeaking) "Narrando localização e informações"
                 else "Toque para ouvir sua localização",
                 color = soft, fontSize = 12.sp
             )
@@ -306,6 +321,106 @@ fun VoiceHome(
             }
         }
         Spacer(Modifier.height(22.dp))
+    }
+}
+
+/**
+ * Visual feedback follows actual tracking and TTS state. Animations are
+ * confined to the draw phase and exist only while the GPS searches or TTS speaks.
+ */
+@Composable
+private fun LocationVoiceButton(
+    active: Boolean,
+    hasFix: Boolean,
+    speaking: Boolean,
+    onClick: () -> Unit
+) {
+    val searching = active && !hasFix
+    val narrating = active && speaking
+    val animated = searching || narrating
+    val phase = if (animated) {
+        rememberInfiniteTransition(label = "locationVoicePulse").animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(1800, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "locationVoicePhase"
+        )
+    } else remember { mutableFloatStateOf(0f) }
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val buttonScale by animateFloatAsState(
+        targetValue = if (active && pressed) 0.93f else 1f,
+        animationSpec = tween(if (pressed) 90 else 170),
+        label = "locationVoicePress"
+    )
+    val accent = if (active) mint else soft
+    Box(Modifier.size(170.dp), contentAlignment = Alignment.Center) {
+        Canvas(Modifier.fillMaxSize()) {
+            val radius = size.minDimension / 2f
+            drawCircle(accent.copy(alpha = if (active) 0.07f else 0.035f))
+            drawCircle(accent.copy(alpha = 0.20f), radius = radius - 1.dp.toPx(),
+                style = Stroke(width = 1.dp.toPx()))
+            if (animated) {
+                for (offset in listOf(0f, 0.5f)) {
+                    val progress = (phase.value + offset) % 1f
+                    drawCircle(
+                        color = accent.copy(alpha = 0.48f * (1f - progress)),
+                        radius = radius * (0.78f + 0.20f * progress),
+                        style = Stroke(width = 1.8.dp.toPx())
+                    )
+                }
+            }
+        }
+        Box(
+            modifier = Modifier.size(142.dp)
+                .graphicsLayer {
+                    scaleX = buttonScale
+                    scaleY = buttonScale
+                }
+                .clip(CircleShape)
+                .background(Brush.linearGradient(
+                    if (active) listOf(Color(0xFF65F3DC), Color(0xFF159A94))
+                    else listOf(Color(0xFF355568), Color(0xFF1D3448))
+                ))
+                .border(1.dp, Color.White.copy(alpha = if (active) 0.38f else 0.12f), CircleShape)
+                .clickable(
+                    interactionSource = interaction,
+                    indication = ripple(),
+                    enabled = active,
+                    role = Role.Button,
+                    onClickLabel = "Ouvir localização atual",
+                    onClick = onClick
+                )
+                .testTag("voice_home_primary"),
+            contentAlignment = Alignment.Center
+        ) {
+            // The icon retains the accessible label even while the decorative
+            // waveform replaces its drawing during speech.
+            Icon(
+                Icons.Default.GraphicEq,
+                contentDescription = "Onde estou? Ouvir localização atual",
+                tint = if (narrating) Color.Transparent else if (active) midnight else soft,
+                modifier = Modifier.size(70.dp)
+            )
+            if (narrating) {
+                Canvas(Modifier.size(70.dp)) {
+                    val base = listOf(0.30f, 0.58f, 0.92f, 0.70f, 0.42f)
+                    val width = size.width / 12f
+                    for (index in base.indices) {
+                        val wave = (sin(phase.value * 2.0 * PI + index * 1.25) + 1.0) / 2.0
+                        val height = size.height * base[index] * (0.48f + 0.52f * wave.toFloat())
+                        val x = size.width * (index + 1) / 6f
+                        drawLine(midnight,
+                            start = Offset(x, (size.height - height) / 2f),
+                            end = Offset(x, (size.height + height) / 2f),
+                            strokeWidth = width, cap = StrokeCap.Round)
+                    }
+                }
+            }
+        }
     }
 }
 
