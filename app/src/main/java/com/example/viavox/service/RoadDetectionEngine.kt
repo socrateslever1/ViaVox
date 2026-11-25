@@ -113,9 +113,14 @@ class RoadDetectionEngine(
                 spokenCpa.changedTo(match.cpa, accuracy) else null
         )
 
+    private fun currentTerritoryFix(fix: GeoFix): GeoFix =
+        newestFix?.takeIf { it.timestampMs > fix.timestampMs } ?: fix
+
     private fun areaTransition(place: Place, fix: GeoFix): GeographicTransition {
-        val polygon = territoryPolygonLookup(fix)
-        val jurisdiction = if (enablePoliceCircumscription)
+        val territorialFix = currentTerritoryFix(fix)
+        val polygon = territoryPolygonLookup(territorialFix)
+        val jurisdiction = if (enablePoliceCircumscription &&
+            !requireMappedPoliceJurisdiction(territorialFix))
             PoliceJurisdictionSpeechResolver.resolve(
                 polygon?.cicom ?: place.policeDistrict,
                 if (polygon != null) "Manaus" else place.city
@@ -128,7 +133,7 @@ class RoadDetectionEngine(
                 cicom = polygon?.cicom ?: jurisdiction?.cicom,
                 cpa = polygon?.cpa ?: jurisdiction?.cpa
             ),
-            fix.accuracyMeters
+            territorialFix.accuracyMeters
         )
     }
 
@@ -139,6 +144,9 @@ class RoadDetectionEngine(
 
     /** Optional GPS polygons loaded from bundled assets by the tracking service. */
     var territoryPolygonLookup: (GeoFix) -> TerritoryMatch? = { null }
+    /** In mapped cities, neither an unavailable map nor an ambiguous fix is
+     * permission to announce a police unit inferred from an address. */
+    var requireMappedPoliceJurisdiction: (GeoFix) -> Boolean = { false }
 
     var enablePoliceCircumscription: Boolean = true
 
@@ -302,7 +310,7 @@ class RoadDetectionEngine(
         }
         pendingLocalStreet = null
         pendingLocalStreetFix = null
-        val polygon = territoryPolygonLookup(fix)
+        val polygon = territoryPolygonLookup(currentTerritoryFix(fix))
         val place = Place(
             road = match.name,
             neighbourhood = polygon?.neighbourhood.orEmpty(),
@@ -348,12 +356,14 @@ class RoadDetectionEngine(
                     }
                     if (latestLocalConfirmedTimeMs != 0L &&
                         latestLocalConfirmedTimeMs >= fix.timestampMs) return@onSuccess
-                    val local = territoryPolygonLookup(fix)
+                    val territorialFix = currentTerritoryFix(fix)
+                    val local = territoryPolygonLookup(territorialFix)
                     val cleanPlace = rawPlace.copy(
                         road = normalizedRoad,
                         neighbourhood = local?.neighbourhood ?: rawPlace.neighbourhood,
                         zone = local?.zone ?: rawPlace.zone,
-                        policeDistrict = local?.cicom ?: rawPlace.policeDistrict,
+                        policeDistrict = local?.cicom ?: if (requireMappedPoliceJurisdiction(territorialFix))
+                            "" else rawPlace.policeDistrict,
                         city = if (local != null) "Manaus" else rawPlace.city
                     )
 
@@ -377,7 +387,12 @@ class RoadDetectionEngine(
         place: Place, fix: GeoFix, geometricallyVerified: Boolean = false
     ) {
         val road = normalizeRoadName(place.road)
-        val normalizedPlace = place.copy(road = road)
+        val territorialFix = currentTerritoryFix(fix)
+        val normalizedPlace = place.copy(
+            road = road,
+            policeDistrict = if (requireMappedPoliceJurisdiction(territorialFix))
+                territoryPolygonLookup(territorialFix)?.cicom.orEmpty() else place.policeDistrict
+        )
         val territory = areaTransition(normalizedPlace, fix)
         if (!normalizedPlace.hasValidRoad()) {
             // Zone, CICOM and bairro may be confirmed even if the street is unknown.

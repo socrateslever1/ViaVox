@@ -36,6 +36,7 @@ object PoliceCircumscriptionService {
         "São Lázaro" to PoliceZone("7º DIP", "7ª CICOM"),
         "Crespo" to PoliceZone("7º DIP", "7ª CICOM"),
         "Distrito Industrial I" to PoliceZone("7º DIP", "7ª CICOM"),
+        "Vila Buriti" to PoliceZone("7º DIP", "7ª CICOM"),
 
         "Adrianópolis" to PoliceZone("16º DIP", "16ª CICOM"),
         "Nossa Senhora das Graças" to PoliceZone("22º DIP", "22ª CICOM"),
@@ -67,6 +68,7 @@ object PoliceCircumscriptionService {
         "Zumbi dos Palmares" to PoliceZone("25º DIP", "25ª CICOM"),
         "Jorge Teixeira" to PoliceZone("30º DIP", "30ª CICOM"),
         "Mauazinho" to PoliceZone("29º DIP", "29ª CICOM"),
+        "Distrito Industrial II" to PoliceZone("29º DIP", "29ª CICOM"),
         "Colônia Antônio Aleixo" to PoliceZone("28º DIP", "28ª CICOM"),
 
         "Cidade Nova" to PoliceZone("6º DIP", "6ª CICOM"),

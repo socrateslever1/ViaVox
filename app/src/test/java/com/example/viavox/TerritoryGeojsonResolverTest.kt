@@ -45,6 +45,56 @@ class TerritoryGeojsonResolverTest {
         assertNull(maps().resolve(-4.0, -60.020, 7f))
     }
 
+    @Test fun competingCicomsAreAmbiguousRegardlessOfFeatureOrder() {
+        val a = feature("7ª CICOM")
+        val b = feature("29ª CICOM")
+        for (features in listOf(arrayOf(a,b), arrayOf(b,a))) {
+            val resolver = TerritoryGeojsonResolver.parse(
+                collection(feature("Distrito Industrial I", "Zona Sul")),
+                collection(*features)
+            )
+            val match = resolver.resolve(-3.130, -60.020, 6f)
+            assertNull(match?.cicom)
+            assertNull(match?.cpa)
+            assertEquals("Distrito Industrial I", match?.neighbourhood)
+        }
+    }
+
+    @Test fun adjacentCicomsRequireFixClearOfBoundary() {
+        val resolver = TerritoryGeojsonResolver.parse(collection(), collection(
+            feature("7ª CICOM", east=-60.020),
+            feature("29ª CICOM", west=-60.020)
+        ))
+        assertEquals("7ª CICOM", resolver.resolve(-3.130, -60.025, 6f)?.cicom)
+        assertEquals("29ª CICOM", resolver.resolve(-3.130, -60.015, 6f)?.cicom)
+        assertNull(resolver.resolve(-3.130, -60.02001, 12f)?.cicom)
+        assertNull(resolver.resolve(-3.130, -60.01999, 12f)?.cpa)
+    }
+
+    @Test fun ambiguousOrMissingMapCannotBeOverriddenByOnlinePoliceLabel() =
+        runTest(UnconfinedTestDispatcher()) {
+            val events = mutableListOf<GeographicTransition>()
+            val engine = RoadDetectionEngine(
+                coroutineScope=backgroundScope,
+                onPlaceUpdated={},
+                onRoadAnnounceNeeded={_,_->},
+                onStatusMessage={},
+                onGeographicTransition=events::add
+            )
+            engine.requireMappedPoliceJurisdiction = { true }
+            engine.territoryPolygonLookup = {
+                com.example.viavox.service.TerritoryMatch(neighbourhood="Distrito Industrial II")
+            }
+            val place = Place("Avenida Teste","Distrito Industrial I","Manaus",
+                policeDistrict="7ª CICOM")
+            engine.processRoadDecision(place, GeoFix(-3.13,-60.02,accuracyMeters=7f))
+            assertTrue(events.isNotEmpty())
+            assertTrue(events.all { it.cicom == null && it.cpa == null })
+            engine.territoryPolygonLookup = { null }
+            engine.processRoadDecision(place, GeoFix(-3.13,-60.02,accuracyMeters=7f))
+            assertTrue(events.all { it.cicom == null && it.cpa == null })
+        }
+
     @Test fun gpsPolygonSpeaksBeforeAnyAddressLookupCompletes() =
         runTest(UnconfinedTestDispatcher()) {
             val events = mutableListOf<GeographicTransition>()

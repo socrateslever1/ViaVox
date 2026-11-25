@@ -91,11 +91,13 @@ object ManausDistrictResolver {
 
         // 1. Try matching known district names inside the full Nominatim display_name
         if (displayName.isNotBlank()) {
-            val lower = displayName.lowercase()
+            val components = displayName.split(',').map { it.trim() }
             val match = DISTRICTS.firstOrNull { d ->
-                lower.contains(d.name.lowercase())
+                components.any { it.equals(d.name, ignoreCase = true) }
             }
             if (match != null) return match
+            if (components.any { it.equals("Distrito Industrial II", ignoreCase = true) ||
+                    it.equals("Vila Buriti", ignoreCase = true) }) return null
         }
 
         // 2. Spatial bounding box lookup

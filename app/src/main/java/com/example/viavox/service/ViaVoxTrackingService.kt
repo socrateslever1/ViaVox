@@ -287,6 +287,9 @@ class ViaVoxTrackingService : Service() {
             AmazonasMunicipalityDirectory.all.firstOrNull { it.first == code }?.second.orEmpty()
         }
         roadEngine.enablePoliceCircumscription = currentConfig.enablePoliceCircumscription
+        roadEngine.requireMappedPoliceJurisdiction = { fix ->
+            com.example.viavox.data.ManausDistrictResolver.isManausCoordinates(fix.latitude, fix.longitude)
+        }
         roadEngine.territoryPolygonLookup = { fix ->
             territoryMap?.resolve(fix.latitude, fix.longitude, fix.accuracyMeters)
         }

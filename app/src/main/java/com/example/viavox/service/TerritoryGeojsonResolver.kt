@@ -33,23 +33,51 @@ class TerritoryGeojsonResolver private constructor(
         val minLat: Double,
         val maxLat: Double
     ) {
-        private fun contains(lon: Double, lat: Double): Boolean {
+        fun contains(lon: Double, lat: Double): Boolean {
             if (lon !in minLon..maxLon || lat !in minLat..maxLat) return false
             if (!insideRing(rings.first(), lon, lat)) return false
             return rings.drop(1).none { insideRing(it, lon, lat) }
         }
 
+        private fun boundaryDistanceSquared(lon: Double, lat: Double): Double {
+            val xScale = 111_195.0 * cos(Math.toRadians(lat)).coerceAtLeast(0.15)
+            val yScale = 111_195.0
+            var best = Double.POSITIVE_INFINITY
+            for (ring in rings) {
+                for (i in ring.indices) {
+                    val a = ring[i]
+                    val b = ring[(i + 1) % ring.size]
+                    val ax = (a.lon - lon) * xScale
+                    val ay = (a.lat - lat) * yScale
+                    val vx = (b.lon - a.lon) * xScale
+                    val vy = (b.lat - a.lat) * yScale
+                    val lengthSquared = vx * vx + vy * vy
+                    val t = if (lengthSquared > 0.0)
+                        (-(ax * vx + ay * vy) / lengthSquared).coerceIn(0.0, 1.0) else 0.0
+                    val x = ax + t * vx
+                    val y = ay + t * vy
+                    best = minOf(best, x * x + y * y)
+                }
+            }
+            return best
+        }
+
         fun hasReliableFix(lon: Double, lat: Double, gpsAccuracyMeters: Float): Boolean {
             if (!gpsAccuracyMeters.isFinite() || gpsAccuracyMeters <= 0f ||
                 gpsAccuracyMeters > 35f || !contains(lon, lat)) return false
-            // Do not announce entry from an uncertainty circle that overlaps
-            // the border of a neighbourhood or CICOM sector.
+            val radius = gpsAccuracyMeters.toDouble().coerceAtLeast(4.0)
+            return boundaryDistanceSquared(lon, lat) > radius * radius
+        }
+
+        fun intersectsFix(lon: Double, lat: Double, gpsAccuracyMeters: Float): Boolean {
+            if (!gpsAccuracyMeters.isFinite() || gpsAccuracyMeters <= 0f ||
+                gpsAccuracyMeters > 35f) return false
             val radius = gpsAccuracyMeters.toDouble().coerceAtLeast(4.0)
             val dy = radius / 111_195.0
-            val dx = radius / (111_195.0 *
-                cos(Math.toRadians(lat)).coerceAtLeast(0.15))
-            return contains(lon + dx, lat) && contains(lon - dx, lat) &&
-                contains(lon, lat + dy) && contains(lon, lat - dy)
+            val dx = radius / (111_195.0 * cos(Math.toRadians(lat)).coerceAtLeast(0.15))
+            if (lon < minLon - dx || lon > maxLon + dx ||
+                lat < minLat - dy || lat > maxLat + dy) return false
+            return contains(lon, lat) || boundaryDistanceSquared(lon, lat) <= radius * radius
         }
 
         companion object {
@@ -73,10 +101,16 @@ class TerritoryGeojsonResolver private constructor(
     fun resolve(lat: Double, lon: Double, accuracyMeters: Float): TerritoryMatch? {
         if (!lat.isFinite() || !lon.isFinite() || lat !in -90.0..90.0 ||
             lon !in -180.0..180.0) return null
-        val bairro = neighbourhoods.firstOrNull { it.hasReliableFix(lon, lat, accuracyMeters) }
-        val cicomArea = policeAreas.firstOrNull { it.hasReliableFix(lon, lat, accuracyMeters) }
-        val police = cicomArea?.let {
+        val bairro = neighbourhoods.filter { it.hasReliableFix(lon, lat, accuracyMeters) }
+            .singleOrNull()
+        // A GPS uncertainty circle touching two different units is ambiguous,
+        // irrespective of the order of features in the GeoJSON.
+        val candidates = policeAreas.filter { it.intersectsFix(lon, lat, accuracyMeters) }
+        val jurisdictions = candidates.map {
             PoliceJurisdictionSpeechResolver.resolve(it.name, "Manaus")
+        }.distinct()
+        val police = jurisdictions.singleOrNull()?.takeIf {
+            candidates.any { area -> area.hasReliableFix(lon, lat, accuracyMeters) }
         }
         val match = TerritoryMatch(
             zone = bairro?.zone,

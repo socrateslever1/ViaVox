@@ -5,6 +5,7 @@ import type { LngLatLike } from 'maplibre-gl';
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import './style.css';
+import { resolvePoliceAt } from './policeTerritory';
 import {
   acceptWebLocationFix,
   buildOsrmRouteUrls,
@@ -54,6 +55,7 @@ const MANAUS_DISTRICTS: Record<string, DistrictInfo> = {
   'sao lazaro': { name: 'São Lázaro', zone: 'Zona Sul', dip: '7º DIP', cicom: '7ª CICOM' },
   crespo: { name: 'Crespo', zone: 'Zona Sul', dip: '7º DIP', cicom: '7ª CICOM' },
   'distrito industrial i': { name: 'Distrito Industrial I', zone: 'Zona Sul', dip: '7º DIP', cicom: '7ª CICOM' },
+  'vila buriti': { name: 'Vila Buriti', zone: 'Zona Sul', dip: '7º DIP', cicom: '7ª CICOM' },
 
   adrianopolis: { name: 'Adrianópolis', zone: 'Zona Centro-Sul', dip: '16º DIP', cicom: '16ª CICOM' },
   'nossa senhora das gracas': { name: 'Nossa Senhora das Graças', zone: 'Zona Centro-Sul', dip: '22º DIP', cicom: '22ª CICOM' },
@@ -86,6 +88,7 @@ const MANAUS_DISTRICTS: Record<string, DistrictInfo> = {
   'zumbi dos palmares': { name: 'Zumbi dos Palmares', zone: 'Zona Leste', dip: '25º DIP', cicom: '25ª CICOM' },
   'jorge teixeira': { name: 'Jorge Teixeira', zone: 'Zona Leste', dip: '30º DIP', cicom: '30ª CICOM' },
   mauazinho: { name: 'Mauazinho', zone: 'Zona Leste', dip: '29º DIP', cicom: '29ª CICOM' },
+  'distrito industrial ii': { name: 'Distrito Industrial II', zone: 'Zona Leste', dip: '29º DIP', cicom: '29ª CICOM' },
   'colonia antonio aleixo': { name: 'Colônia Antônio Aleixo', zone: 'Zona Leste', dip: '28º DIP', cicom: '28ª CICOM' },
 
   'cidade nova': { name: 'Cidade Nova', zone: 'Zona Norte', dip: '6º DIP', cicom: '6ª CICOM' },
@@ -949,7 +952,7 @@ export function App() {
   }
 
   // --- Reverse Geocoding with Circumscription & DIP/CICOM Identification ---
-  async function lookup(lat: number, lon: number) {
+  async function lookup(lat: number, lon: number, accuracyMeters: number) {
     if (busy.current) return;
     const requestSession = session.current;
     busy.current = true;
@@ -991,17 +994,22 @@ export function App() {
       // Manaus Official District Resolver (Prevents generic "bairro Manaus")
       const isManaus = city.toLowerCase() === 'manaus' || displayName.includes('manaus');
       if (isManaus) {
-        const foundKey = Object.keys(MANAUS_DISTRICTS).find(
-          k =>
-            (neighbourhood && normalizeKey(neighbourhood) === k) ||
-            displayName.includes(k)
-        );
+        const components = displayName.split(',').map(normalizeKey);
+        const keys = Object.keys(MANAUS_DISTRICTS);
+        const foundKey = keys.find(k => normalizeKey(neighbourhood) === normalizeKey(k))
+          ?? keys.find(k => components.includes(normalizeKey(k)));
         if (foundKey) {
           const d = MANAUS_DISTRICTS[foundKey];
           neighbourhood = d.name;
           zone = d.zone;
-          police = `${d.dip} · ${d.cicom}`;
+          // District names alone are not police boundary evidence.
+          // The actual sector polygon below must confirm the unit.
         }
+      }
+
+      if (isManaus) {
+        police = await resolvePoliceAt(lat, lon, accuracyMeters);
+        if (requestSession !== session.current) return;
       }
 
       if (!neighbourhood) {
@@ -1169,7 +1177,7 @@ export function App() {
         ) {
           lastLookup.current = now;
           lastPoint.current = { lat, lon };
-          void lookup(lat, lon);
+          void lookup(lat, lon, acc);
         }
       },
       e => {
