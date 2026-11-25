@@ -53,7 +53,7 @@ object SurroundingsPolicy {
     ): List<LandmarkCandidate> {
         if (!lat.isFinite() || !lon.isFinite() || gpsAccuracyMeters > 80f ||
             gpsAccuracyMeters <= 0f || !gpsAccuracyMeters.isFinite()) return emptyList()
-        if (direction == ScanDirection.FRONT && headingDegrees == null) return emptyList()
+        if (direction == ScanDirection.FRONT && headingDegrees?.isFinite() != true) return emptyList()
         val radius = radiusMeters.coerceIn(50, 500).toDouble()
         val heading = headingDegrees?.takeIf { it.isFinite() }?.toDouble()
         return points.asSequence()
@@ -72,8 +72,13 @@ object SurroundingsPolicy {
                 }
                 LandmarkCandidate(landmark, distance, angle)
             }
-            .filter { it.distanceMeters > gpsAccuracyMeters + 8 &&
-                it.distanceMeters + gpsAccuracyMeters <= radius }
+            // A manual radial search reports approximate mapped distances,
+            // not a guaranteed distance to an entrance. Keep nearby points
+            // instead of creating an empty interval at 100 m / 55 m accuracy.
+            .filter { it.distanceMeters <= radius }
+            .filter { direction == ScanDirection.AROUND ||
+                (it.distanceMeters > gpsAccuracyMeters + 8 &&
+                    it.distanceMeters + gpsAccuracyMeters <= radius) }
             .filter { direction == ScanDirection.AROUND || (it.angle != null && abs(it.angle) <= 65.0) }
             .distinctBy { it.landmark.name.lowercase().trim() }
             .let { candidates ->
@@ -98,7 +103,8 @@ object SurroundingsPolicy {
     }
 
     fun metersText(meters: Double): String =
-        if (meters < 1000) "a aproximadamente ${(meters / 10).toInt() * 10} metros"
+        if (meters < 10) "muito próximo"
+        else if (meters < 1000) "a aproximadamente ${(meters / 10).toInt() * 10} metros"
         else "a aproximadamente ${"%.1f".format(java.util.Locale.forLanguageTag("pt-BR"), meters / 1000)} quilômetros"
 
     fun scanSpeech(

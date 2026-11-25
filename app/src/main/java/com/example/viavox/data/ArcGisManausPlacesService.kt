@@ -216,6 +216,30 @@ class ArcGisManausPlacesService(
             }
         }
 
+    /** Independent manual scan; do not share a viewport cache or suppress source errors. */
+    suspend fun scanNearby(lat: Double, lon: Double, radius: Int): List<com.example.viavox.model.NearbyLandmark> =
+        withContext(Dispatchers.IO) {
+            if (!ManausArcGisLayer.inCoverage(lat,lon)) return@withContext emptyList()
+            val r = radius.coerceIn(50,500)
+            val dy = r / 111195.0
+            val dx = dy / kotlin.math.cos(Math.toRadians(lat)).coerceAtLeast(0.15)
+            val geometry = String.format(Locale.US,"%.7f,%.7f,%.7f,%.7f",lon-dx,lat-dy,lon+dx,lat+dy)
+            ArcGisReferenceParser.parse(fetch(mapOf(
+                "where" to "1=1", "geometry" to geometry,
+                "geometryType" to "esriGeometryEnvelope", "spatialRel" to "esriSpatialRelIntersects",
+                "inSR" to "4326", "outSR" to "4326",
+                "outFields" to "OBJECTID,NOME_PONTO,SIGLA_PONTO,TIPO,SUBTIPO,ENDERECO,BAIRRO",
+                "returnGeometry" to "true", "resultRecordCount" to "220"
+            ))).mapNotNull { ref ->
+                val name = ref.asDestination().name
+                if (GeoSpeechPolicy.speakableReference(name) == null) null
+                else com.example.viavox.model.NearbyLandmark(
+                    "arcgis:" + ref.id,name,ref.latitude,ref.longitude,ref.type,
+                    approximatePoint = true
+                ).takeIf { it.distanceTo(lat,lon) <= r }
+            }
+        }
+
     suspend fun search(query: String): List<MapPlace> = withContext(Dispatchers.IO) {
         val normalized = DestinationSearchPolicy.normalize(query)
         val number = DestinationSearchPolicy.cicomNumber(query)

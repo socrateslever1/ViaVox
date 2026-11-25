@@ -208,7 +208,9 @@ fun VoiceHome(
                     verticalArrangement = Arrangement.spacedBy(5.dp)) {
                     Text("RESULTADO DA BUSCA", color = mint,
                         fontWeight = FontWeight.Bold, fontSize = 10.sp)
-                    if (result.startsWith("Pesquisando") || result.contains("iniciando busca")) {
+                    if (result.contains("pesquisando", ignoreCase = true) ||
+                        result.contains("iniciando busca", ignoreCase = true) ||
+                        result.contains("Buscando referências adicionais")) {
                         LinearProgressIndicator(
                             modifier = Modifier.fillMaxWidth(),
                             color = mint, trackColor = soft.copy(alpha = .22f)

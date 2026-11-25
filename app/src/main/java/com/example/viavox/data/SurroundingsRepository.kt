@@ -6,7 +6,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Call
@@ -17,7 +16,7 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import java.io.IOException
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.FormBody
 import org.json.JSONObject
 import java.util.Locale
 import java.util.concurrent.TimeUnit
@@ -76,7 +75,7 @@ class SurroundingsRepository(
             return@withLock SurroundingsLookup(cache, lastSource)
         }
         val lastAttempt = if (automatic) lastAutomaticAttemptMs else lastManualAttemptMs
-        val throttleMs = if (automatic) 120_000L else 5_000L
+        val throttleMs = if (automatic) 120_000L else 0L
         if (lastAttempt != 0L && now - lastAttempt < throttleMs) {
             return@withLock if (coversCircle && lastSuccessMs != 0L)
                 SurroundingsLookup(cache, lastSource)
@@ -144,7 +143,7 @@ class SurroundingsRepository(
                         .addQueryParameter("data", q).build()).get().build()
                 } else {
                     builder.url(endpoint)
-                        .post(q.toRequestBody("text/plain; charset=utf-8".toMediaType()))
+                        .post(FormBody.Builder().add("data",q).build())
                         .build()
                 }
                 requestResponse(request).use { response ->

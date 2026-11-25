@@ -20,6 +20,13 @@ class SurroundingsPolicyTest {
         assertEquals(listOf("1"), chosen.map { it.landmark.id })
     }
 
+    @Test fun aroundDoesNotLoseAllPointsAtShortRadiusWithModerateGpsAccuracy() {
+        val near = NearbyLandmark("1", "Mercado", centreLat + 0.00036, centreLon, "shop")
+        val chosen = SurroundingsPolicy.select(listOf(near),centreLat,centreLon,
+            100,ScanDirection.AROUND,null,55f)
+        assertEquals(listOf("1"),chosen.map { it.landmark.id })
+    }
+
     @Test fun forwardFiltersLandmarksBehind() {
         val north = NearbyLandmark("N", "Museu ao norte", centreLat + 0.0005, centreLon, "tourism")
         val south = NearbyLandmark("S", "Parque ao sul", centreLat - 0.0005, centreLon, "leisure")
