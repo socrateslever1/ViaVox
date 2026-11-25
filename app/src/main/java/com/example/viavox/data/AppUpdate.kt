@@ -8,6 +8,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.net.Uri
+import android.provider.Settings
+import okhttp3.CacheControl
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -61,7 +64,7 @@ object AppUpdatePolicy {
         force || lastCheckMs <= 0L || nowMs < lastCheckMs ||
             nowMs - lastCheckMs >= CHECK_INTERVAL_MS
 
-    const val CHECK_INTERVAL_MS = 3L * 60 * 60 * 1000
+    const val CHECK_INTERVAL_MS = 5L * 60 * 1000
 }
 
 /**
@@ -89,6 +92,7 @@ class AppUpdateManager(
         }
         try {
             val request = Request.Builder().url(METADATA_URL)
+                .cacheControl(CacheControl.FORCE_NETWORK)
                 .header("User-Agent", "ViaVox-Android/" + BuildConfig.VERSION_NAME)
                 .header("Accept", "application/json")
                 .build()
@@ -96,7 +100,11 @@ class AppUpdateManager(
                 if (!response.isSuccessful) return@withContext cached()
                 response.body?.string().orEmpty()
             }
-            prefs.edit().putLong("last_check", now).putString("metadata", body.take(20_000)).apply()
+            val parsed = AppUpdatePolicy.parse(body) ?: return@withContext cached()
+            val previous = AppUpdatePolicy.parse(prefs.getString("metadata", "").orEmpty())
+            if (previous == null || parsed.versionCode >= previous.versionCode) {
+                prefs.edit().putLong("last_check", now).putString("metadata", body).apply()
+            }
             cached()
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -119,12 +127,49 @@ class AppUpdateManager(
             .putLong("postponed_at", System.currentTimeMillis()).apply()
     }
 
+    private fun updateFile(info: AppUpdateInfo): File =
+        File(File(context.cacheDir, "updates"), "ViaVox-" + info.versionCode + ".apk")
+
+    /** Verify a previous download before reusing it, including after process death. */
+    suspend fun readyApk(info: AppUpdateInfo): File? = withContext(Dispatchers.IO) {
+        val target = updateFile(info)
+        if (!AppUpdatePolicy.isNewer(info, BuildConfig.VERSION_CODE) ||
+            !target.isFile || target.length() != info.sizeBytes) return@withContext null
+        val digest = MessageDigest.getInstance("SHA-256")
+        try {
+            target.inputStream().buffered().use { input ->
+                val buffer = ByteArray(64 * 1024)
+                while (true) {
+                    coroutineContext.ensureActive()
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    digest.update(buffer, 0, read)
+                }
+            }
+            target.takeIf { digest.digest().joinToString("") { "%02x".format(it) } == info.sha256 }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    fun canInstall(): Boolean = context.packageManager.canRequestPackageInstalls()
+
+    fun requestInstallPermission() {
+        context.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+            Uri.parse("package:" + context.packageName))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
+
     /** Downloads and verifies the APK; returns the file ready for install. */
     suspend fun download(info: AppUpdateInfo, onProgress: (Float) -> Unit): File =
         withContext(Dispatchers.IO) {
             val folder = File(context.cacheDir, "updates").apply { mkdirs() }
-            folder.listFiles()?.forEach { it.delete() }
-            val target = File(folder, "ViaVox-" + info.versionCode + ".apk")
+            readyApk(info)?.let { return@withContext it }
+            val target = updateFile(info)
+            val partial = File(folder, target.name + ".part")
+            partial.delete()
             val digest = MessageDigest.getInstance("SHA-256")
             try {
                 val request = Request.Builder().url(APK_URL)
@@ -134,7 +179,7 @@ class AppUpdateManager(
                 client.newCall(request).execute().use { response ->
                     check(response.isSuccessful) { "HTTP " + response.code }
                     val body = checkNotNull(response.body) { "Resposta vazia" }
-                    target.outputStream().buffered().use { output ->
+                    partial.outputStream().buffered().use { output ->
                         body.byteStream().use { input ->
                             val buffer = ByteArray(64 * 1024)
                             var written = 0L
@@ -152,13 +197,15 @@ class AppUpdateManager(
                     }
                 }
                 val actual = digest.digest().joinToString("") { "%02x".format(it) }
-                check(actual == info.sha256) {
+                check(partial.length() == info.sizeBytes && actual == info.sha256) {
                     // The release was replaced mid-download or the file is corrupt.
                     "Arquivo não confere com a versão publicada"
                 }
+                check(partial.renameTo(target)) { "Não foi possível salvar o APK" }
+                folder.listFiles()?.filter { it != target }?.forEach { it.delete() }
                 target
             } catch (error: Exception) {
-                target.delete()
+                partial.delete()
                 // Metadata may be stale if a newer build was just published.
                 prefs.edit().putLong("last_check", 0L).apply()
                 throw error
@@ -176,9 +223,10 @@ class AppUpdateManager(
         )
     }
 
-    /** One system notification per published build. */
-    fun notifyAvailable(info: AppUpdateInfo) {
-        if (prefs.getInt("notified_code", 0) == info.versionCode) return
+    /** One notification per build and an updated notification when ready. */
+    fun notifyAvailable(info: AppUpdateInfo, ready: Boolean = false) {
+        if (prefs.getInt("notified_code", 0) == info.versionCode &&
+            (!ready || prefs.getInt("ready_notified_code", 0) == info.versionCode)) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
             != PackageManager.PERMISSION_GRANTED) return
@@ -194,18 +242,23 @@ class AppUpdateManager(
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val text = "Versão " + info.versionName + " disponível. Toque para atualizar."
+        if (!manager.areNotificationsEnabled() ||
+            manager.getNotificationChannel(CHANNEL_ID)?.importance == NotificationManager.IMPORTANCE_NONE) return
+        val text = if (ready) "Atualização baixada. Toque para instalar."
+            else "Versão " + info.versionName + " disponível. Toque para atualizar."
         manager.notify(NOTIFICATION_ID,
             NotificationCompat.Builder(context, CHANNEL_ID)
                 .setSmallIcon(R.mipmap.ic_launcher)
-                .setContentTitle("Nova versão do ViaVox")
+                .setContentTitle(if (ready) "ViaVox pronto para atualizar" else "Nova versão do ViaVox")
                 .setContentText(text)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(
                     if (info.notes.isBlank()) text else text + "\n" + info.notes))
                 .setContentIntent(open)
                 .setAutoCancel(true)
                 .build())
-        prefs.edit().putInt("notified_code", info.versionCode).apply()
+        prefs.edit().putInt("notified_code", info.versionCode).apply {
+            if (ready) putInt("ready_notified_code", info.versionCode)
+        }.apply()
     }
 
     fun clearNotification() {

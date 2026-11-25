@@ -124,8 +124,10 @@ class StreetAccuracyAndUpdateTest {
     @Test fun updateChecksAreThrottledUnlessRequested() {
         val hour=60L*60*1000
         assertTrue(AppUpdatePolicy.shouldCheck(10*hour,0L,false))
-        assertFalse(AppUpdatePolicy.shouldCheck(10*hour,9*hour,false))
-        assertTrue(AppUpdatePolicy.shouldCheck(10*hour,9*hour,true))
-        assertTrue(AppUpdatePolicy.shouldCheck(10*hour,6*hour,false))
+        val minute = 60L * 1000
+        assertFalse(AppUpdatePolicy.shouldCheck(10*hour,10*hour-4*minute,false))
+        assertTrue(AppUpdatePolicy.shouldCheck(10*hour,10*hour-4*minute,true))
+        assertTrue(AppUpdatePolicy.shouldCheck(10*hour,10*hour-5*minute,false))
+        assertTrue(AppUpdatePolicy.shouldCheck(10*hour,11*hour,false))
     }
 }
