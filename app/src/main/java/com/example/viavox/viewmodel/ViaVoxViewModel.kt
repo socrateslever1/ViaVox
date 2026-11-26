@@ -155,9 +155,6 @@ class ViaVoxViewModel(application: Application) : AndroidViewModel(application) 
         val label = if (direction == ScanDirection.AROUND) "360°" else "À minha frente"
         val issue = when {
             !snapshot.isActive -> "GPS desligado. Toque em Ativar localização."
-            !snapshot.hasLocationFix -> "Aguardando o primeiro sinal GPS. Tente novamente."
-            (snapshot.accuracyMeters ?: 100) > 55 ->
-                "Precisão GPS insuficiente (±${snapshot.accuracyMeters ?: 100} m). Aguarde melhorar."
             else -> null
         }
         if (issue != null) {

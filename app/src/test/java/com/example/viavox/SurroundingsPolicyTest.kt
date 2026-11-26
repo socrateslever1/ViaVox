@@ -27,6 +27,14 @@ class SurroundingsPolicyTest {
         assertEquals(listOf("1"),chosen.map { it.landmark.id })
     }
 
+    @Test fun forwardShortRadiusDoesNotDiscardEveryPointWithModerateAccuracy() {
+        val north = NearbyLandmark("N","Escola",centreLat+0.00072,centreLon,"amenity")
+        val south = NearbyLandmark("S","Mercado",centreLat-0.00072,centreLon,"shop")
+        val picked=SurroundingsPolicy.select(listOf(north,south),centreLat,centreLon,
+            100,ScanDirection.FRONT,0f,55f)
+        assertEquals(listOf("N"),picked.map { it.landmark.id })
+    }
+
     @Test fun forwardFiltersLandmarksBehind() {
         val north = NearbyLandmark("N", "Museu ao norte", centreLat + 0.0005, centreLon, "tourism")
         val south = NearbyLandmark("S", "Parque ao sul", centreLat - 0.0005, centreLon, "leisure")

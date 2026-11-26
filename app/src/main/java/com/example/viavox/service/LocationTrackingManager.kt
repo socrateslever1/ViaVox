@@ -159,6 +159,33 @@ class LocationTrackingManager(
         if (valid) onLocationUpdated(location)
     }
 
+    /** Manual scans need a fresh high-accuracy fix even when adaptive tracking
+     * is in low-power mode or the stationary quality gate suppresses updates. */
+    @SuppressLint("MissingPermission")
+    suspend fun freshScanFix(): Location? =
+        kotlinx.coroutines.withTimeoutOrNull(4_000L) {
+            kotlinx.coroutines.suspendCancellableCoroutine<Location?> { continuation ->
+                val token = com.google.android.gms.tasks.CancellationTokenSource()
+                continuation.invokeOnCancellation { token.cancel() }
+                try {
+                    fusedClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, token.token)
+                        .addOnSuccessListener { fix ->
+                            val valid = fix?.takeIf {
+                                it.hasAccuracy() && it.accuracy in 0.1f..75f &&
+                                    System.currentTimeMillis() - it.time in 0..15_000L &&
+                                    it.latitude.isFinite() && it.longitude.isFinite()
+                            }
+                            if (continuation.isActive) continuation.resumeWith(Result.success(valid))
+                        }
+                        .addOnFailureListener {
+                            if (continuation.isActive) continuation.resumeWith(Result.success(null))
+                        }
+                } catch (_: Exception) {
+                    if (continuation.isActive) continuation.resumeWith(Result.success(null))
+                }
+            }
+        }
+
     fun stopTracking() {
         if (!started) return
         started = false

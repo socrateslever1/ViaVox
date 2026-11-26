@@ -77,8 +77,9 @@ object SurroundingsPolicy {
             // instead of creating an empty interval at 100 m / 55 m accuracy.
             .filter { it.distanceMeters <= radius }
             .filter { direction == ScanDirection.AROUND ||
-                (it.distanceMeters > gpsAccuracyMeters + 8 &&
-                    it.distanceMeters + gpsAccuracyMeters <= radius) }
+                // Direction is not reliable when position uncertainty contains
+                // the landmark. Do not exclude the entire remaining radial band.
+                (it.distanceMeters > gpsAccuracyMeters && it.distanceMeters > 8.0) }
             .filter { direction == ScanDirection.AROUND || (it.angle != null && abs(it.angle) <= 65.0) }
             .distinctBy { it.landmark.name.lowercase().trim() }
             .let { candidates ->

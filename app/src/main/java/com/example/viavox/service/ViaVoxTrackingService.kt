@@ -80,6 +80,7 @@ class ViaVoxTrackingService : Service() {
     private var lastPrefetchLat = Double.NaN
     private var lastPrefetchLon = Double.NaN
     private var scanGeneration = 0L
+    private var lastScanLocationTime = 0L
     private lateinit var geoReminders: GeoReminderStore
     private val roadJunctions = RoadJunctionRepository()
     private var junctionJob: Job? = null
@@ -530,6 +531,7 @@ class ViaVoxTrackingService : Service() {
         locationTracker.stopTracking()
         deviceHeading.stop()
         scanGeneration++
+        lastScanLocationTime = 0L
         scanJob?.cancel()
         tourJob?.cancel()
         junctionJob?.cancel()
@@ -595,7 +597,8 @@ class ViaVoxTrackingService : Service() {
     private fun onLocationUpdateReceived(location: Location) {
         val lat = location.latitude
         val lon = location.longitude
-        val accuracy = if (location.hasAccuracy()) location.accuracy.toInt() else null
+        val accuracy = if (location.hasAccuracy()) location.accuracy.toInt().coerceAtLeast(1) else null
+        lastScanLocationTime = location.time
         val speedKmh = if (location.hasSpeed()) location.speed * 3.6f else 0f
         val bearing = if (location.hasBearing()) location.bearing else 0f
         val hasBearing = location.hasBearing()
@@ -897,14 +900,6 @@ class ViaVoxTrackingService : Service() {
             TrackingRepository.updateSurroundingsResult("Ative a localização para consultar os arredores.")
             return
         }
-        val initial = TrackingRepository.state.value
-        val accuracy = initial.accuracyMeters ?: 100
-        if (!initial.hasLocationFix || accuracy !in 1..55) {
-            val msg = "Aguardando GPS mais preciso para consultar os arredores."
-            TrackingRepository.updateSurroundingsResult(msg)
-            speakIfAllowed(msg, true, SpeechKind.USER_REQUEST, "scan-gps")
-            return
-        }
         tourJob?.cancel()
         prefetchJob?.cancel()
         val radius = currentConfig.surroundingsRadiusMeters.coerceIn(50,500)
@@ -912,6 +907,30 @@ class ViaVoxTrackingService : Service() {
         TrackingRepository.updateSurroundingsResult("$label: pesquisando em até $radius metros...")
         scanJob = serviceScope.launch {
             fun current() = generation == scanGeneration && isTrackingRunning
+            var initial = TrackingRepository.state.value
+            val maxAccuracy = if (direction == ScanDirection.AROUND) 75 else 55
+            if (!initial.hasLocationFix || (initial.accuracyMeters ?: 100) !in 1..maxAccuracy ||
+                System.currentTimeMillis() - lastScanLocationTime !in 0..15_000L) {
+                val fresh = locationTracker.freshScanFix()
+                if (!current()) return@launch
+                val latest = TrackingRepository.state.value
+                initial = if (fresh != null) latest.copy(
+                    hasLocationFix = true, latitude = fresh.latitude, longitude = fresh.longitude,
+                    accuracyMeters = fresh.accuracy.toInt().coerceAtLeast(1),
+                    speedKmh = if (fresh.hasSpeed()) fresh.speed * 3.6f else 0f,
+                    bearing = if (fresh.hasBearing()) fresh.bearing else 0f,
+                    hasBearing = fresh.hasBearing()
+                ) else latest.takeIf {
+                    System.currentTimeMillis() - lastScanLocationTime in 0..15_000L
+                } ?: latest.copy(hasLocationFix = false)
+            }
+            val accuracy = initial.accuracyMeters ?: 100
+            if (!initial.hasLocationFix || accuracy !in 1..maxAccuracy) {
+                val msg = "GPS sem precisão suficiente para esta consulta (±$accuracy m). Confira se a localização precisa está ativada."
+                TrackingRepository.updateSurroundingsResult(msg)
+                speakIfAllowed(msg,true,SpeechKind.USER_REQUEST,"scan-gps:" + generation)
+                return@launch
+            }
             val heading = if (direction == ScanDirection.FRONT) {
                 // Sensors can briefly be unavailable after tracking starts.
                 withTimeoutOrNull(2_000L) {
@@ -924,12 +943,12 @@ class ViaVoxTrackingService : Service() {
                 }
             } else null // The 360-degree scan does not require a compass.
             if (!current()) return@launch
-            if (direction == ScanDirection.FRONT && heading == null) {
-                val msg = "Direção não confirmada. Mantenha o celular apontado para a frente, calibre a bússola ou use Ao meu redor."
-                TrackingRepository.updateSurroundingsResult(msg)
-                speakIfAllowed(msg,true,SpeechKind.USER_REQUEST,"scan-heading:" + generation)
-                return@launch
-            }
+            // Do not mislabel a radial result as a forward result if compass
+            // is unavailable. Still provide useful nearby references.
+            val effectiveDirection = if (direction == ScanDirection.FRONT && heading == null)
+                ScanDirection.AROUND else direction
+            val directionNotice = if (effectiveDirection != direction)
+                "Direção não confirmada; mostrando referências ao redor. " else ""
             // Freeze the coordinates and direction of this explicit request.
             // Do not silently discard results when the GPS/compass changes during IO.
             val seen = LinkedHashMap<String,NearbyLandmark>()
@@ -947,15 +966,17 @@ class ViaVoxTrackingService : Service() {
 
             fun selected() = SurroundingsPolicy.select(
                 seen.values.toList(), initial.latitude, initial.longitude, radius,
-                direction, heading, accuracy.toFloat()
+                effectiveDirection, heading, accuracy.toFloat()
             )
             fun accept(points: List<NearbyLandmark>, source: String) {
                 if (!current()) return
                 points.forEach { seen[it.id] = it }
                 if (points.isNotEmpty()) sources.add(source)
                 val items = selected()
-                if (items.isNotEmpty() && !movedSinceRequest()) {
-                    val message = SurroundingsPolicy.scanSpeech(items,direction,heading!=null)
+                if (items.isNotEmpty()) {
+                    val message = directionNotice +
+                        (if (movedSinceRequest()) "Na posição consultada anteriormente: " else "") +
+                        SurroundingsPolicy.scanSpeech(items,effectiveDirection,heading!=null)
                     TrackingRepository.updateSurroundingsResult(
                         message + "\nBuscando referências adicionais..."
                     )
@@ -1024,22 +1045,25 @@ class ViaVoxTrackingService : Service() {
             val moved = movedSinceRequest()
             val items = selected()
             val result = when {
-                moved && spoken && items.isNotEmpty() ->
+                moved && items.isNotEmpty() ->
                     "Referências da posição no início da consulta:\n" +
-                        SurroundingsPolicy.scanSpeech(items,direction,heading!=null)
-                moved -> "Sua posição mudou durante a consulta. Toque novamente para pesquisar o local atual."
-                items.isNotEmpty() -> SurroundingsPolicy.scanSpeech(items,direction,heading!=null) +
+                        SurroundingsPolicy.scanSpeech(items,effectiveDirection,heading!=null)
+                items.isNotEmpty() -> SurroundingsPolicy.scanSpeech(items,effectiveDirection,heading!=null) +
                     (crossing?.let { "\n" + it } ?: "")
                 crossing != null -> crossing!!
                 successfulRemote == 0 && failedRemote > 0 ->
                     "Não foi possível consultar as referências online. Nenhuma referência local confirmada neste alcance."
-                localFailed -> "A consulta local falhou. " + SurroundingsPolicy.scanSpeech(emptyList(),direction,heading!=null)
-                else -> SurroundingsPolicy.scanSpeech(emptyList(),direction,heading!=null)
+                localFailed -> "A consulta local falhou. " + SurroundingsPolicy.scanSpeech(emptyList(),effectiveDirection,heading!=null)
+                else -> SurroundingsPolicy.scanSpeech(emptyList(),effectiveDirection,heading!=null)
             }
-            val details = if (!moved && items.isNotEmpty() && sources.isNotEmpty())
-                "\nFonte: " + sources.joinToString(" + ") + "." else ""
-            TrackingRepository.updateSurroundingsResult(result + details)
-            if (!spoken) speakIfAllowed(result,true,SpeechKind.USER_REQUEST,"scan:" + generation)
+            val details = "\nAlcance: $radius m · GPS ±$accuracy m · " +
+                seen.values.count { it.distanceTo(initial.latitude,initial.longitude) <= radius } +
+                " pontos consultados · " + items.size + " selecionados." +
+                "\nFontes online: $successfulRemote concluídas, $failedRemote indisponíveis." +
+                (if (sources.isNotEmpty()) "\nDados: " + sources.joinToString(" + ") else "") +
+                (if (items.isEmpty() && radius < 500) "\nExperimente ampliar o alcance para 500 m." else "")
+            TrackingRepository.updateSurroundingsResult(directionNotice + result + details)
+            if (!spoken) speakIfAllowed(directionNotice + result,true,SpeechKind.USER_REQUEST,"scan:" + generation)
         }
     }
 

@@ -63,7 +63,7 @@ class SpeechOrchestrator(
         if (!force && (active?.key == key || waiting.any { it.key == key })) return false
         // An active optional Tour or POI must not delay an actual street entry
         // by several seconds. Navigation instructions remain uninterrupted.
-        if (kind == SpeechKind.GEOGRAPHY && active?.kind in
+        if (kind in setOf(SpeechKind.GEOGRAPHY, SpeechKind.USER_REQUEST) && active?.kind in
             setOf(SpeechKind.TOUR, SpeechKind.POI)) {
             val interrupted = active
             generation++
